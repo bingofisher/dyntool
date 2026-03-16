@@ -1,0 +1,106 @@
+site_name: AdvDynTool
+site_description: 面向动力学计算与振动评价使用者的中文文档站
+site_url: https://example.invalid/advdyntool
+repo_name: AdvDynTool
+docs_dir: docs
+site_dir: site
+strict: true
+use_directory_urls: false
+exclude_docs: |
+  archive/**
+  baselines/**
+  plans/**
+  REFACTOR_BASELINE.md
+
+validation:
+  nav:
+    omitted_files: ignore
+
+theme:
+  name: material
+  language: zh
+  features:
+    - navigation.indexes
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+    - content.tabs.link
+    - search.highlight
+    - search.share
+
+plugins:
+  - search
+  - gen-files:
+      scripts:
+        - docs/gen_snippets.py
+        - docs/gen_reference_pages.py
+  - literate-nav:
+      implicit_index: true
+  - mkdocstrings:
+      handlers:
+        python:
+          paths:
+            - src
+          options:
+            show_root_heading: true
+            show_root_full_path: false
+            show_root_toc_entry: false
+            heading_level: 2
+            inherited_members: true
+            members_order: source
+            separate_signature: true
+            show_symbol_type_heading: true
+            show_symbol_type_toc: true
+            show_signature_annotations: true
+            docstring_style: google
+            docstring_section_style: list
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+
+nav:
+  - 首页: index.md
+  - 入门与使用:
+      - 使用总览: user_guide.md
+      - 主题总览: usage/index.md
+      - 数据输入与标准类型: usage/01_input_and_types.md
+      - 样本与样本集组织: usage/02_samples_and_sets.md
+      - 处理、评价与结果对象: usage/03_processing_and_results.md
+      - 存储模式与读写规则: usage/04_storage_rules.md
+      - 绘图、日志与资源: usage/05_plotting_logging_resources.md
+  - 教程:
+      - 教程总览: workflow_guide.md
+      - 最小闭环: workflows/01_minimal_roundtrip.md
+      - 真实文件导入: workflows/02_real_file_import.md
+      - 样本集批处理: workflows/04_sample_set_batch.md
+      - 资源驱动评价: workflows/06_resource_driven_eval.md
+  - 参考与附录:
+      - 公开 API: api/public_api.md
+      - 文档与 API 总览: api/index.md
+      - 示例附录: examples_overview.md
+      - 进阶教程: workflows/03_model_analysis.md
+      - 带日志运行: workflows/05_logged_run.md
+      - 内部代码说明: api/internal_api.md
+      - 自动模块参考: reference/index.md
+      - 开发者总览: developer/index.md
+      - API 设计: developer/api_design.md
+      - 文档规范: developer/doc_conventions.md
+      - 测试与示例: developer/testing_and_examples.md
+      - 自定义扩展: developer/custom_extension.md
+      - 模块矩阵: developer/module_matrix.md
+      - 架构与规则: architecture_rules.md

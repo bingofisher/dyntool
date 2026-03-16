@@ -1,0 +1,21 @@
+"""导出 payload 并绘图。"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from examples._legacy_runner import run_legacy_example
+
+
+def main(output_dir: Path | None = None) -> dict[str, object]:
+    """运行绘图与导出场景。"""
+
+    # docs:begin plotting_minimal
+    return run_legacy_example("examples/08_visualization/plotting_demo.py", output_dir=output_dir)
+    # docs:end plotting_minimal
+
+
+if __name__ == "__main__":
+    from examples._bootstrap import print_summary
+
+    print_summary(main())

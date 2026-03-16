@@ -1,0 +1,239 @@
+[[example]]
+id = "import_and_normalize"
+kind = "scenario"
+title = "导入并标准化"
+primary_task = "导入真实文件、统一单位并进入正式样本链路"
+topic = "docs/usage/01_input_and_types.md"
+featured = true
+covers = ["csv_params", "unit_conversion", "inspect_units", "real_file_import"]
+snippet_ids = ["workflow_real_file_import"]
+inputs = ["examples/input_data", "tests/input_data"]
+outputs = ["normalized_csv", "sample_set_h5"]
+script = "examples/10_scenarios/01_import_and_normalize/main.py"
+readme = "examples/10_scenarios/01_import_and_normalize/README.md"
+doc = "docs/usage/01_input_and_types.md"
+test = "tests/test_examples_systems.py::test_scenario_import_and_normalize"
+
+[[example]]
+id = "build_and_manage_samples"
+kind = "scenario"
+title = "构建并管理样本"
+primary_task = "创建样本、组织样本集并批量评价"
+topic = "docs/usage/02_samples_and_sets.md"
+featured = true
+covers = ["sample_creation", "sample_set_creation", "batch_eval"]
+snippet_ids = ["sample_set_minimal"]
+inputs = ["in_memory_samples"]
+outputs = ["evaluated_sample_set"]
+script = "examples/10_scenarios/02_build_and_manage_samples/main.py"
+readme = "examples/10_scenarios/02_build_and_manage_samples/README.md"
+doc = "docs/usage/02_samples_and_sets.md"
+test = "tests/test_examples_systems.py::test_scenario_build_and_manage_samples"
+
+[[example]]
+id = "evaluate_vibration"
+kind = "scenario"
+title = "处理并评价振动"
+primary_task = "从时程序列得到频谱、反应谱和评价对象"
+topic = "docs/usage/03_processing_and_results.md"
+featured = true
+covers = ["processing", "evaluation", "result_types"]
+snippet_ids = ["processing_eval_minimal"]
+inputs = ["time_series"]
+outputs = ["freqspec", "respspec", "evaluation_results"]
+script = "examples/10_scenarios/03_evaluate_vibration/main.py"
+readme = "examples/10_scenarios/03_evaluate_vibration/README.md"
+doc = "docs/usage/03_processing_and_results.md"
+test = "tests/test_examples_systems.py::test_scenario_evaluate_vibration"
+
+[[example]]
+id = "store_and_reload"
+kind = "scenario"
+title = "存储并回读"
+primary_task = "完成最小闭环并验证标准 storage 读写"
+topic = "docs/usage/04_storage_rules.md"
+featured = true
+covers = ["minimal_roundtrip", "sample_set_roundtrip", "workers"]
+snippet_ids = ["workflow_minimal_roundtrip"]
+inputs = ["generated_accel_data"]
+outputs = ["sample_set_h5", "plot_png"]
+script = "examples/10_scenarios/04_store_and_reload/main.py"
+readme = "examples/10_scenarios/04_store_and_reload/README.md"
+doc = "docs/usage/04_storage_rules.md"
+test = "tests/test_examples_systems.py::test_scenario_store_and_reload"
+
+[[example]]
+id = "plot_and_export"
+kind = "scenario"
+title = "绘图并导出"
+primary_task = "导出 plot payload 并用 plotter-first 接口渲染"
+topic = "docs/usage/05_plotting_logging_resources.md"
+featured = true
+covers = ["plot_payload", "plotter_first", "story_value_plotter"]
+snippet_ids = ["plotting_minimal"]
+inputs = ["plot_payloads"]
+outputs = ["plot_png"]
+script = "examples/10_scenarios/05_plot_and_export/main.py"
+readme = "examples/10_scenarios/05_plot_and_export/README.md"
+doc = "docs/usage/05_plotting_logging_resources.md"
+test = "tests/test_examples_systems.py::test_scenario_plot_and_export"
+
+[[example]]
+id = "logged_run"
+kind = "scenario"
+title = "带日志运行"
+primary_task = "在正式日志入口下执行完整任务并产生日志"
+topic = "docs/workflows/05_logged_run.md"
+featured = false
+covers = ["logging_mode", "workflow_logging"]
+snippet_ids = []
+inputs = ["generated_accel_data"]
+outputs = ["log_directory", "evaluation_summary"]
+script = "examples/10_scenarios/06_logged_run/main.py"
+readme = "examples/10_scenarios/06_logged_run/README.md"
+doc = "docs/workflows/05_logged_run.md"
+test = "tests/test_examples_systems.py::test_scenario_logged_run"
+
+[[example]]
+id = "resource_driven_eval"
+kind = "scenario"
+title = "资源驱动评价"
+primary_task = "基于内置资源约束评价范围并输出结果"
+topic = "docs/workflows/06_resource_driven_eval.md"
+featured = false
+covers = ["resource_lookup", "evaluation", "otovl"]
+snippet_ids = ["workflow_resource_driven_eval"]
+inputs = ["embedded_resources"]
+outputs = ["evaluation_summary"]
+script = "examples/10_scenarios/07_resource_driven_eval/main.py"
+readme = "examples/10_scenarios/07_resource_driven_eval/README.md"
+doc = "docs/workflows/06_resource_driven_eval.md"
+test = "tests/test_examples_systems.py::test_scenario_resource_driven_eval"
+
+[[example]]
+id = "custom_extension"
+kind = "scenario"
+title = "自定义扩展"
+primary_task = "新增自定义模型、元数据、样本和样本集"
+topic = "docs/developer/custom_extension.md"
+featured = false
+covers = ["custom_model", "custom_metadata", "custom_sample_set"]
+snippet_ids = []
+inputs = ["custom_domain_classes"]
+outputs = ["custom_model_csv", "custom_sample_set_dir"]
+script = "examples/10_scenarios/08_custom_extension/main.py"
+readme = "examples/10_scenarios/08_custom_extension/README.md"
+doc = "docs/developer/custom_extension.md"
+test = "tests/test_examples_systems.py::test_scenario_custom_extension"
+
+[[example]]
+id = "units_and_unit_views"
+kind = "recipe"
+title = "单位与单位视图"
+primary_task = "查看单位、转换结果与导出单位信息"
+topic = "docs/usage/01_input_and_types.md"
+featured = false
+covers = ["inspect_units", "unit_conversion"]
+snippet_ids = ["csv_unit_roundtrip"]
+inputs = ["unit_aware_model"]
+outputs = ["normalized_csv"]
+script = "examples/90_recipes/units_and_unit_views/main.py"
+readme = "examples/90_recipes/units_and_unit_views/README.md"
+doc = "docs/usage/01_input_and_types.md"
+test = "tests/test_examples_workflows.py::test_recipe_units_and_unit_views"
+
+[[example]]
+id = "metadata_patterns"
+kind = "recipe"
+title = "元数据模式"
+primary_task = "比较默认元数据与成熟预设元数据"
+topic = "docs/usage/01_input_and_types.md"
+featured = false
+covers = ["metadata_types", "identity_fields"]
+snippet_ids = ["metadata_minimal"]
+inputs = ["metadata_classes"]
+outputs = ["metadata_type_summary"]
+script = "examples/90_recipes/metadata_patterns/main.py"
+readme = "examples/90_recipes/metadata_patterns/README.md"
+doc = "docs/usage/01_input_and_types.md"
+test = "tests/test_examples_workflows.py::test_recipe_metadata_patterns"
+
+[[example]]
+id = "sample_set_filter_parallel_io"
+kind = "recipe"
+title = "样本集筛选与并行 I/O"
+primary_task = "演示 filter、workers 和 chunk_size 的批量用法"
+topic = "docs/usage/04_storage_rules.md"
+featured = false
+covers = ["filter", "workers", "chunk_size", "strict"]
+snippet_ids = ["workflow_sample_set_batch"]
+inputs = ["sample_set"]
+outputs = ["filtered_sample_set_h5"]
+script = "examples/90_recipes/sample_set_filter_parallel_io/main.py"
+readme = "examples/90_recipes/sample_set_filter_parallel_io/README.md"
+doc = "docs/usage/04_storage_rules.md"
+test = "tests/test_examples_workflows.py::test_recipe_sample_set_filter_parallel_io"
+
+[[example]]
+id = "plot_payload_and_plotters"
+kind = "recipe"
+title = "payload 与 plotter"
+primary_task = "演示 payload 导出与 plotter-first 渲染"
+topic = "docs/usage/05_plotting_logging_resources.md"
+featured = false
+covers = ["plot_payload", "frame_plotter", "story_value_plotter"]
+snippet_ids = ["plotting_minimal"]
+inputs = ["plot_payloads"]
+outputs = ["plot_png"]
+script = "examples/90_recipes/plot_payload_and_plotters/main.py"
+readme = "examples/90_recipes/plot_payload_and_plotters/README.md"
+doc = "docs/usage/05_plotting_logging_resources.md"
+test = "tests/test_examples_workflows.py::test_recipe_plot_payload_and_plotters"
+
+[[example]]
+id = "logging_providers_and_modes"
+kind = "recipe"
+title = "日志 provider 与模式"
+primary_task = "切换 stdlib/loguru provider 并比较输出模式"
+topic = "docs/usage/05_plotting_logging_resources.md"
+featured = false
+covers = ["logging_mode", "provider_switch", "loguru"]
+snippet_ids = ["logging_mode_compare"]
+inputs = ["logging_config"]
+outputs = ["log_files"]
+script = "examples/90_recipes/logging_providers_and_modes/main.py"
+readme = "examples/90_recipes/logging_providers_and_modes/README.md"
+doc = "docs/usage/05_plotting_logging_resources.md"
+test = "tests/test_examples_workflows.py::test_recipe_logging_providers_and_modes"
+
+[[example]]
+id = "storage_scheme_selection"
+kind = "recipe"
+title = "存储方案选择"
+primary_task = "比较模型 CSV、样本集 H5 和目录导出的差异"
+topic = "docs/usage/04_storage_rules.md"
+featured = false
+covers = ["storage_scheme", "model_roundtrip", "sample_set_roundtrip"]
+snippet_ids = ["storage_scheme_compare"]
+inputs = ["sample_set", "data_model"]
+outputs = ["csv_h5_directory_outputs"]
+script = "examples/90_recipes/storage_scheme_selection/main.py"
+readme = "examples/90_recipes/storage_scheme_selection/README.md"
+doc = "docs/usage/04_storage_rules.md"
+test = "tests/test_examples_workflows.py::test_recipe_storage_scheme_selection"
+
+[[example]]
+id = "structured_payload_roundtrip"
+kind = "recipe"
+title = "结构化 payload 往返"
+primary_task = "把模型导出为结构化 payload 再恢复成正式对象"
+topic = "docs/developer/custom_extension.md"
+featured = false
+covers = ["structured_payload", "payload_roundtrip"]
+snippet_ids = ["structured_payload_roundtrip"]
+inputs = ["data_model"]
+outputs = ["restored_model"]
+script = "examples/90_recipes/structured_payload_roundtrip/main.py"
+readme = "examples/90_recipes/structured_payload_roundtrip/README.md"
+doc = "docs/developer/custom_extension.md"
+test = "tests/test_examples_workflows.py::test_recipe_structured_payload_roundtrip"

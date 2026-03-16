@@ -1,0 +1,37 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+
+# Test files
+/test/
+/.cursor/
+.pytest_cache/
+.ruff_cache/
+.pytest_tmp/
+.pytest_tmp_root/
+.tmp/
+/tmp/
+.uv-cache/
+
+# Build artifacts
+*.egg-info/
+build/
+dist/
+.eggs/
+site/
+
+# Local environments
+.venv/
+.vscode/
+.codex/
+
+# Example/generated artifacts
+/examples/output/
+/examples/*_demo.png
+
+# Local scratch files
+/temp.py
+tmp_phase6_encoding_test.txt
+task_plan.md
+progress.md
+findings.md

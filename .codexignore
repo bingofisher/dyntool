@@ -1,0 +1,24 @@
+/*
+ * @Author: bingofisher
+ * @Date: 2026-03-13 15:03:55
+ * @LastEditors: bingofisher
+ * @LastEditTime: 2026-03-13 20:03:47
+ * @FilePath: \\AdvDynTool\\.codexignore
+ * @Description: 
+ */
+.git/
+.venv/
+.vscode/
+.cursor/
+.pytest_cache/
+.ruff_cache/
+__pycache__/
+*.py[cod]
+build/
+dist/
+*.egg-info/
+.eggs/
+examples/output/
+examples/*_demo.png
+benchmarks/
+uv.lock

@@ -1,0 +1,8 @@
+{
+  "axes.unicode_minus": false,
+  "font.family": "sans-serif",
+  "font.sans-serif": ["SongTNR"],
+  "font.serif": ["SongTNR"],
+  "mathtext.fontset": "stix",
+  "font.size": 8
+}

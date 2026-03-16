@@ -1,0 +1,3 @@
+# 公共 API 请使用: import dyntool 或 from dyntool import ...
+
+__all__: list[str] = []

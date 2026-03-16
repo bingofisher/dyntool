@@ -1,0 +1,20 @@
+{
+  "include": ["src/dyntool"],
+  "exclude": [
+    "**/__pycache__",
+    ".venv",
+    "examples/output"
+  ],
+  "typeCheckingMode": "off",
+  "reportMissingImports": "none",
+  "reportMissingTypeStubs": false,
+  "reportGeneralTypeIssues": "none",
+  "reportAttributeAccessIssue": "none",
+  "reportOptionalMemberAccess": "none",
+  "reportAssignmentType": "none",
+  "reportIndexIssue": "none",
+  "reportPrivateImportUsage": "none",
+  "pythonVersion": "3.12",
+  "venvPath": ".",
+  "venv": ".venv"
+}

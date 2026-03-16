@@ -1,0 +1,13 @@
+{
+  "center_freq": "standards/octave/1-3倍频程频带与中心频率.csv",
+  "z_weight": "standards/weights/JGJ-T_170-2009/5.1.3_加速度在1-3倍频程中心频率的Z计权因子.csv",
+  "octave_weight": "standards/weights/GB-T_13441.1-2007/3_1-3倍频程的频率计权.csv",
+  "limit_residential_zvl": "standards/limits/GB-T_50355-2018/3.0.1_住宅建筑室内Z振级限值.csv",
+  "limit_residential_otovl": "standards/limits/GB-T_50355-2018/3.0.2_住宅建筑室内各1-3倍频程铅垂向振动加速度级限值.csv",
+  "limit_building_zvl": "standards/limits/JGJ-T_170-2009/4.0.1_建筑物室内振动限值.csv",
+  "limit_city_zvl": "standards/limits/GB_10070-1988/3.1.1_城市各类区域铅垂向Z振级标准值.csv",
+  "limit_transport_fpvdv": "standards/limits/GB_50868-2013/7.2.3_交通振动对建筑物内人体舒适性影响的容许振动值.csv",
+  "seismic_characteristic_period": "standards/seismic/GB-T_50011-2010(2024)/特征周期值.csv",
+  "seismic_alpha_max_50011": "standards/seismic/GB-T_50011-2010(2024)/水平地震影响系数最大值.csv",
+  "seismic_alpha_max_51408": "standards/seismic/GB-T_51408-2021/水平地震影响系数最大值.csv"
+}
