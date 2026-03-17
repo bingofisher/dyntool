@@ -24,6 +24,7 @@ site/
 .venv/
 .vscode/
 .codex/
+.worktrees/
 
 # Example/generated artifacts
 /examples/output/
