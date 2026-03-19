@@ -16,18 +16,17 @@ from dyntool.domain.samples import default as default_samples_module
 from dyntool.domain.samples import sets as sample_sets_module
 from dyntool.domain.samples import vibration_test as vibration_samples_module
 from dyntool.domain.samples import (
+    OperationResult,
     Sample,
+    SampleLoadMode,
     SampleSet,
     VibrationTestSample,
     VibrationTestSampleSet,
 )
+from dyntool.domain.samples.batch import BatchOperationReport
 from dyntool.domain.samples.factories import build_metadata
 from dyntool.infrastructure.persistence import RecoverableIOError
-from dyntool.storage.types import (
-    AttrDataFormat,
-    StorageMode,
-    StorageScheme,
-)
+from dyntool.storage.types import AttrDataFormat, StorageMode, StorageScheme
 
 
 def _make_vib_meta() -> VibrationTestMetadata:
@@ -49,37 +48,40 @@ class TestVibrationTestSample:
         meta = _make_vib_meta()
         accel = AccelSeries.from_data(np.random.randn(1000) * 0.01, dt=0.002)
         sample = VibrationTestSample(metadata=meta, accel=accel)
-        success, msg = sample.evaluation.zvl(force=True, freq_range=(2.0, 60.0))
-        assert success is True
+        result = sample.evaluation.zvl(overwrite=True, freq_range=(2.0, 60.0))
+        assert isinstance(result, OperationResult)
+        assert result.success is True
+        assert result.value is sample
         assert sample.zvl is not None
 
     def test_eval_zvl_skip_when_exists(self) -> None:
-        """已有 zvl 时 eval_zvl(force=False) 跳过。"""
+        """已有 zvl 时 eval_zvl(overwrite=False) 跳过。"""
         meta = _make_vib_meta()
         accel = AccelSeries.from_data(np.random.randn(500) * 0.01, dt=0.002)
         sample = VibrationTestSample(metadata=meta, accel=accel)
-        sample.evaluation.zvl(force=True)
-        success2, msg2 = sample.evaluation.zvl(force=False)
-        assert success2 is False
-        assert "已存在" in msg2 or "跳过" in msg2
+        sample.evaluation.zvl(overwrite=True)
+        result2 = sample.evaluation.zvl(overwrite=False)
+        assert isinstance(result2, OperationResult)
+        assert result2.success is False
+        assert "已存在" in result2.message or "跳过" in result2.message
 
     def test_calc_vel_calc_disp(self) -> None:
         """振动样本共享基类会写回 vel / disp。"""
         meta = _make_vib_meta()
         accel = AccelSeries.from_data(np.random.randn(500) * 0.01, dt=0.002)
         sample = VibrationTestSample(metadata=meta, accel=accel)
-        ok_vel, _ = sample.calc_vel(force=True)
-        ok_disp, _ = sample.calc_disp(force=True)
-        assert ok_vel is True and sample.vel is not None
-        assert ok_disp is True and sample.disp is not None
+        vel_result = sample.calc_vel(overwrite=True)
+        disp_result = sample.calc_disp(overwrite=True)
+        assert vel_result.success is True and sample.vel is not None
+        assert disp_result.success is True and sample.disp is not None
 
     def test_calc_freqspec(self) -> None:
         """振动样本共享基类会写回幅频与相频。"""
         meta = _make_vib_meta()
         accel = AccelSeries.from_data(np.random.randn(512) * 0.01, dt=0.002)
         sample = VibrationTestSample(metadata=meta, accel=accel)
-        ok, _ = sample.calc_freqspec(force=True)
-        assert ok is True
+        result = sample.calc_freqspec(overwrite=True)
+        assert result.success is True
         assert sample.freqspec is not None
         assert not hasattr(sample, "freq_amp")
         assert not hasattr(sample, "freq_pha")
@@ -89,14 +91,31 @@ class TestVibrationTestSample:
         meta = _make_vib_meta()
         accel = AccelSeries.from_data(np.random.randn(500) * 0.01, dt=0.002)
         sample = VibrationTestSample(metadata=meta, accel=accel)
-        ok, _ = sample.calc_respspec(force=True)
-        assert ok is True
+        result = sample.calc_respspec(overwrite=True)
+        assert result.success is True
         assert sample.respspec is not None
         assert not hasattr(sample, "respspec_sa")
         assert not hasattr(sample, "respspec_sv")
         assert not hasattr(sample, "respspec_sd")
         assert not hasattr(sample, "respspec_psa")
         assert not hasattr(sample, "respspec_psv")
+
+    def test_single_sample_save_load_persists_freqspec_and_respspec(self, tmp_path: Path) -> None:
+        sample = VibrationTestSample(
+            metadata=_make_vib_meta(),
+            accel=AccelSeries.from_data(np.random.randn(512) * 0.01, dt=0.002),
+        )
+        sample.calc_freqspec(overwrite=True)
+        sample.calc_respspec(overwrite=True)
+        store_path = tmp_path / "single_sample.h5"
+
+        sample.save(store_path, storage_scheme=StorageScheme.SAMPLE_H5)
+
+        loaded = VibrationTestSample(metadata=_make_vib_meta())
+        loaded.load(store_path, storage_scheme=StorageScheme.SAMPLE_H5)
+
+        assert isinstance(loaded.freqspec, FreqSpec)
+        assert isinstance(loaded.respspec, RespSpec)
 
 
 class TestVibrationTestSampleSet:
@@ -120,6 +139,240 @@ class TestVibrationTestSampleSet:
         sample_set = VibrationTestSampleSet({sample.uid: sample})
         sample_set.evaluation.zvl(overwrite=True, freq_range=(2.0, 60.0))
         assert sample.zvl is not None
+
+    def test_calc_freqspec_batch_writes_back_and_returns_report(self) -> None:
+        sample_a = VibrationTestSample(
+            metadata=_make_vib_meta(),
+            accel=AccelSeries.from_data(np.random.randn(512) * 0.01, dt=0.002),
+        )
+        sample_b = VibrationTestSample(
+            metadata=VibrationTestMetadata(
+                case="c2",
+                point="pt2",
+                instr="instr2",
+                dir="X",
+                record="r2",
+                timestamp=datetime(2025, 1, 1, 12, 30, 0),
+            ),
+            accel=AccelSeries.from_data(np.random.randn(512) * 0.01, dt=0.002),
+        )
+        sample_set = VibrationTestSampleSet({sample_a.uid: sample_a, sample_b.uid: sample_b})
+
+        report = sample_set.calc_freqspec(overwrite=True)
+
+        assert isinstance(report, BatchOperationReport)
+        assert set(report.results) == {sample_a.uid, sample_b.uid}
+        assert all(item.success is True for item in report.results.values())
+        assert isinstance(sample_a.freqspec, FreqSpec)
+        assert isinstance(sample_b.freqspec, FreqSpec)
+
+    def test_calc_freqspec_batch_supports_uid_filter_skip_and_missing_accel(self) -> None:
+        sample_a = VibrationTestSample(
+            metadata=_make_vib_meta(),
+            accel=AccelSeries.from_data(np.random.randn(512) * 0.01, dt=0.002),
+        )
+        sample_b = VibrationTestSample(
+            metadata=VibrationTestMetadata(
+                case="c2",
+                point="pt2",
+                instr="instr2",
+                dir="X",
+                record="r2",
+                timestamp=datetime(2025, 1, 1, 12, 30, 0),
+            ),
+            accel=AccelSeries.from_data(np.random.randn(512) * 0.01, dt=0.002),
+        )
+        sample_c = VibrationTestSample(
+            metadata=VibrationTestMetadata(
+                case="c3",
+                point="pt3",
+                instr="instr3",
+                dir="Y",
+                record="r3",
+                timestamp=datetime(2025, 1, 1, 13, 0, 0),
+            ),
+        )
+        sample_set = VibrationTestSampleSet({sample_a.uid: sample_a, sample_b.uid: sample_b, sample_c.uid: sample_c})
+
+        sample_set.calc_freqspec(uid=sample_a.uid, overwrite=True)
+        single_result = sample_set.calc_freqspec(uid=sample_a.uid, overwrite=False, strict=False)
+        filtered_results = sample_set.calc_freqspec(
+            overwrite=True,
+            strict=False,
+            filter=lambda sample: sample.metadata.point in {"pt2", "pt3"},
+        )
+
+        assert isinstance(single_result, BatchOperationReport)
+        assert single_result.results[sample_a.uid].success is False
+        assert (
+            "已存在" in single_result.results[sample_a.uid].message
+            or "跳过" in single_result.results[sample_a.uid].message
+        )
+        assert set(filtered_results.results) == {sample_b.uid, sample_c.uid}
+        assert filtered_results.results[sample_b.uid].success is True
+        assert filtered_results.results[sample_c.uid].success is False
+        assert "无加速度数据" in filtered_results.results[sample_c.uid].message
+        assert isinstance(sample_b.freqspec, FreqSpec)
+        assert sample_c.freqspec is None
+
+    def test_calc_freqspec_batch_strict_mode_raises_and_non_strict_collects_report(self) -> None:
+        sample_ok = VibrationTestSample(
+            metadata=_make_vib_meta(),
+            accel=AccelSeries.from_data(np.random.randn(512) * 0.01, dt=0.002),
+        )
+        sample_missing = VibrationTestSample(
+            metadata=VibrationTestMetadata(
+                case="c2",
+                point="pt2",
+                instr="instr2",
+                dir="X",
+                record="r2",
+                timestamp=datetime(2025, 1, 1, 12, 30, 0),
+            ),
+        )
+        sample_set = VibrationTestSampleSet({sample_ok.uid: sample_ok, sample_missing.uid: sample_missing})
+
+        with pytest.raises(RecoverableIOError, match="批处理失败"):
+            sample_set.calc_freqspec(overwrite=True)
+
+        results = sample_set.calc_freqspec(overwrite=True, strict=False)
+
+        report = sample_set.last_operation_report
+        assert report is not None
+        assert report.stats.total == 2
+        assert report.stats.valid_samples == 1
+        assert report.stats.succeeded == 1
+        assert report.stats.failed == 1
+        assert report.results[sample_missing.uid].status == "failed"
+        assert isinstance(results, BatchOperationReport)
+        assert results.results[sample_missing.uid].success is False
+
+    def test_update_data_supports_strict_and_non_strict_modes(self) -> None:
+        sample = VibrationTestSample(
+            metadata=_make_vib_meta(),
+            accel=AccelSeries.from_data(np.random.randn(64) * 0.01, dt=0.002),
+        )
+        sample_set = VibrationTestSampleSet({sample.uid: sample})
+        new_vel = sample.accel.calc_vel()  # type: ignore[union-attr]
+
+        assert sample_set.update_data(sample.uid, new_vel) is True
+
+        with pytest.raises(KeyError, match="missing"):
+            sample_set.update_data("missing", new_vel)
+
+        ok = sample_set.update_data("missing", new_vel, strict=False)
+        assert ok is False
+
+    def test_calc_respspec_batch_processing_namespace_matches_direct_call(self) -> None:
+        sample = VibrationTestSample(
+            metadata=_make_vib_meta(),
+            accel=AccelSeries.from_data(np.random.randn(512) * 0.01, dt=0.002),
+        )
+        sample_set = VibrationTestSampleSet({sample.uid: sample})
+
+        direct = sample_set.calc_respspec(uid=sample.uid, overwrite=True)
+        via_namespace = sample_set.processing.calc_respspec(uid=sample.uid, overwrite=True)
+
+        assert direct.results[sample.uid].success is True
+        assert via_namespace.results[sample.uid].success is True
+        assert isinstance(sample.respspec, RespSpec)
+
+    def test_save_all_load_all_persists_freqspec_and_respspec(self, tmp_path: Path) -> None:
+        sample_a = VibrationTestSample(
+            metadata=_make_vib_meta(),
+            accel=AccelSeries.from_data(np.random.randn(512) * 0.01, dt=0.002),
+        )
+        sample_b = VibrationTestSample(
+            metadata=VibrationTestMetadata(
+                case="c2",
+                point="pt2",
+                instr="instr2",
+                dir="X",
+                record="r2",
+                timestamp=datetime(2025, 1, 1, 12, 30, 0),
+            ),
+            accel=AccelSeries.from_data(np.random.randn(512) * 0.01, dt=0.002),
+        )
+        source = VibrationTestSampleSet({sample_a.uid: sample_a, sample_b.uid: sample_b})
+        source.calc_freqspec(overwrite=True)
+        source.calc_respspec(overwrite=True)
+
+        base_dir = tmp_path / "spectra_store"
+        source.connect_storage(base_dir, mode=StorageMode.CREATE, storage_scheme=StorageScheme.SAMPLE_DIR)
+        save_report = source.save_all()
+
+        loaded = VibrationTestSampleSet()
+        loaded.connect_storage(base_dir, mode=StorageMode.OPEN, storage_scheme=StorageScheme.SAMPLE_DIR)
+        load_report = loaded.load_all(load_mode=SampleLoadMode.EAGER)
+
+        assert isinstance(save_report, BatchOperationReport)
+        assert save_report.stats.failed == 0
+        assert isinstance(load_report, BatchOperationReport)
+        assert load_report.stats.failed == 0
+        assert isinstance(loaded[sample_a.uid].freqspec, FreqSpec)
+        assert isinstance(loaded[sample_a.uid].respspec, RespSpec)
+        assert isinstance(loaded[sample_b.uid].freqspec, FreqSpec)
+        assert isinstance(loaded[sample_b.uid].respspec, RespSpec)
+
+    def test_vibration_test_metadata_alias_is_generated_with_canonical_pattern(self) -> None:
+        metadata = VibrationTestMetadata(
+            case="A1",
+            record="1",
+            point="A1",
+            instr="164",
+            dir="001",
+            timestamp=datetime(2026, 1, 25, 5, 7, 44),
+        )
+
+        assert metadata.alias == "C-A1_R-1_P-A1_I-164_T-20260125050744_D-001"
+
+    def test_sampleset_reindexes_uid_after_metadata_attribute_assignment(self) -> None:
+        sample = VibrationTestSample(
+            metadata=_make_vib_meta(),
+            accel=AccelSeries.from_data(np.random.randn(64) * 0.01, dt=0.002),
+        )
+        sample_set = VibrationTestSampleSet({sample.uid: sample})
+        old_uid = sample.uid
+
+        sample.metadata.point = "pt9"
+
+        assert sample.uid != old_uid
+        assert old_uid not in sample_set
+        assert sample.uid in sample_set
+        assert sample_set[sample.uid] is sample
+
+    def test_sampleset_metadata_reindex_marks_storage_dirty_but_does_not_persist_automatically(
+        self, tmp_path: Path
+    ) -> None:
+        sample = VibrationTestSample(
+            metadata=_make_vib_meta(),
+            accel=AccelSeries.from_data(np.random.randn(64) * 0.01, dt=0.002),
+        )
+        sample_set = VibrationTestSampleSet({sample.uid: sample})
+        store_dir = tmp_path / "uid_reindex_store"
+        sample_set.save(store_dir, storage_scheme=StorageScheme.SAMPLE_DIR)
+        old_uid = sample.uid
+
+        sample.metadata.point = "pt-updated"
+
+        assert sample_set.storage is not None
+        assert getattr(sample_set, "storage_dirty", False) is True
+
+        loaded_before_cleanup = VibrationTestSampleSet.from_storage(
+            store_dir,
+            storage_scheme=StorageScheme.SAMPLE_DIR,
+        )
+        assert old_uid in loaded_before_cleanup
+
+        sample_set.save_all()
+        sample_set.organize_storage()
+
+        loaded_after_cleanup = VibrationTestSampleSet.from_storage(
+            store_dir,
+            storage_scheme=StorageScheme.SAMPLE_DIR,
+        )
+        assert old_uid not in loaded_after_cleanup
+        assert sample.uid in loaded_after_cleanup
 
     def test_shortcut_io_delegates_without_storage_types_import(self, tmp_path: Path) -> None:
         meta = _make_vib_meta()
@@ -213,7 +466,7 @@ class TestVibrationTestSampleSet:
         )
         sample_set = VibrationTestSampleSet({sample_a.uid: sample_a, sample_b.uid: sample_b})
 
-        assert sample_set.get_sample(lambda sample: sample.metadata.point == "missing") is None
+        assert sample_set.get_sample(lambda sample: sample.metadata.point == "missing", strict=False) is None
         assert sample_set.get_sample(lambda sample: sample.metadata.point == "pt2") is sample_b
 
     def test_get_sample_raises_when_multiple_samples_match(self) -> None:
@@ -290,6 +543,41 @@ class TestDefaultSampleSet:
 
         assert isinstance(sample.freqspec, FreqSpec)
         assert isinstance(sample.respspec, RespSpec)
+
+    def test_public_data_model_slots_are_storable_by_default(self) -> None:
+        for schema in (Sample.sample_schema, VibrationTestSample.sample_schema):
+            assert schema.slot("freqspec").include_in_storage is True
+            assert schema.slot("respspec").include_in_storage is True
+
+    def test_default_sample_set_calc_freqspec_rejects_unsupported_sample_type(self) -> None:
+        sample = self._make_default_sample("unsupported-freqspec")
+        sample_set = SampleSet({sample.uid: sample})
+
+        with pytest.raises(TypeError, match="calc_freqspec"):
+            sample_set.calc_freqspec(overwrite=True)
+
+    def test_default_sample_set_calc_respspec_rejects_unsupported_sample_type(self) -> None:
+        sample = self._make_default_sample("unsupported-respspec")
+        sample_set = SampleSet({sample.uid: sample})
+
+        with pytest.raises(TypeError, match="calc_respspec"):
+            sample_set.processing.calc_respspec(overwrite=True)
+
+    def test_force_parameter_is_removed_from_processing_entrypoints(self) -> None:
+        sample = VibrationTestSample(
+            metadata=_make_vib_meta(),
+            accel=AccelSeries.from_data(np.random.randn(256) * 0.01, dt=0.002),
+        )
+        sample_set = VibrationTestSampleSet({sample.uid: sample})
+
+        with pytest.raises(TypeError):
+            sample.calc_freqspec(force=True)  # type: ignore[call-arg]
+        with pytest.raises(TypeError):
+            sample.evaluation.zvl(force=True)  # type: ignore[call-arg]
+        with pytest.raises(TypeError):
+            sample_set.calc_freqspec(force=True)  # type: ignore[call-arg]
+        with pytest.raises(TypeError):
+            sample_set.evaluation.zvl(force=True)  # type: ignore[call-arg]
 
     def test_shortcut_io_delegates_without_storage_types_import(self, tmp_path: Path) -> None:
         sample = self._make_default_sample("guarded")
@@ -460,12 +748,14 @@ class TestDefaultSampleSet:
         base_dir = tmp_path / "workers"
         source.connect_storage(base_dir, mode=StorageMode.CREATE, storage_scheme=StorageScheme.SAMPLE_DIR)
         save_errors = source.save_all(strict=True, workers=2, chunk_size=1)
-        assert save_errors == {}
+        assert isinstance(save_errors, BatchOperationReport)
+        assert save_errors.stats.failed == 0
 
         loaded = SampleSet()
         loaded.connect_storage(base_dir, mode=StorageMode.OPEN, storage_scheme=StorageScheme.SAMPLE_DIR)
         load_errors = loaded.load_all(strict=True, workers=2, chunk_size=1)
-        assert load_errors == {}
+        assert isinstance(load_errors, BatchOperationReport)
+        assert load_errors.stats.failed == 0
         assert len(loaded) == 2
 
     def test_storage_rejects_invalid_chunk_size(self, tmp_path: Path) -> None:
@@ -669,3 +959,274 @@ class TestMetadataMigration:
             "line": "A",
             "channel": 1,
         }
+
+
+class TestMetadataAliasContracts:
+    """Metadata alias 契约。"""
+
+    def test_generic_metadata_alias_defaults_to_uid(self) -> None:
+        metadata = Metadata(attributes={"line": "A"})
+
+        assert metadata.alias == metadata.uid
+
+    def test_generic_metadata_from_alias_is_not_supported(self) -> None:
+        with pytest.raises(NotImplementedError, match="alias"):
+            Metadata.from_alias("demo-alias")
+
+    def test_vibration_test_metadata_can_roundtrip_from_alias(self) -> None:
+        alias = "C-A1_R-1_P-A1_I-164_T-20260125050744_D-001"
+
+        metadata = VibrationTestMetadata.from_alias(alias)
+
+        assert metadata.case == "A1"
+        assert metadata.record == "1"
+        assert metadata.point == "A1"
+        assert metadata.instr == "164"
+        assert metadata.timestamp == datetime(2026, 1, 25, 5, 7, 44)
+        assert metadata.dir == "001"
+        assert metadata.alias == alias
+
+    def test_vibration_test_metadata_field_descriptions_are_detailed(self) -> None:
+        descriptions = {
+            name: VibrationTestMetadata.model_fields[name].description or ""
+            for name in ("case", "point", "instr", "dir", "record", "timestamp", "extra")
+        }
+
+        assert "工况编号" in descriptions["case"]
+        assert "测点编号" in descriptions["point"]
+        assert "仪器编号" in descriptions["instr"]
+        assert "方向编号" in descriptions["dir"]
+        assert "记录编号" in descriptions["record"]
+        assert "时间戳" in descriptions["timestamp"]
+        assert "附加业务信息" in descriptions["extra"]
+
+
+class TestSampleIdentityContracts:
+    """Sample identity 与 alias 收口行为。"""
+
+    def test_sample_rejects_direct_slot_assignment(self) -> None:
+        sample = VibrationTestSample(metadata=_make_vib_meta())
+        accel = AccelSeries.from_data(np.random.randn(128) * 0.01, dt=0.002)
+
+        with pytest.raises(AttributeError, match="update_data"):
+            sample.accel = accel
+
+    def test_sample_rejects_direct_metadata_assignment(self) -> None:
+        sample = VibrationTestSample(metadata=_make_vib_meta())
+        replacement = VibrationTestMetadata(
+            case="c2",
+            point="pt2",
+            instr="instr2",
+            dir="X",
+            record="r2",
+            timestamp=datetime(2025, 1, 2, 12, 0, 0),
+        )
+
+        with pytest.raises(AttributeError, match="replace_metadata"):
+            sample.metadata = replacement
+
+    def test_sample_alias_override_and_force_refresh(self) -> None:
+        sample = VibrationTestSample(metadata=_make_vib_meta())
+        auto_alias = sample.alias
+
+        sample.set_alias("manual-alias")
+        sample.update_metadata(point="pt9")
+
+        assert sample.alias == "manual-alias"
+
+        sample.refresh_alias(force=False)
+        assert sample.alias == "manual-alias"
+
+        sample.refresh_alias(force=True)
+        assert sample.alias != "manual-alias"
+        assert sample.alias != auto_alias
+        assert sample.alias == sample.metadata.alias
+
+
+class TestSampleSetLoadContracts:
+    """SampleSet load_mode 与 alias 查询契约。"""
+
+    def test_find_by_alias_and_refresh_aliases_respect_manual_override(self) -> None:
+        sample = VibrationTestSample(metadata=_make_vib_meta())
+        sample.set_alias("manual-alias")
+        sample_set = VibrationTestSampleSet({sample.uid: sample})
+
+        assert sample_set.find_by_alias("manual-alias") is sample
+        assert sample_set.get_uid_by_alias("manual-alias") == sample.uid
+
+        sample_set.refresh_aliases(force=False)
+        assert sample.alias == "manual-alias"
+
+        sample_set.refresh_aliases(force=True)
+        assert sample.alias == sample.metadata.alias
+
+    def test_from_storage_lazy_loads_slot_on_demand(self, tmp_path: Path) -> None:
+        sample = Sample(
+            metadata=Metadata(extra={"source": "lazy"}),
+            accel=AccelSeries.from_data(np.random.randn(128) * 0.01, dt=0.002),
+        )
+        sample_set = SampleSet({sample.uid: sample})
+        base_dir = tmp_path / "lazy_store"
+        sample_set.save(base_dir, storage_scheme=StorageScheme.SAMPLE_DIR)
+
+        loaded = SampleSet.from_storage(
+            base_dir,
+            storage_scheme=StorageScheme.SAMPLE_DIR,
+            load_mode=SampleLoadMode.LAZY,
+        )
+        lazy_sample = loaded[sample.uid]
+
+        assert lazy_sample.is_loaded("accel") is False
+        assert lazy_sample.accel is not None
+        assert lazy_sample.is_loaded("accel") is True
+
+    def test_from_storage_metadata_only_requires_explicit_load(self, tmp_path: Path) -> None:
+        sample = Sample(
+            metadata=Metadata(extra={"source": "metadata-only"}),
+            accel=AccelSeries.from_data(np.random.randn(128) * 0.01, dt=0.002),
+        )
+        sample_set = SampleSet({sample.uid: sample})
+        base_dir = tmp_path / "metadata_only_store"
+        sample_set.save(base_dir, storage_scheme=StorageScheme.SAMPLE_DIR)
+
+        loaded = SampleSet.from_storage(
+            base_dir,
+            storage_scheme=StorageScheme.SAMPLE_DIR,
+            load_mode=SampleLoadMode.METADATA_ONLY,
+        )
+        metadata_only_sample = loaded[sample.uid]
+
+        assert metadata_only_sample.is_loaded("accel") is False
+        with pytest.raises(RuntimeError, match="metadata-only"):
+            _ = metadata_only_sample.accel
+
+        metadata_only_sample.ensure_loaded(categories=[DataCategory.TS_ACCEL])
+        assert metadata_only_sample.accel is not None
+
+    def test_from_storage_uses_categories_as_public_selector(self, tmp_path: Path) -> None:
+        sample = Sample(
+            metadata=Metadata(extra={"source": "selector"}),
+            accel=AccelSeries.from_data(np.random.randn(128) * 0.01, dt=0.002),
+        )
+        sample_set = SampleSet({sample.uid: sample})
+        base_dir = tmp_path / "selector_store"
+        sample_set.save(base_dir, storage_scheme=StorageScheme.SAMPLE_DIR)
+
+        loaded = SampleSet.from_storage(
+            base_dir,
+            storage_scheme=StorageScheme.SAMPLE_DIR,
+            load_mode=SampleLoadMode.EAGER,
+            categories=[DataCategory.TS_ACCEL],
+        )
+
+        assert loaded[sample.uid].is_loaded("accel") is True
+
+        with pytest.raises(ValueError, match="DataCategory"):
+            SampleSet.from_storage(
+                base_dir,
+                storage_scheme=StorageScheme.SAMPLE_DIR,
+                load_mode=SampleLoadMode.LAZY,
+                categories=[DataCategory.FS_AMP],
+            )
+
+        with pytest.raises(TypeError, match="slots"):
+            SampleSet.from_storage(  # type: ignore[call-arg]
+                base_dir,
+                storage_scheme=StorageScheme.SAMPLE_DIR,
+                load_mode=SampleLoadMode.LAZY,
+                slots=["accel"],
+            )
+
+        with pytest.raises(TypeError, match="data_categories"):
+            SampleSet.from_storage(  # type: ignore[call-arg]
+                base_dir,
+                storage_scheme=StorageScheme.SAMPLE_DIR,
+                load_mode=SampleLoadMode.LAZY,
+                data_categories=[DataCategory.TS_ACCEL],
+            )
+
+        with pytest.raises(ValueError, match="not_a_selector"):
+            SampleSet.from_storage(
+                base_dir,
+                storage_scheme=StorageScheme.SAMPLE_DIR,
+                load_mode=SampleLoadMode.LAZY,
+                categories=["not_a_selector"],
+            )
+
+    @pytest.mark.parametrize(
+        ("categories", "attr_name"),
+        [
+            ([DataCategory.FS_SPEC], "freqspec"),
+            ([DataCategory.RS_SPEC], "respspec"),
+            (["freqspec"], "freqspec"),
+            (["respspec"], "respspec"),
+        ],
+    )
+    def test_storage_categories_support_freqspec_and_respspec(
+        self,
+        tmp_path: Path,
+        categories: list[str | DataCategory],
+        attr_name: str,
+    ) -> None:
+        sample = VibrationTestSample(
+            metadata=_make_vib_meta(),
+            accel=AccelSeries.from_data(np.random.randn(512) * 0.01, dt=0.002),
+        )
+        sample.calc_freqspec(overwrite=True)
+        sample.calc_respspec(overwrite=True)
+        source = VibrationTestSampleSet({sample.uid: sample})
+        base_dir = tmp_path / f"selector_{attr_name}"
+
+        source.save(base_dir, storage_scheme=StorageScheme.SAMPLE_DIR, categories=categories)
+
+        loaded = VibrationTestSampleSet.from_storage(
+            base_dir,
+            storage_scheme=StorageScheme.SAMPLE_DIR,
+            load_mode=SampleLoadMode.EAGER,
+            categories=categories,
+        )
+
+        assert getattr(loaded[sample.uid], attr_name) is not None
+
+    def test_loading_storage_without_saved_spectra_keeps_slots_none(self, tmp_path: Path) -> None:
+        sample = VibrationTestSample(
+            metadata=_make_vib_meta(),
+            accel=AccelSeries.from_data(np.random.randn(256) * 0.01, dt=0.002),
+        )
+        source = VibrationTestSampleSet({sample.uid: sample})
+        base_dir = tmp_path / "no_saved_spectra"
+        source.save(base_dir, storage_scheme=StorageScheme.SAMPLE_DIR)
+
+        loaded = VibrationTestSampleSet.from_storage(
+            base_dir,
+            storage_scheme=StorageScheme.SAMPLE_DIR,
+            load_mode=SampleLoadMode.EAGER,
+            categories=[DataCategory.FS_SPEC, DataCategory.RS_SPEC],
+        )
+
+        assert loaded[sample.uid].freqspec is None
+        assert loaded[sample.uid].respspec is None
+
+    def test_load_all_hydrates_storage_stubs_without_duplicate_uid_error(self, tmp_path: Path) -> None:
+        sample = VibrationTestSample(
+            metadata=_make_vib_meta(),
+            accel=AccelSeries.from_data(np.random.randn(1024) * 0.01, dt=0.002),
+        )
+        source = VibrationTestSampleSet({sample.uid: sample})
+        source.eval_otovl(overwrite=True)
+        store_dir = tmp_path / "otovl_store"
+        source.save(store_dir, storage_scheme=StorageScheme.SAMPLE_DIR)
+
+        loaded = VibrationTestSampleSet.from_storage(
+            store_dir,
+            storage_scheme=StorageScheme.SAMPLE_DIR,
+            load_mode=SampleLoadMode.LAZY,
+        )
+
+        assert loaded[sample.uid].is_loaded("otovl") is False
+
+        report = loaded.load_all(categories=[DataCategory.OTOVL_EVAL], load_mode=SampleLoadMode.EAGER)
+
+        assert isinstance(report, BatchOperationReport)
+        assert report.stats.failed == 0
+        assert loaded[sample.uid].otovl is not None

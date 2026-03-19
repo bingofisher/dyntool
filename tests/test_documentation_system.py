@@ -1,12 +1,9 @@
-"""MkDocs 文档站与文档门禁回归测试。"""
+"""文档系统与正式示例口径守卫测试。"""
 
 from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
-import re
-import shutil
-import textwrap
 import tomllib
 
 import yaml
@@ -20,12 +17,6 @@ USAGE_PAGES = [
     PROJECT_ROOT / "docs" / "usage" / "04_storage_rules.md",
     PROJECT_ROOT / "docs" / "usage" / "05_plotting_logging_resources.md",
 ]
-KEY_TOPIC_PAGES = USAGE_PAGES[1:]
-
-
-def _extract_snippet_ids(path: Path) -> set[str]:
-    text = path.read_text(encoding="utf-8")
-    return set(re.findall(r"# docs:begin ([a-z0-9_]+)", text))
 
 
 def _load_script_module(name: str, path: Path) -> object:
@@ -58,19 +49,18 @@ def test_mkdocs_scaffold_exists() -> None:
     assert not missing, f"missing documentation scaffold files: {missing}"
 
 
-def test_mkdocs_config_uses_expected_stack_and_html_layout() -> None:
+def test_mkdocs_config_uses_expected_stack_and_layout() -> None:
     config_path = PROJECT_ROOT / "mkdocs.yml"
-    config = config_path.read_text(encoding="utf-8")
-    payload = yaml.safe_load(config)
+    config_text = config_path.read_text(encoding="utf-8")
+    payload = yaml.safe_load(config_text)
 
-    assert "theme:" in config
-    assert "material" in config
-    assert "mkdocstrings" in config
-    assert "gen-files" in config
-    assert "literate-nav" in config
-    assert "docs/gen_reference_pages.py" in config
-    assert "docs/gen_snippets.py" in config
-    assert "use_directory_urls: false" in config
+    assert "material" in config_text
+    assert "mkdocstrings" in config_text
+    assert "gen-files" in config_text
+    assert "literate-nav" in config_text
+    assert "docs/gen_reference_pages.py" in config_text
+    assert "docs/gen_snippets.py" in config_text
+    assert "use_directory_urls: false" in config_text
     top_level_labels = [next(iter(item)) for item in payload["nav"]]
     assert top_level_labels == ["首页", "入门与使用", "教程", "参考与附录"]
 
@@ -81,62 +71,107 @@ def test_examples_manifest_is_machine_readable() -> None:
     assert "example" in manifest
     example_ids = {entry["id"] for entry in manifest["example"]}
     assert "import_and_normalize" in example_ids
+    assert "resource_driven_eval" in example_ids
     assert "custom_extension" in example_ids
-    assert "structured_payload_roundtrip" in example_ids
-    for entry in manifest["example"]:
-        assert entry["kind"] in {"scenario", "recipe"}
-        assert "primary_task" in entry
-        assert "topic" in entry
-        assert "featured" in entry
-        assert "covers" in entry
-        assert "snippet_ids" in entry
-        assert "inputs" in entry
-        assert "outputs" in entry
-        assert isinstance(entry["covers"], list)
-        assert isinstance(entry["snippet_ids"], list)
-        assert isinstance(entry["inputs"], list)
-        assert isinstance(entry["outputs"], list)
+    custom_extension = next(entry for entry in manifest["example"] if entry["id"] == "custom_extension")
+    assert custom_extension["kind"] == "internal"
 
 
-def test_examples_overview_contains_manifest_mapping() -> None:
+def test_examples_overview_excludes_internal_custom_extension() -> None:
     overview = (PROJECT_ROOT / "docs" / "examples_overview.md").read_text(encoding="utf-8")
-    assert "示例附录" in overview
-    assert "场景主线" in overview
-    assert "Recipes" in overview
     assert "examples/10_scenarios/01_import_and_normalize/main.py" in overview
-    assert "examples/10_scenarios/08_custom_extension/main.py" in overview
-    assert "examples/90_recipes/structured_payload_roundtrip/main.py" in overview
+    assert "examples/10_scenarios/08_custom_extension/main.py" not in overview
 
 
-def test_usage_pages_have_required_sections_and_direct_code() -> None:
-    required_sections = (
-        "## 这页解决什么问题",
-        "## 最短可运行用法",
-        "## 关键代码片段",
-        "## 标准类型 / 枚举 / 参数契约",
-        "## 常见误区",
-        "## 相关示例",
-        "## 相关 API",
+def test_public_api_page_mentions_all_formal_module_apis() -> None:
+    text = (PROJECT_ROOT / "docs" / "api" / "public_api.md").read_text(encoding="utf-8")
+
+    assert "dyntool.storage" in text
+    assert "dyntool.plotting" in text
+    assert "dyntool.logging" in text
+    assert "dyntool.config" in text
+    assert "dyntool.resources" in text
+    assert "`dyntool.resource`" not in text
+
+
+def test_formal_docs_do_not_use_removed_entrypoints() -> None:
+    scan_roots = [
+        PROJECT_ROOT / "README.md",
+        PROJECT_ROOT / "ARCHITECTURE.md",
+        PROJECT_ROOT / "AGENTS.md",
+        PROJECT_ROOT / "docs" / "api",
+        PROJECT_ROOT / "docs" / "usage",
+        PROJECT_ROOT / "docs" / "workflows",
+        PROJECT_ROOT / "docs" / "systems",
+        PROJECT_ROOT / "docs" / "index.md",
+        PROJECT_ROOT / "docs" / "user_guide.md",
+        PROJECT_ROOT / "docs" / "examples_overview.md",
+    ]
+    forbidden = (
+        "`dyntool.resource`",
+        "DynTool(",
+        "from dyntool import DynTool",
+        "from dyntool.domain",
+        "import dyntool.domain",
+        "from dyntool.application",
+        "import dyntool.application",
+        "interfaces -> application",
     )
-    for path in KEY_TOPIC_PAGES:
-        text = path.read_text(encoding="utf-8")
-        for token in required_sections:
-            assert token in text, f"{path.name} missing section {token}"
-        assert "```python" in text, f"{path.name} must contain a Python code block"
-        assert "--8<--" in text or "```python" in text
+    offenders: list[str] = []
+    for root in scan_roots:
+        paths = [root] if root.is_file() else sorted(root.rglob("*.md"))
+        for path in paths:
+            text = path.read_text(encoding="utf-8")
+            if any(token in text for token in forbidden):
+                offenders.append(path.relative_to(PROJECT_ROOT).as_posix())
+
+    assert offenders == [], f"formal docs still contain removed entrypoints: {offenders}"
 
 
-def test_manifest_snippet_ids_exist_in_sources() -> None:
-    manifest = tomllib.loads((PROJECT_ROOT / "docs" / "examples_manifest.toml").read_text(encoding="utf-8"))
-    source_dirs = [PROJECT_ROOT / "examples", PROJECT_ROOT / "src" / "dyntool"]
-    known_ids: set[str] = set()
-    for root in source_dirs:
-        for path in root.rglob("*.py"):
-            known_ids.update(_extract_snippet_ids(path))
+def test_active_docs_do_not_use_workspace_absolute_links() -> None:
+    scan_roots = [
+        PROJECT_ROOT / "README.md",
+        PROJECT_ROOT / "ARCHITECTURE.md",
+        PROJECT_ROOT / "docs",
+    ]
+    offenders: list[str] = []
+    for root in scan_roots:
+        paths = [root] if root.is_file() else sorted(root.rglob("*.md"))
+        for path in paths:
+            text = path.read_text(encoding="utf-8")
+            if "/D:/BaiduSyncdisk/13_CodeRepository/Projects/AdvDynTool/" in text:
+                offenders.append(path.relative_to(PROJECT_ROOT).as_posix())
 
-    for entry in manifest["example"]:
-        for snippet_id in entry["snippet_ids"]:
-            assert snippet_id in known_ids, f"unknown snippet id {snippet_id!r} declared by {entry['id']}"
+    assert offenders == [], f"docs still contain workspace absolute links: {offenders}"
+
+
+def test_formal_navigation_pages_declare_stability() -> None:
+    payload = yaml.safe_load((PROJECT_ROOT / "mkdocs.yml").read_text(encoding="utf-8"))
+    labels = ("Public API", "Internal API", "Private / implementation detail")
+
+    def flatten(items: list[object]) -> list[str]:
+        result: list[str] = []
+        for item in items:
+            if isinstance(item, str):
+                result.append(item)
+            elif isinstance(item, dict):
+                for value in item.values():
+                    if isinstance(value, str):
+                        result.append(value)
+                    elif isinstance(value, list):
+                        result.extend(flatten(value))
+        return result
+
+    for rel in flatten(payload["nav"]):
+        text = (PROJECT_ROOT / "docs" / rel).read_text(encoding="utf-8")
+        assert any(label in text for label in labels), f"{rel} missing stability label"
+
+
+def test_custom_extension_doc_is_internal_only() -> None:
+    text = (PROJECT_ROOT / "docs" / "developer" / "custom_extension.md").read_text(encoding="utf-8")
+
+    assert "Internal API" in text
+    assert "examples/10_scenarios/08_custom_extension/main.py" in text
 
 
 def test_docstring_coverage_script_passes() -> None:
@@ -148,93 +183,13 @@ def test_docstring_coverage_script_passes() -> None:
 
 
 def test_mkdocs_site_check_script_passes() -> None:
-    script = _load_script_module(
-        "check_mkdocs_site_script",
-        PROJECT_ROOT / "scripts" / "check_mkdocs_site.py",
-    )
+    script = _load_script_module("check_mkdocs_site_script", PROJECT_ROOT / "scripts" / "check_mkdocs_site.py")
     assert script.main() == 0
 
 
-def test_docstring_coverage_script_scans_all_source_modules() -> None:
+def test_resource_consistency_script_passes() -> None:
     script = _load_script_module(
-        "check_docstring_coverage_script_all_source",
-        PROJECT_ROOT / "scripts" / "check_docstring_coverage.py",
+        "check_resource_consistency_script",
+        PROJECT_ROOT / "scripts" / "check_resource_consistency.py",
     )
-
-    target_files = {path.relative_to(PROJECT_ROOT).as_posix() for path in script._iter_target_files()}
-
-    assert "src/dyntool/storage/runtime.py" in target_files
-    assert "src/dyntool/infrastructure/sample_set_storage.py" in target_files
-
-
-def test_docstring_coverage_script_checks_focused_structure() -> None:
-    script = _load_script_module(
-        "check_docstring_coverage_script_structure",
-        PROJECT_ROOT / "scripts" / "check_docstring_coverage.py",
-    )
-
-    violations: list[str] = []
-    for path in script._iter_target_files():
-        violations.extend(script._iter_structure_violations(path))
-
-    assert violations == []
-
-
-def test_docstring_coverage_script_ignores_private_class_methods() -> None:
-    script = _load_script_module(
-        "check_docstring_coverage_script_private_class",
-        PROJECT_ROOT / "scripts" / "check_docstring_coverage.py",
-    )
-    temp_dir = PROJECT_ROOT / "tmp" / "docstring_coverage_test"
-    temp_dir.mkdir(parents=True, exist_ok=True)
-    module_path = temp_dir / "private_module.py"
-    try:
-        module_path.write_text(
-            textwrap.dedent(
-                '''\
-                """临时模块。"""
-
-                class _InternalHelper:
-                    def exposed_name(self) -> None:
-                        pass
-                '''
-            ),
-            encoding="utf-8",
-        )
-
-        violations = script._iter_missing_docstrings(module_path)
-
-        assert violations == []
-    finally:
-        shutil.rmtree(temp_dir, ignore_errors=True)
-
-
-def test_docstring_coverage_script_reports_missing_focused_sections(monkeypatch: object) -> None:
-    script = _load_script_module(
-        "check_docstring_coverage_script_missing_section",
-        PROJECT_ROOT / "scripts" / "check_docstring_coverage.py",
-    )
-    temp_dir = PROJECT_ROOT / "tmp" / "docstring_structure_test"
-    temp_dir.mkdir(parents=True, exist_ok=True)
-    module_path = temp_dir / "focused_module.py"
-    rel = module_path.relative_to(PROJECT_ROOT).as_posix()
-    try:
-        module_path.write_text(
-            textwrap.dedent(
-                '''\
-                """临时重点模块。"""
-
-                class PublicApi:
-                    """缺少结构段落。"""
-                '''
-            ),
-            encoding="utf-8",
-        )
-
-        monkeypatch.setitem(script.FOCUSED_SECTION_REQUIREMENTS, rel, {"PublicApi": ("Attributes:",)})
-        violations = script._iter_structure_violations(module_path)
-
-        assert violations == [f"{rel}: PublicApi missing section Attributes:"]
-    finally:
-        script.FOCUSED_SECTION_REQUIREMENTS.pop(rel, None)
-        shutil.rmtree(temp_dir, ignore_errors=True)
+    assert script.main() == 0

@@ -1,0 +1,35 @@
+[zh]
+axes.unicode_minus = false
+font.family = "sans-serif"
+font.sans-serif = ["SongTNR"]
+font.serif = ["SongTNR"]
+mathtext.fontset = "stix"
+font.size = 8
+
+[axis_frame.frame.spine]
+linewidth = 0.8
+color = "black"
+visible = true
+
+[axis_frame.frame.major]
+direction = "in"
+length = 3.0
+width = 0.8
+labelsize = 8
+
+[axis_frame.frame.minor]
+direction = "in"
+length = 2.0
+width = 0.6
+
+[grid_frame.frame]
+able = false
+which = "major"
+color = "#d0d0d0"
+linewidth = 0.5
+linestyle = "--"
+alpha = 0.7
+zorder = 0
+
+[legend.frame]
+loc = "best"

@@ -29,13 +29,11 @@ class Sample(SampleBase):
                 name="freqspec",
                 model_type=FreqSpec,
                 role="composite",
-                include_in_storage=False,
             ),
             SampleSlotSpec(
                 name="respspec",
                 model_type=RespSpec,
                 role="composite",
-                include_in_storage=False,
             ),
         ),
     )

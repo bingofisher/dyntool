@@ -5,21 +5,24 @@
 - 任何涉及行为、接口、架构变化的改动，必须同步更新 `README.md`、`ARCHITECTURE.md` 和正式文档站内容。
 - 允许重构和 API 演进，但禁止无说明的静默破坏。
 
-## 2) 分层架构约束
-- 实现层命名空间固定为：`domain`、`compute`、`application`、`infrastructure`。
-- 依赖方向必须满足：`application -> domain/compute`、`domain -> compute`、`infrastructure -> domain`。
-- `logging`、`plotting`、`storage`、`config`、`resources` 是独立正式模块入口，不计入实现层命名空间。
+## 2) 实现层与依赖约束
+- 当前实现层固定为：`domain`、`compute`、`application`、`infrastructure`。
+- 依赖方向必须满足：
+  - `application -> domain/compute`
+  - `domain -> compute`
+  - `infrastructure -> domain`
 - 禁止反向依赖和跨层绕行。
 - `compute -> domain` 明确禁止。
 - 历史模块只允许删除或归档，不再新增业务功能。
 
 ## 3) 正式公开面
-- 正式公开面只保留两条主线：
-  - 类 API：`AccelSeries`、`Metadata`、`Sample`、`SampleSet` 等核心类
-  - 独立模块 API：`dyntool.plotting`、`dyntool.logging`、`dyntool.storage`、`dyntool.config`
-- `DynTool` 只保留：
-  - `resource`
-  - `options`
+- 正式公开面采用两层结构：
+  - 顶层对象 API：`AccelSeries`、`Metadata`、`Sample`、`SampleSet` 等核心对象
+  - 独立模块 API：`dyntool.storage`、`dyntool.plotting`、`dyntool.logging`
+- 正式支持模块：
+  - `dyntool.config`
+  - `dyntool.resources`
+- 不再保留 `DynTool`。
 - 不再恢复 `tool.models`、`tool.sample`、`tool.sampleset`、`tool.processing`、`tool.evaluation`、`tool.plotting`、`tool.logger`、`tool.storage` 等旧入口。
 
 ## 4) Python 代码规范
@@ -53,7 +56,7 @@
 ## 6) 文档与示例规则
 - `README.md` 负责入口摘要，不承担完整手册职责。
 - 完整用户文档、开发者文档、API 参考统一固化到 MkDocs 文档工程。
-- 正式文档采用 `MkDocs + Material + mkdocstrings[python]`。
+- 正式文档采用 `MkDocs + Material + mkdocstrings`。
 - 所有正式文档、示例说明、开发者手册统一使用中文。
 - 文档中必须显式标注稳定性：
   - `Public API`
@@ -85,6 +88,7 @@
 
 ## 9) 质量门禁
 - 提交前至少执行：
+  - `python scripts/check_codex_assets.py`
   - `ruff check src/dyntool tests examples`
   - `ruff format --check src/dyntool tests examples`
   - `python scripts/check_layer_imports.py`
@@ -92,11 +96,11 @@
   - `python scripts/check_docstring_coverage.py`
   - `python scripts/check_public_api_baseline.py`
   - `python scripts/check_mkdocs_site.py`
-  - `python -m mkdocs build --strict`
+  - `uv run mkdocs build --strict`
   - `pyright src/dyntool tests/typing_public_api.py`
   - `pytest -q`
 - 关键行为必须有测试：
-  - CLI/demo 路径
+  - demo 路径
   - `from_accel -> eval -> save/load -> plot` 最小闭环
   - Enum-only 参数校验
   - `tests/input_data` 真实输入文件读取测试
@@ -105,11 +109,54 @@
 
 ## 10) 示例与测试资源
 - README 示例必须可运行或可被 smoke 测试覆盖。
-- 示例采用“场景主线 + recipes”双层结构：
-  - `examples/10_scenarios/`
-  - `examples/90_recipes/`
-- 每个场景目录必须提供 `README.md` 和 `main.py`。
-- 每个 recipe 目录必须提供 `README.md`，被正式引用的 recipe 应提供可运行入口。
+- 示例采用“系统示例 + workflow 示例”双层结构，不以单一大全脚本作为主路径。
+- 每个示例目录必须提供 `README.md`。
 - 文档中必须提供“功能 -> 示例 -> 测试”映射索引。
 - `tests/input_data` 是长期维护的真实输入夹具目录。
 - I/O 和样本闭环测试必须覆盖真实输入文件，而不只依赖临时构造数组。
+
+## 11) Codex 工作方式与子代理策略
+- 默认优先由主代理直接完成任务，不因为“可以并行”就默认启用子代理。
+- 子代理是复杂度驱动的协作手段，不是每次启动时都要使用的默认工作模式。
+- 如果任务可以由主代理在当前上下文中稳定完成，应优先直接完成。
+- 仓库级子代理定义放在 `.codex/agents/`。
+- 仓库级技能定义放在 `.agents/skills/`。
+- 这些仓库级 Codex 资产必须纳入 `python scripts/check_codex_assets.py` 校验。
+
+### 简单任务
+- 简单任务默认不用子代理，由主代理直接处理。
+- 简单任务示例：
+  - 单文件小修。
+  - 文案、注释、docstring 修正。
+  - 局部测试修正。
+  - 局部实现细节修正。
+  - 不涉及公开 API、存储格式、单位语义、分层边界的微小改动。
+
+### 稍微复杂任务
+- 稍微复杂的任务默认仍不用子代理，优先组合多个适用 skill 协作完成。
+- 如果只有一个 skill 真正适用，则只使用一个适用 skill，不机械要求必须调用多个 skill。
+- 稍微复杂任务示例：
+  - 同一子系统内的多文件改动。
+  - 需要同时补测试和补文档说明的改动。
+  - 需要组合两个及以上适用 skill 才能更稳妥完成的任务。
+  - 复杂度高于单点修补，但不属于整个仓库重构或跨层系统性改动的任务。
+
+### 十分复杂任务与重构任务
+- 整个项目重构、跨层大改或十分复杂的任务，才考虑使用子代理。
+- 十分复杂任务示例：
+  - 跨 `domain`、`compute`、`application`、`infrastructure` 多层联动的重构。
+  - 公开 API 调整。
+  - 存储格式变化。
+  - 单位语义变化。
+  - 需要同步大量文档、示例、测试与质量基线检查的系统性改动。
+
+### 询问用户是否启用子代理
+- 当代理判断“有必要使用子代理”时，必须先询问用户是否启用子代理。
+- 只有以下两种情况可以不先询问：
+  - 用户已经明确指定要使用子代理。
+  - 用户明确在询问是否应该使用子代理或如何使用子代理。
+- 即使任务理论上可以拆分并行，只要主代理能够稳定完成，也不应仅因并行便利而默认启用子代理。
+
+### 与现有确认规则的关系
+- 本节只规定 Codex 的工作方式，不覆盖本文件第 8 节“必须先问用户的事项”。
+- 涉及公开 API、存储格式、单位语义、兼容层删除、默认行为变化等事项时，仍必须先按第 8 节询问用户。

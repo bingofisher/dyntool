@@ -1,22 +1,46 @@
-"""规范样本和样本集工作流辅助函数。"""
+"""规范样本与样本集工作流辅助函数。"""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Callable
 
+from .batch import BatchOperationReport, OperationResult, _recoverable_io_error, make_operation_result
 from .commands import VibEvalCommand
 
 if TYPE_CHECKING:
+    from .base import SampleBaseModel
     from .sets import SampleSetBase
 
 
+def _reject_removed_force_argument(kwargs: dict[str, Any]) -> None:
+    """拒绝历史 `force` 参数。"""
+
+    if "force" in kwargs:
+        raise TypeError("force 参数已移除，请使用 overwrite")
+
+
 def evaluate_sample(
-    sample: object,
+    sample: "SampleBaseModel",
     command: VibEvalCommand,
     **kwargs: Any,
-) -> tuple[bool, str]:
-    """对单个样本执行规范评价。"""
+) -> OperationResult[Any]:
+    """对单个样本执行规范评价。
 
+    Args:
+        sample: 待评价的样本对象。
+        command: 评价命令枚举。
+        **kwargs: 支持键包括 `overwrite`、`freq_range`、`weight_type`、
+            `time_windows`、`nsup`、`calc_unit_system` 与
+            `output_unit_system`。
+
+    Returns:
+        单样本操作结果对象。
+
+    Raises:
+        ValueError: 评价命令不受支持。
+    """
+
+    _reject_removed_force_argument(kwargs)
     if command is VibEvalCommand.ZVL:
         return _evaluate_zvl(sample, **kwargs)
     if command is VibEvalCommand.OTOVL:
@@ -33,16 +57,34 @@ def evaluate_sample_set(
     command: VibEvalCommand,
     *,
     overwrite: bool = False,
+    strict: bool | None = None,
     uid: str | None = None,
     uids: list[str] | None = None,
     filter: Callable[[Any], bool] | None = None,
-    **kwargs: object,
-) -> dict[str, tuple[bool, str]] | tuple[bool, str]:
-    """对样本集执行规范评价。"""
+    **kwargs: Any,
+) -> BatchOperationReport[Any]:
+    """对样本集执行规范评价。
 
-    return sample_set._batch_vibeval(  # type: ignore[attr-defined]
+    Args:
+        sample_set: 待评价的样本集对象。
+        command: 评价命令枚举。
+        overwrite: 是否覆盖已有结果。
+        strict: 是否覆盖样本集严格模式。
+        uid: 仅处理单个样本 UID。
+        uids: 处理多个样本 UID。
+        filter: 样本过滤函数。
+        **kwargs: 支持键包括 `freq_range`、`weight_type`、`time_windows`、
+            `nsup`、`calc_unit_system` 与 `output_unit_system`。
+
+    Returns:
+        样本集批量操作报告对象。
+    """
+
+    _reject_removed_force_argument(dict(kwargs))
+    return sample_set._batch_vibeval(
         command,
         overwrite=overwrite,
+        strict=strict,
         uid=uid,
         uids=uids,
         filter=filter,
@@ -54,17 +96,31 @@ def evaluate_sample_set_all(
     sample_set: "SampleSetBase[Any]",
     *,
     overwrite: bool = False,
+    strict: bool | None = None,
     uid: str | None = None,
     uids: list[str] | None = None,
     filter: Callable[[Any], bool] | None = None,
     **kwargs: Any,
 ) -> None:
-    """对样本集执行全部规范评价。"""
+    """对样本集执行全部内置评价。
 
+    Args:
+        sample_set: 待评价的样本集对象。
+        overwrite: 是否覆盖已有结果。
+        strict: 是否覆盖样本集严格模式。
+        uid: 仅处理单个样本 UID。
+        uids: 处理多个样本 UID。
+        filter: 样本过滤函数。
+        **kwargs: 支持键包括 `freq_range`、`weight_type`、`time_windows`、
+            `nsup`、`calc_unit_system` 与 `output_unit_system`。
+    """
+
+    _reject_removed_force_argument(kwargs)
     evaluate_sample_set(
         sample_set,
         VibEvalCommand.ZVL,
         overwrite=overwrite,
+        strict=strict,
         uid=uid,
         uids=uids,
         filter=filter,
@@ -74,6 +130,7 @@ def evaluate_sample_set_all(
         sample_set,
         VibEvalCommand.OTOVL,
         overwrite=overwrite,
+        strict=strict,
         uid=uid,
         uids=uids,
         filter=filter,
@@ -83,6 +140,7 @@ def evaluate_sample_set_all(
         sample_set,
         VibEvalCommand.FDMVL,
         overwrite=overwrite,
+        strict=strict,
         uid=uid,
         uids=uids,
         filter=filter,
@@ -92,6 +150,7 @@ def evaluate_sample_set_all(
         sample_set,
         VibEvalCommand.FPVDV,
         overwrite=overwrite,
+        strict=strict,
         uid=uid,
         uids=uids,
         filter=filter,
@@ -99,12 +158,22 @@ def evaluate_sample_set_all(
     )
 
 
-def preprocess_sample(sample: object, **kwargs: Any) -> tuple[bool, str]:
-    """对单个样本执行规范预处理。"""
+def preprocess_sample(sample: "SampleBaseModel", **kwargs: Any) -> OperationResult[Any]:
+    """对单个样本执行规范预处理。
 
+    Args:
+        sample: 待处理的样本对象。
+        **kwargs: 支持键包括 `truncate_range`、`baseline`、`baseline_order`、
+            `highpass`、`lowpass`、`bandpass` 与 `filter_order`。
+
+    Returns:
+        单样本操作结果对象。
+    """
+
+    action = "preprocess"
     accel = getattr(sample, "accel", None)
     if accel is None:
-        return False, "无加速度数据"
+        return make_operation_result(action=action, success=False, message="无加速度数据", value=sample)
     try:
         processed = accel
         truncate_range = kwargs.get("truncate_range")
@@ -117,10 +186,7 @@ def preprocess_sample(sample: object, **kwargs: Any) -> tuple[bool, str]:
         if truncate_range is not None:
             processed = processed.truncate(*truncate_range)
         if baseline is not None:
-            processed = processed.baseline_correct(
-                method=baseline,
-                order=baseline_order,
-            )
+            processed = processed.baseline_correct(method=baseline, order=baseline_order)
         if highpass is not None:
             processed = processed.filter_highpass(highpass, order=filter_order)
         if lowpass is not None:
@@ -131,85 +197,118 @@ def preprocess_sample(sample: object, **kwargs: Any) -> tuple[bool, str]:
                 f_high=bandpass[1],
                 order=filter_order,
             )
-        setattr(sample, "accel", processed)
-        return True, "处理完成"
+        sample.update_data(accel=processed)
+        return make_operation_result(action=action, success=True, message="处理完成", value=sample)
     except Exception as exc:
-        return False, f"预处理失败: {exc}"
+        return make_operation_result(
+            action=action,
+            success=False,
+            message=f"预处理失败: {exc}",
+            value=sample,
+            error=exc,
+        )
 
 
 def preprocess_sample_set(
     sample_set: "SampleSetBase[Any]",
     *,
+    strict: bool | None = None,
     uid: str | None = None,
     uids: list[str] | None = None,
     filter: Callable[[Any], bool] | None = None,
     **kwargs: Any,
-) -> dict[str, tuple[bool, str]] | tuple[bool, str]:
-    """对样本集执行规范预处理。"""
+) -> BatchOperationReport[Any]:
+    """对样本集执行规范预处理。
 
-    results: dict[str, tuple[bool, str]] = {}
-    for item_uid, sample in sample_set._select_samples(  # type: ignore[attr-defined]
-        uid=uid,
-        uids=uids,
-        filter=filter,
-    ):
-        results[item_uid] = preprocess_sample(sample, **kwargs)
-    if uid is not None:
-        return results[uid]
-    return results
+    Args:
+        sample_set: 待处理的样本集对象。
+        strict: 是否覆盖样本集严格模式。
+        uid: 仅处理单个样本 UID。
+        uids: 处理多个样本 UID。
+        filter: 样本过滤函数。
+        **kwargs: 支持键包括 `truncate_range`、`baseline`、`baseline_order`、
+            `highpass`、`lowpass`、`bandpass` 与 `filter_order`。
+
+    Returns:
+        样本集批量操作报告对象。
+
+    Raises:
+        OSError: 严格模式下任一样本处理失败时由可恢复 I/O 错误包装抛出。
+    """
+
+    report = BatchOperationReport[Any](
+        action="preprocess",
+        strict=sample_set.strict if strict is None else strict,
+    )
+    items = sample_set._select_samples(uid=uid, uids=uids, filter=filter)
+    report.stats.valid_samples = sum(1 for _, sample in items if getattr(sample, "accel", None) is not None)
+    recoverable_io_error = _recoverable_io_error()
+    for item_uid, sample in items:
+        result = preprocess_sample(sample, **kwargs)
+        report.add(item_uid, result)
+        if report.strict and result.status == "failed":
+            sample_set._last_operation_report = report
+            raise recoverable_io_error(f"批处理失败: {item_uid}") from result.error
+    sample_set._last_operation_report = report
+    return report
 
 
-def _evaluate_zvl(sample: object, **kwargs: Any) -> tuple[bool, str]:
+def _evaluate_zvl(sample: "SampleBaseModel", **kwargs: Any) -> OperationResult[Any]:
+    """执行 Z 振级评价。"""
+
     return _run_sample_eval(sample, attr_name="zvl", runner_name="eval_zvl", **kwargs)
 
 
-def _evaluate_otovl(sample: object, **kwargs: Any) -> tuple[bool, str]:
-    return _run_sample_eval(
-        sample,
-        attr_name="otovl",
-        runner_name="eval_otovl",
-        **kwargs,
-    )
+def _evaluate_otovl(sample: "SampleBaseModel", **kwargs: Any) -> OperationResult[Any]:
+    """执行 1/3 倍频程振级评价。"""
+
+    return _run_sample_eval(sample, attr_name="otovl", runner_name="eval_otovl", **kwargs)
 
 
-def _evaluate_fdmvl(sample: object, **kwargs: Any) -> tuple[bool, str]:
-    return _run_sample_eval(
-        sample,
-        attr_name="fdmvl",
-        runner_name="eval_fdmvl",
-        **kwargs,
-    )
+def _evaluate_fdmvl(sample: "SampleBaseModel", **kwargs: Any) -> OperationResult[Any]:
+    """执行分频最大振级评价。"""
+
+    return _run_sample_eval(sample, attr_name="fdmvl", runner_name="eval_fdmvl", **kwargs)
 
 
-def _evaluate_fpvdv(sample: object, **kwargs: Any) -> tuple[bool, str]:
-    return _run_sample_eval(
-        sample,
-        attr_name="fpvdv",
-        runner_name="eval_fpvdv",
-        **kwargs,
-    )
+def _evaluate_fpvdv(sample: "SampleBaseModel", **kwargs: Any) -> OperationResult[Any]:
+    """执行四次方振动剂量值评价。"""
+
+    return _run_sample_eval(sample, attr_name="fpvdv", runner_name="eval_fpvdv", **kwargs)
 
 
 def _run_sample_eval(
-    sample: object,
+    sample: "SampleBaseModel",
     *,
     attr_name: str,
     runner_name: str,
-    force: bool = False,
-    overwrite: bool | None = None,
+    overwrite: bool = False,
     **kwargs: Any,
-) -> tuple[bool, str]:
+) -> OperationResult[Any]:
+    """执行单个评价动作。
+
+    Args:
+        sample: 待评价的样本对象。
+        attr_name: 评价结果属性名，例如 `otovl`。
+        runner_name: 加速度数据模型上的执行方法名。
+        overwrite: 是否覆盖已有结果。
+        **kwargs: 透传给具体评价方法的命名参数。
+
+    Returns:
+        单样本操作结果对象。
+    """
+
+    action = attr_name
     accel = getattr(sample, "accel", None)
     run_action = getattr(sample, "_run_accel_action", None)
-    resolve_overwrite = getattr(sample, "_resolve_overwrite", None)
     if accel is None:
-        return False, "无加速度数据"
-    if run_action is None or resolve_overwrite is None:
+        return make_operation_result(action=action, success=False, message="无加速度数据", value=sample)
+    if run_action is None:
         raise TypeError(f"{type(sample).__name__} 不支持规范振动评价")
     runner = getattr(accel, runner_name)
     return run_action(
         attr_name=attr_name,
-        overwrite=resolve_overwrite(force=force, overwrite=overwrite),
+        overwrite=overwrite,
         runner=lambda: runner(**kwargs),
         use_eval_formatter=True,
     )

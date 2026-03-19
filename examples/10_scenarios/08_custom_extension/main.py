@@ -1,16 +1,18 @@
-"""扩展自定义模型、元数据、样本和样本集。"""
+"""演示自定义扩展能力。"""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from examples._legacy_runner import run_legacy_example
+from examples._scenario_impls import _scenario_custom_extension
 
 
 def main(output_dir: Path | None = None) -> dict[str, object]:
-    """运行自定义扩展场景。"""
+    """运行对应示例入口。"""
 
-    return run_legacy_example("examples/11_custom_extension/custom_domain_extension.py", output_dir=output_dir)
+    # docs:begin custom_extension_minimal
+    return _scenario_custom_extension(output_dir=output_dir)
+    # docs:end custom_extension_minimal
 
 
 if __name__ == "__main__":

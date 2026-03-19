@@ -101,7 +101,7 @@ def test_sample_schema_returns_storage_slot_names_only() -> None:
     assert schema.slot_names(include_storage_only=True) == ("accel",)
 
 
-def test_sample_structured_payload_omits_non_storage_slots() -> None:
+def test_sample_structured_payload_includes_storable_freqspec_slot() -> None:
     sample = VibrationTestSample(
         metadata=VibrationTestMetadata(
             case="c1",
@@ -113,10 +113,10 @@ def test_sample_structured_payload_omits_non_storage_slots() -> None:
         ),
         accel=AccelSeries.from_data([0.0, 0.1, -0.1], dt=0.01),
     )
-    ok, _ = sample.calc_freqspec(force=True)
-    assert ok is True
+    result = sample.calc_freqspec(overwrite=True)
+    assert result.success is True
     payload = sample.to_structured_payload()
-    assert "freqspec" not in payload.data_vars
+    assert "freqspec" in payload.data_vars
 
 
 def test_storage_context_canonicalizes_alias_categories_for_storage(

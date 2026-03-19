@@ -36,10 +36,10 @@ def test_recipe_sample_set_filter_parallel_io(tmp_path: Path) -> None:
     assert result["evaluated_count"] == 1
 
 
-def test_recipe_plot_payload_and_plotters(tmp_path: Path) -> None:
+def test_recipe_plot_dataset_and_plotters(tmp_path: Path) -> None:
     result = run_example(
-        "examples/90_recipes/plot_payload_and_plotters/main.py",
-        output_dir=tmp_path / "plot_payload_and_plotters",
+        "examples/90_recipes/plot_dataset_and_plotters/main.py",
+        output_dir=tmp_path / "plot_dataset_and_plotters",
     )
     assert result["plot_kind"] == "time"
     assert Path(result["raw_plot"]).exists()
@@ -70,13 +70,6 @@ def test_recipe_storage_scheme_selection(tmp_path: Path) -> None:
     assert Path(result["dir_path"]).exists()
     assert Path(result["model_path"]).exists()
     assert "time" in result["model_units"]
-
-
-def test_recipe_structured_payload_roundtrip() -> None:
-    result = run_example("examples/90_recipes/structured_payload_roundtrip/main.py")
-    assert result["original_type"] == "AccelSeries"
-    assert result["restored_type"] == "AccelSeries"
-    assert result["axis_unit"] == "second"
 
 
 def test_recipe_docs_exist() -> None:

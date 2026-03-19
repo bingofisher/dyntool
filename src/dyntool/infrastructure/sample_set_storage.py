@@ -354,7 +354,11 @@ class SampleSetStorage:
             uid = sample.uid
             if filter is not None and not filter(sample):
                 return
-            if uid in existing_uids or uid in loaded_samples:
+            existing_sample = existing_samples.get(uid)
+            is_same_source_stub = (
+                existing_sample is not None and getattr(existing_sample, "_originated_from_storage", False) is True
+            )
+            if uid in loaded_samples:
                 fail += 1
                 self._raise_or_collect_load_error(
                     uid,
@@ -363,6 +367,16 @@ class SampleSetStorage:
                     errors=errors,
                 )
                 return
+            if uid in existing_uids and not is_same_source_stub:
+                fail += 1
+                self._raise_or_collect_load_error(
+                    uid,
+                    self._duplicate_uid_error(uid),
+                    strict=strict,
+                    errors=errors,
+                )
+                return
+            sample._originated_from_storage = True
             loaded_samples[uid] = sample
             ok += 1
 

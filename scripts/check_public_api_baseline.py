@@ -9,6 +9,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 BASELINE_PATH = PROJECT_ROOT / "docs" / "baselines" / "public_api_baseline.toml"
+EXAMPLES_MANIFEST_PATH = PROJECT_ROOT / "docs" / "examples_manifest.toml"
 SCAN_ROOTS = [
     PROJECT_ROOT / "src",
     PROJECT_ROOT / "examples",
@@ -23,6 +24,21 @@ EXCLUDED_SCAN_PREFIXES = {
     (PROJECT_ROOT / "docs" / "plans").resolve(),
     (PROJECT_ROOT / "docs" / "archive").resolve(),
 }
+
+
+def _internal_example_paths() -> set[Path]:
+    manifest = tomllib.loads(EXAMPLES_MANIFEST_PATH.read_text(encoding="utf-8"))
+    internal: set[Path] = set()
+    for entry in manifest.get("example", []):
+        if entry.get("kind") != "internal":
+            continue
+        script = entry.get("script")
+        readme = entry.get("readme")
+        if isinstance(script, str):
+            internal.add((PROJECT_ROOT / script).resolve())
+        if isinstance(readme, str):
+            internal.add((PROJECT_ROOT / readme).resolve())
+    return internal
 
 
 def _load_baseline() -> dict[str, object]:
@@ -43,6 +59,8 @@ def _iter_scan_files() -> list[Path]:
     for path in files:
         resolved = path.resolve()
         if resolved in EXCLUDED_SCAN_FILES:
+            continue
+        if resolved in _internal_example_paths():
             continue
         if any(str(resolved).startswith(str(prefix)) for prefix in EXCLUDED_SCAN_PREFIXES):
             continue
@@ -80,17 +98,20 @@ def _check_package_exports(allowed: list[str], removed: list[str]) -> list[str]:
     return violations
 
 
-def _check_dyntool_members(allowed: list[str], removed: list[str]) -> list[str]:
-    from dyntool import DynTool
-
-    tool = DynTool()
-    public_members = sorted(name for name in vars(tool) if not name.startswith("_"))
+def _check_public_api_docs() -> list[str]:
+    path = PROJECT_ROOT / "docs" / "api" / "public_api.md"
+    text = path.read_text(encoding="utf-8")
+    required_tokens = (
+        "dyntool.storage",
+        "dyntool.plotting",
+        "dyntool.logging",
+        "dyntool.config",
+        "dyntool.resources",
+    )
     violations: list[str] = []
-    if sorted(allowed) != public_members:
-        violations.append("src/dyntool/application/facade.py: DynTool public members drifted from baseline")
-    for name in removed:
-        if hasattr(tool, name):
-            violations.append(f"src/dyntool/application/facade.py: removed DynTool member still exists: {name}")
+    for token in required_tokens:
+        if token not in text:
+            violations.append(f"docs/api/public_api.md: missing public API token {token!r}")
     return violations
 
 
@@ -99,12 +120,10 @@ def main() -> int:
     forbidden_tokens = list(baseline["forbidden_tokens"])
     top_level_exports_allowed = list(baseline["top_level_exports_allowed"])
     top_level_exports_removed = list(baseline["top_level_exports_removed"])
-    dyntool_members_allowed = list(baseline["dyntool_members_allowed"])
-    dyntool_members_removed = list(baseline["dyntool_members_removed"])
 
     violations = _scan_forbidden_tokens(forbidden_tokens)
     violations.extend(_check_package_exports(top_level_exports_allowed, top_level_exports_removed))
-    violations.extend(_check_dyntool_members(dyntool_members_allowed, dyntool_members_removed))
+    violations.extend(_check_public_api_docs())
 
     if violations:
         print("Public API baseline check failed:")

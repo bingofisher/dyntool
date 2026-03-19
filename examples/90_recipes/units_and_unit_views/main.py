@@ -1,17 +1,17 @@
-"""查看单位与单位视图。"""
+"""查看单位并执行单位往返。"""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from examples._legacy_runner import run_legacy_example
+from examples._scenario_impls import _recipe_units_and_unit_views
 
 
 def main(output_dir: Path | None = None) -> dict[str, object]:
-    """运行单位视图 recipe。"""
+    """运行对应示例入口。"""
 
     # docs:begin csv_unit_roundtrip
-    return run_legacy_example("examples/02_units/unit_views.py", output_dir=output_dir)
+    return _recipe_units_and_unit_views(output_dir=output_dir)
     # docs:end csv_unit_roundtrip
 
 

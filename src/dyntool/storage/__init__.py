@@ -3,26 +3,27 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Callable, TypeVar
+from typing import Any, Callable, TypeAlias, TypeVar
 
 from ..domain.enums import SampleDomain
 from ..domain.metadata import MetadataBase
 from ..domain.models import DataModelBase
 from ..domain.samples import SampleBaseModel, SampleSetBase
 from .runtime import StorageRuntime
-from .types import AttrDataFormat, ContainerFormat, StorageMode, StorageScheme
+from .types import AttrDataFormat, ContainerFormat, NameResolver, StorageMode, StorageScheme
 
 ModelT = TypeVar("ModelT", bound=DataModelBase)
 MetadataT = TypeVar("MetadataT", bound=MetadataBase)
 SampleT = TypeVar("SampleT", bound=SampleBaseModel)
 SampleSetT = TypeVar("SampleSetT", bound=SampleSetBase[Any])
+IOOptions: TypeAlias = dict[str, Any]
 
 
 def save_model(
     model: DataModelBase,
     path: str | Path,
     *,
-    io_options: dict[str, object] | None = None,
+    io_options: IOOptions | None = None,
 ) -> Path:
     """保存单个数据模型。"""
 
@@ -38,7 +39,7 @@ def load_model(
     path: str | Path,
     model_type: type[ModelT],
     *,
-    io_options: dict[str, object] | None = None,
+    io_options: IOOptions | None = None,
 ) -> ModelT:
     """加载单个数据模型。"""
 
@@ -54,7 +55,7 @@ def inspect_model_units(
     path: str | Path,
     model_type: type[DataModelBase],
     *,
-    io_options: dict[str, object] | None = None,
+    io_options: IOOptions | None = None,
 ) -> dict[str, str]:
     """检查模型文件中的单位信息。"""
 
@@ -82,7 +83,7 @@ def save_sample(
     sample: SampleT,
     path: str | Path,
     *,
-    io_options: dict[str, object] | None = None,
+    io_options: IOOptions | None = None,
 ) -> SampleT:
     """保存单个样本。"""
 
@@ -97,7 +98,7 @@ def load_sample(
     sample: SampleT,
     path: str | Path,
     *,
-    io_options: dict[str, object] | None = None,
+    io_options: IOOptions | None = None,
 ) -> SampleT:
     """加载单个样本。"""
 
@@ -112,10 +113,10 @@ def connect_sample_set(
     sample_set: SampleSetT,
     base_dir: str | Path,
     *,
-    scheme: object,
-    mode: object | None = None,
+    scheme: StorageScheme,
+    mode: StorageMode | None = None,
     data_options: dict[str, Any] | None = None,
-    name_resolver: object | None = None,
+    name_resolver: NameResolver | None = None,
     set_filename: str | None = None,
 ) -> SampleSetT:
     """将样本集连接到指定存储位置。"""
@@ -135,14 +136,14 @@ def save_sample_set(
     sample_set: SampleSetBase[Any],
     path: str | Path,
     *,
-    scheme: object | None = None,
+    scheme: StorageScheme | None = None,
     data_options: dict[str, Any] | None = None,
     categories: list[str] | None = None,
-    strict: bool = True,
+    strict: bool | None = None,
     filter: Callable[[Any], bool] | None = None,
     workers: int = 1,
     chunk_size: int = 256,
-    name_resolver: object | None = None,
+    name_resolver: NameResolver | None = None,
     set_filename: str | None = None,
 ) -> None:
     """保存样本集。"""
@@ -166,7 +167,7 @@ def load_sample_set(
     path: str | Path,
     *,
     domain: SampleDomain,
-    scheme: object | None = None,
+    scheme: StorageScheme | None = None,
     data_options: dict[str, Any] | None = None,
     categories: list[str] | None = None,
     strict: bool | None = None,

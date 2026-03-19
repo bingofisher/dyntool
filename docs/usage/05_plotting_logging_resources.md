@@ -2,52 +2,42 @@
 
 稳定性：`Public API`
 
-## 这页解决什么问题？
-
-这页说明三个正式模块 API：`dyntool.plotting`、`dyntool.logging`、`DynTool.resource`。它们不负责建模本身，但决定结果如何展示、如何排查以及如何复用标准资源。
+这一页说明三条正式入口：`dyntool.plotting`、`dyntool.logging` 和 `dyntool.resources`。它们分别负责静态绘图、独立日志配置和内置资源读取。
 
 ## 最短可运行用法
 
 ```python
 import dyntool.logging as dt_logging
 import dyntool.plotting as dt_plotting
-from dyntool import AccelSeries, DynTool, LoggingMode
+import dyntool.resources as dt_resources
 
-accel = AccelSeries.from_data([0.0, 0.1, -0.03], dt=0.01)
-dt_logging.configure_logging(mode=LoggingMode.CONSOLE_ONLY, level="INFO")
-payload = accel.to_plot_payload()
-plot = dt_plotting.render_payload(payload)
-tool = DynTool()
-print(type(plot).__name__, len(tool.resource.keys()))
+freqs, _ = dt_resources.center_freqs((2.0, 80.0))
+logger = dt_logging.get_logger("demo")
+logger.info("loaded %s frequencies", len(freqs))
+
+dataset = dt_plotting.PlotDataset.from_axis_value(
+    axis=[0.0, 0.1, 0.2],
+    value=[0.0, 0.1, -0.05],
+    name="demo",
+    category=dt_plotting.PlotCategory.SAMPLE,
+)
+result = dt_plotting.FramePlotter().plot_dataset(dataset)
+print(result.figure is not None)
 ```
 
-## 关键代码片段
+## 正式能力
 
---8<-- "generated/snippets/plotting_minimal.py"
-
-## 标准类型 / 枚举 / 参数契约
-
-- `AccelSeries.to_plot_payload(...)`
-- `dyntool.plotting.render_payload(...)`
-- `dyntool.plotting.render_plotter(...)`
-- `configure_logging(provider=..., mode=..., level=..., provider_options=...)`
-- `LoggingMode`
-
-## 常见误区
-
-- 继续寻找对象级 `.plot()` 接口，而不是使用 plotter-first 入口
-- 误以为切到 `loguru` 后 `get_logger()` 会返回第三方 logger
-- 假设 plotting 默认会随机选择系统中文字体；正式默认字体是模块内置 `SongTNR`
-
-## 相关示例
-
-- 场景：[main.py](/D:/BaiduSyncdisk/13_CodeRepository/Projects/AdvDynTool/examples/10_scenarios/05_plot_and_export/main.py)
-- Recipe：[main.py](/D:/BaiduSyncdisk/13_CodeRepository/Projects/AdvDynTool/examples/90_recipes/plot_payload_and_plotters/main.py)
-- Recipe：[main.py](/D:/BaiduSyncdisk/13_CodeRepository/Projects/AdvDynTool/examples/90_recipes/logging_providers_and_modes/main.py)
+- `dyntool.plotting.PlotDataset`
+- `dyntool.plotting.FramePlotter`
+- `dyntool.plotting.PlotResult`
+- `dyntool.logging.configure_logging(...)`
+- `dyntool.logging.get_logger(...)`
+- `dyntool.resources.keys()`
+- `dyntool.resources.csv(...)`
+- `dyntool.resources.center_freqs(...)`
 
 ## 相关 API
 
 - `dyntool.plotting`
-- `configure_zh`
 - `dyntool.logging`
-- `DynTool().resource`
+- `dyntool.resources`

@@ -2,18 +2,32 @@
 
 稳定性：`Public API`
 
-## 这页解决什么问题？
+## 这一页解决什么问题
 
-这页说明标准 `storage` 链路的用法、模型/样本/样本集的标准持久化边界，以及批量读写时的筛选与并行参数。
+这一页说明模型、样本和样本集的正式持久化规则，以及 `categories`、`strict`、`workers` 等关键参数的公开语义。
 
 ## 最短可运行用法
 
 ```python
-import dyntool.storage as dt_storage
-from dyntool import AccelSeries, StorageScheme
+from dyntool import Sample, SampleDomain, SampleSet, VibrationTestMetadata
+from dyntool.storage import StorageScheme
 
-accel = AccelSeries.from_data([0.0, 0.1, -0.03], dt=0.01)
-dt_storage.save_model(accel, "accel.csv", scheme=StorageScheme.CSV)
+sample = Sample.from_accel_data(
+    [0.0, 0.1, -0.03],
+    dt=0.01,
+    sample_domain=SampleDomain.VIBRATION_TEST,
+    metadata_cls=VibrationTestMetadata,
+    case="demo",
+    point="P1",
+    instr="ACC-01",
+    dir="Z",
+    record="R1",
+    timestamp="2026-03-08 12:00:00",
+)
+sample_set = SampleSet.from_samples([sample], sample_domain=SampleDomain.VIBRATION_TEST)
+sample_set.save("output/sample_set.h5", storage_scheme=StorageScheme.SET_H5)
+loaded = SampleSet.from_storage("output/sample_set.h5", storage_scheme=StorageScheme.SET_H5)
+print(loaded.count())
 ```
 
 ## 关键代码片段
@@ -22,26 +36,29 @@ dt_storage.save_model(accel, "accel.csv", scheme=StorageScheme.CSV)
 
 ## 标准类型 / 枚举 / 参数契约
 
-- `save_model(...)` / `load_model(...)`
-- `save_sample_set(...)` / `load_sample_set(...)`
-- `filter`
-- `workers`
-- `chunk_size`
+- `Sample.save(...)`
+- `Sample.load(...)`
+- `SampleSet.from_storage(...)`
+- `SampleSet.save_all(...)`
+- `SampleSet.load_all(...)`
+- `StorageScheme`
+- `dyntool.storage`
 
 ## 常见误区
 
-- 继续调用历史样本集入口 `to_h5()`、`from_h5()`、`to_csv()` 或旧目录导入快捷方法
-- 误以为 `load(filter=...)` 会清空当前 `SampleSet`
+- 误以为计算派生对象会自动持久化
+- 把内部枚举或内部字段名当成正式 `categories` 入口
+- 在正式文档中直接导入 `SampleLoadMode` 或 `DataCategory`
 
 ## 相关示例
 
-- 场景：[main.py](/D:/BaiduSyncdisk/13_CodeRepository/Projects/AdvDynTool/examples/10_scenarios/04_store_and_reload/main.py)
-- 场景：[main.py](/D:/BaiduSyncdisk/13_CodeRepository/Projects/AdvDynTool/examples/10_scenarios/01_import_and_normalize/main.py)
-- Recipe：[main.py](/D:/BaiduSyncdisk/13_CodeRepository/Projects/AdvDynTool/examples/90_recipes/sample_set_filter_parallel_io/main.py)
-- Recipe：[main.py](/D:/BaiduSyncdisk/13_CodeRepository/Projects/AdvDynTool/examples/90_recipes/storage_scheme_selection/main.py)
+- `examples/10_scenarios/04_store_and_reload/main.py`
+- `examples/90_recipes/sample_set_filter_parallel_io/main.py`
+- `examples/90_recipes/storage_scheme_selection/main.py`
 
 ## 相关 API
 
+- `Sample`
+- `SampleSet`
 - `dyntool.storage`
 - `StorageScheme`
-- `SampleSet.from_storage`

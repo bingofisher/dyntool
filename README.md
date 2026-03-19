@@ -1,65 +1,62 @@
 # AdvDynTool
 
-AdvDynTool 是面向动力学计算、振动处理与结果评价的 Python 工具库，强调数值结果正确性、单位一致性和结果可追溯性。
+稳定性：`Public API`
 
-## 正式公开面
+AdvDynTool 是一个面向动力学计算、振动处理与评价的 Python 库。当前正式公开面采用“两层结构”：
 
-- 类 API：`AccelSeries`、`Metadata`、`Sample`、`SampleSet`
-- 模块 API：`dyntool.plotting`、`dyntool.logging`、`dyntool.storage`、`dyntool.config`
-- `DynTool` 只保留：`resource`、`options`
+- 顶层对象 API：`AccelSeries`、`Metadata`、`Sample`、`SampleSet` 以及常用结果对象、限制对象和枚举
+- 动作模块 API：`dyntool.storage`、`dyntool.plotting`、`dyntool.logging`
+- 正式支持模块：`dyntool.config`、`dyntool.resources`
 
-日志模块当前支持：
+当前发布版本：`v1.1.0`
 
-- 默认 `loguru` provider
-- 未安装 `loguru` 时自动回退到 `stdlib`，并记录一次警告日志
-- 通过 `configure_logging()` 或 `LoggingOptions` 统一设置 provider、等级、模式与输出位置
+更新记录见 [CHANGELOG.md](CHANGELOG.md)。
 
-## Windows 快速开始
+## 推荐入口
 
-```powershell
-uv sync --group dev --group docs
-uv run mkdocs serve
-uv run pytest -q
+```python
+import dyntool.resources as dt_resources
+import dyntool.storage as dt_storage
+from dyntool import Sample, SampleDomain, VibrationTestMetadata
+
+sample = Sample.from_accel_data(
+    [0.0, 0.12, -0.03],
+    dt=0.01,
+    sample_domain=SampleDomain.VIBRATION_TEST,
+    metadata_cls=VibrationTestMetadata,
+    case="demo",
+    point="P1",
+    instr="ACC-01",
+    dir="Z",
+    record="R1",
+    timestamp="2026-03-08 12:00:00",
+)
+sample.eval_zvl(overwrite=True, freq_range=(2.0, 60.0))
+dt_storage.save_sample(sample, "output/sample.h5")
+freqs, _ = dt_resources.center_freqs((2.0, 80.0))
+print(freqs[:3])
 ```
 
-常用本地命令：
+## 当前正式边界
 
-- `uv run mkdocs serve`
-- `uv run mkdocs build --strict`
-- `uv run ruff check src/dyntool tests examples scripts`
-- `uv run pyright src/dyntool tests/typing_public_api.py`
-- `uv run pytest -q`
+- 顶层只保留对象、结果对象、限制对象和必要枚举
+- 动作统一走模块，不再恢复 `DynTool` 门面
+- plotting 正式固定为 `matplotlib` 静态路径
+- `custom_extension` 只作为 `Internal API` 示例保留
 
 ## 文档入口
 
-- 文档首页：`docs/index.md`
-- 使用总览：`docs/user_guide.md`
-- 示例索引：`docs/examples_overview.md`
-- API 与附录：`docs/api/index.md`
-- 架构说明：`ARCHITECTURE.md`
+- [文档首页](docs/index.md)
+- [公开 API](docs/api/public_api.md)
+- [示例总览](docs/examples_overview.md)
+- [架构说明](ARCHITECTURE.md)
 
-## 示例结构
+## 文档与质量命令
 
-- 场景主线：`examples/10_scenarios/`
-- Recipes：`examples/90_recipes/`
-- 真实输入夹具：`examples/input_data/`
-
-推荐阅读顺序：
-
-1. `docs/user_guide.md`
-2. `docs/usage/01_input_and_types.md`
-3. `docs/usage/04_storage_rules.md`
-4. `docs/examples_overview.md`
-
-## 质量门禁
-
-- `uv run ruff check src/dyntool tests examples scripts`
-- `uv run ruff format --check src/dyntool tests examples scripts`
-- `uv run python scripts/check_layer_imports.py`
-- `uv run python scripts/check_public_api_baseline.py`
-- `uv run python scripts/check_text_quality.py`
-- `uv run python scripts/check_docstring_coverage.py`
-- `uv run python scripts/check_mkdocs_site.py`
-- `uv run mkdocs build --strict`
-- `uv run pyright src/dyntool tests/typing_public_api.py`
-- `uv run pytest -q`
+```powershell
+uv run mkdocs build --strict
+uv run python scripts/check_text_quality.py
+uv run python scripts/check_docstring_coverage.py
+uv run python scripts/check_mkdocs_site.py
+uv run pytest -q
+```

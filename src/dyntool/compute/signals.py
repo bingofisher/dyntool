@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import Any
 
 import numpy as np
 from scipy import integrate
@@ -183,13 +184,22 @@ class Integration:
     def integ1d(
         self,
         method: IntegMethod | str = IntegMethod.SELF_CUMTRAPZ,
-        **kwargs: object,
+        **options: Any,
     ) -> np.ndarray:
-        """执行一维积分。"""
+        """执行一维积分。
+
+        Args:
+            method: 积分方法枚举或其字符串值。
+            **options: 仅当 `method="scipy_cumtrapz"` 时生效的具名参数。当前支持键
+                包括 `initial`，其余键会直接传给 `scipy.integrate.cumulative_trapezoid()`。
+
+        Returns:
+            积分后的数组。
+        """
         assert self.x is not None
         match IntegMethod(method):
             case IntegMethod.SCIPY_CUMTRAPZ:
-                data = self._scipy_cumtrapz(self.y, self.x, **kwargs)
+                data = self._scipy_cumtrapz(self.y, self.x, **options)
             case IntegMethod.SELF_CUMTRAPZ:
                 data = self._self_cumtrapz(self.y, self.x)
             case _:
@@ -274,10 +284,10 @@ class Differentiation:
     def diff1d(
         self,
         method: DiffMethod | str = DiffMethod.SELF_CENTRAL,
-        **kwargs: object,
+        **options: Any,
     ) -> np.ndarray:
         """执行一维微分。"""
-        del kwargs
+        del options
         assert self.x is not None
         match DiffMethod(method):
             case DiffMethod.SELF_CENTRAL:
@@ -303,20 +313,29 @@ class Interpolation:
         self.y = np.asarray(y)
         self.num = int(num)
 
-    def _scipy_interp1d(self, y: np.ndarray, *, num: int, **kwargs: object) -> np.ndarray:
+    def _scipy_interp1d(self, y: np.ndarray, *, num: int, **options: Any) -> np.ndarray:
         x_base = np.linspace(0, len(y), len(y))
         x_interp = np.linspace(0, len(y), len(y) * (num + 1) - num)
-        return np.array(interp1d(x_base, y, **kwargs)(x_interp))
+        return np.array(interp1d(x_base, y, **options)(x_interp))
 
     def interp1d(
         self,
         method: InterpMethod | str = InterpMethod.SCIPY_INTERP1D,
-        **kwargs: object,
+        **options: Any,
     ) -> np.ndarray:
-        """执行一维插值。"""
+        """执行一维插值。
+
+        Args:
+            method: 插值方法枚举或其字符串值。
+            **options: 仅当 `method="scipy_interp1d"` 时生效的具名参数。常见键包括
+                `kind`、`fill_value`、`bounds_error` 和 `assume_sorted`。
+
+        Returns:
+            插值后的数组。
+        """
         match InterpMethod(method):
             case InterpMethod.SCIPY_INTERP1D:
-                data = self._scipy_interp1d(self.y, num=self.num, **kwargs)
+                data = self._scipy_interp1d(self.y, num=self.num, **options)
             case _:
                 raise ValueError(f"插值方法不支持: {method}")
         return np.asarray(data)

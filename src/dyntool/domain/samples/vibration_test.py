@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Self
 
 import numpy as np
 from pydantic import Field
@@ -20,6 +20,7 @@ from ..models import (
     ZVLEval,
 )
 from .base import SampleBase
+from .batch import OperationResult, make_operation_result
 from .schema import SampleSchema, SampleSlotSpec
 from .sets import SampleSetBase
 
@@ -41,13 +42,11 @@ class VibrationTestSample(SampleBase):
                 name="freqspec",
                 model_type=FreqSpec,
                 role="composite",
-                include_in_storage=False,
             ),
             SampleSlotSpec(
                 name="respspec",
                 model_type=RespSpec,
                 role="composite",
-                include_in_storage=False,
             ),
             SampleSlotSpec(name="zvl", model_type=ZVLEval, role="evaluation"),
             SampleSlotSpec(name="otovl", model_type=OTOVLEval, role="evaluation"),
@@ -146,12 +145,6 @@ class VibrationTestSample(SampleBase):
     def fpvdv(self, value: FPVDVEval | None) -> None:
         self.set_data_var("fpvdv", value)
 
-    @staticmethod
-    def _resolve_overwrite(*, force: bool | None, overwrite: bool | None) -> bool:
-        if overwrite is not None:
-            return overwrite
-        return bool(force)
-
     def _format_eval_result(self, result: Any) -> str:
         if result is None:
             return "None"
@@ -188,105 +181,121 @@ class VibrationTestSample(SampleBase):
         *,
         attr_name: str,
         overwrite: bool,
-        runner,
+        runner: Any,
         success_message: str | None = None,
         use_eval_formatter: bool = False,
-    ) -> tuple[bool, str]:
+    ) -> OperationResult[Self]:
         if self.accel is None:
-            return False, "无加速度数据"
+            return make_operation_result(action=attr_name, success=False, message="无加速度数据", value=self)
         current = getattr(self, attr_name)
         if not overwrite and current is not None:
             if use_eval_formatter:
-                return False, f"已存在，跳过 - {self._format_eval_result(current)}"
-            return False, f"已存在，跳过 {attr_name}"
+                return make_operation_result(
+                    action=attr_name,
+                    success=False,
+                    message=f"已存在，跳过 - {self._format_eval_result(current)}",
+                    value=self,
+                )
+            return make_operation_result(
+                action=attr_name,
+                success=False,
+                message=f"已存在，跳过 {attr_name}",
+                value=self,
+            )
         try:
             result = runner()
-            setattr(self, attr_name, result)
+            self.set_data_var(attr_name, result)
             if use_eval_formatter:
-                return True, self._format_eval_result(result)
+                return make_operation_result(
+                    action=attr_name,
+                    success=True,
+                    message=self._format_eval_result(result),
+                    value=self,
+                )
             if success_message is not None:
-                return True, success_message
-            return True, f"{attr_name} 计算完成"
+                return make_operation_result(action=attr_name, success=True, message=success_message, value=self)
+            return make_operation_result(action=attr_name, success=True, message=f"{attr_name} 计算完成", value=self)
         except Exception as exc:
-            return False, f"计算失败: {exc}"
+            return make_operation_result(
+                action=attr_name,
+                success=False,
+                message=f"计算失败: {exc}",
+                value=self,
+                error=exc,
+            )
 
     def calc_vel(
         self,
-        force: bool = False,
         *,
-        overwrite: bool | None = None,
+        overwrite: bool = False,
         **kwargs: Any,
-    ) -> tuple[bool, str]:
+    ) -> OperationResult[Self]:
         """计算速度时程。"""
 
         return self._run_accel_action(
             attr_name="vel",
-            overwrite=self._resolve_overwrite(force=force, overwrite=overwrite),
+            overwrite=overwrite,
             runner=lambda: self.accel.calc_vel(**kwargs),  # type: ignore[union-attr]
             success_message="vel 计算完成",
         )
 
     def calc_disp(
         self,
-        force: bool = False,
         *,
-        overwrite: bool | None = None,
+        overwrite: bool = False,
         **kwargs: Any,
-    ) -> tuple[bool, str]:
+    ) -> OperationResult[Self]:
         """计算位移时程。"""
 
         return self._run_accel_action(
             attr_name="disp",
-            overwrite=self._resolve_overwrite(force=force, overwrite=overwrite),
+            overwrite=overwrite,
             runner=lambda: self.accel.calc_disp(**kwargs),  # type: ignore[union-attr]
             success_message="disp 计算完成",
         )
 
     def calc_freqspec(
         self,
-        force: bool = False,
         *,
-        overwrite: bool | None = None,
-    ) -> tuple[bool, str]:
+        overwrite: bool = False,
+    ) -> OperationResult[Self]:
         """计算组合频谱。"""
 
         return self._run_accel_action(
             attr_name="freqspec",
-            overwrite=self._resolve_overwrite(force=force, overwrite=overwrite),
+            overwrite=overwrite,
             runner=lambda: self.accel.calc_freqspec(),  # type: ignore[union-attr]
             success_message="freqspec 计算完成",
         )
 
     def calc_respspec(
         self,
-        force: bool = False,
         *,
-        overwrite: bool | None = None,
+        overwrite: bool = False,
         **kwargs: Any,
-    ) -> tuple[bool, str]:
+    ) -> OperationResult[Self]:
         """计算组合反应谱。"""
 
         return self._run_accel_action(
             attr_name="respspec",
-            overwrite=self._resolve_overwrite(force=force, overwrite=overwrite),
+            overwrite=overwrite,
             runner=lambda: self.accel.calc_respspec_bundle(**kwargs),  # type: ignore[union-attr]
             success_message="respspec 计算完成",
         )
 
     def calc_all_derived(
         self,
-        force: bool = False,
         *,
-        overwrite: bool | None = None,
+        overwrite: bool = False,
         **kwargs: Any,
-    ) -> dict[str, tuple[bool, str]]:
+    ) -> dict[str, OperationResult[Self]]:
         """计算全部派生量。"""
 
-        results: dict[str, tuple[bool, str]] = {}
-        results["vel"] = self.calc_vel(force=force, overwrite=overwrite, **kwargs)
-        results["disp"] = self.calc_disp(force=force, overwrite=overwrite, **kwargs)
-        results["freqspec"] = self.calc_freqspec(force=force, overwrite=overwrite)
-        results["respspec"] = self.calc_respspec(force=force, overwrite=overwrite, **kwargs)
+        results: dict[str, OperationResult[Self]] = {}
+        results["vel"] = self.calc_vel(overwrite=overwrite, **kwargs)
+        results["disp"] = self.calc_disp(overwrite=overwrite, **kwargs)
+        results["freqspec"] = self.calc_freqspec(overwrite=overwrite)
+        results["respspec"] = self.calc_respspec(overwrite=overwrite, **kwargs)
         return results
 
 

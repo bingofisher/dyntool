@@ -1,9 +1,10 @@
 # 数据模型
 
-- 稳定性：`Public API`
+稳定性：`Public API`
+
 - 适用对象：需要构造时程、频谱和反应谱对象的使用者
-- 对应示例：`examples/90_recipes/structured_payload_roundtrip/main.py`
-- 对应测试：`tests/test_examples_workflows.py::test_recipe_structured_payload_roundtrip`
+- 对应示例：`examples/10_scenarios/01_import_and_normalize/main.py`
+- 对应测试：`tests/test_examples_systems.py::test_scenario_import_and_normalize`
 
 ## 用途
 

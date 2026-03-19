@@ -1,17 +1,17 @@
-"""利用内置资源完成评价。"""
+"""使用资源驱动评价流程。"""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from examples._legacy_runner import run_legacy_example
+from examples._scenario_impls import _scenario_resource_driven_eval
 
 
 def main(output_dir: Path | None = None) -> dict[str, object]:
-    """运行资源驱动评价场景。"""
+    """运行对应示例入口。"""
 
     # docs:begin workflow_resource_driven_eval
-    return run_legacy_example("examples/90_workflows/workflow_resource_driven_eval.py", output_dir=output_dir)
+    return _scenario_resource_driven_eval(output_dir=output_dir)
     # docs:end workflow_resource_driven_eval
 
 

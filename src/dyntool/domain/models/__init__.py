@@ -16,6 +16,7 @@ from .response_spectrum import (
     SpecVelSeries,
 )
 from .time_series import AccelSeries, DispSeries, ForceSeries, TimeSeries, VelSeries
+from .transfer_function import TransferFunctionAnalyzer, TransferFunctionResult, analyze_transfer_function
 from .vibration_evaluation import FDMVLEval, FPVDVEval, OTOVLEval, ZVLEval
 
 __all__ = [
@@ -36,6 +37,9 @@ __all__ = [
     "PSpecAccelSeries",
     "PSpecVelSeries",
     "RespSpec",
+    "TransferFunctionAnalyzer",
+    "TransferFunctionResult",
+    "analyze_transfer_function",
     "ZVLEval",
     "OTOVLEval",
     "FPVDVEval",

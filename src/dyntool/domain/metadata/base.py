@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Callable, ClassVar, Self
 
 import pandas as pd
-from pydantic import BaseModel, ConfigDict, computed_field
+from pydantic import BaseModel, ConfigDict, PrivateAttr, computed_field
 
 from ..serialization import StructuredPayload, normalize_payload
 from .normalization import denormalize_flat_dict, normalize_extra
@@ -110,9 +110,12 @@ class MetadataIDGenerator:
 class MetadataBase(BaseModel):
     """所有公开元数据对象的基础类。"""
 
-    model_config = ConfigDict(extra="allow", arbitrary_types_allowed=True)
+    model_config = ConfigDict(extra="allow", arbitrary_types_allowed=True, validate_assignment=True)
     payload_domain: ClassVar[str] = "default"
     metadata_schema: ClassVar[MetadataSchema] = MetadataSchema(name="metadata")
+
+    _change_callback: Callable[[MetadataBase, str, str | None], None] | None = PrivateAttr(default=None)
+    _suspend_change_callback: bool = PrivateAttr(default=False)
 
     def __eq__(self, other: object) -> bool:
         if isinstance(other, MetadataBase):
@@ -133,6 +136,13 @@ class MetadataBase(BaseModel):
 
     @computed_field
     @property
+    def alias(self) -> str:
+        """返回当前元数据对象的业务 alias。"""
+
+        return self.build_alias()
+
+    @computed_field
+    @property
     def schema_name(self) -> str:
         """返回元数据 schema 名称。"""
 
@@ -149,16 +159,81 @@ class MetadataBase(BaseModel):
     def generate_uid(self) -> str:
         """生成稳定 UID。"""
 
+    def build_alias(self) -> str:
+        """构建当前元数据对象的 alias。
+
+        Returns:
+            str: 当前元数据对象的 alias。基类默认直接返回稳定 `uid`。
+        """
+
+        return self.uid
+
+    @classmethod
+    def from_alias(cls, alias: str) -> Self:
+        """根据 alias 反构建元数据对象。
+
+        Args:
+            alias: 业务 alias 字符串。
+        Raises:
+            NotImplementedError: 当前元数据类型未声明 alias 解析规则时抛出。
+        """
+
+        raise NotImplementedError(f"{cls.__name__} 未声明 alias 反构建规则: {alias}")
+
+    def refresh_alias(self, *, force: bool = False) -> str:
+        """显式重建 alias 并返回最新值。
+
+        Args:
+            force: 是否强制刷新。对 metadata 本身仅起显式意图标识作用，不影响返回逻辑。
+        Returns:
+            str: 最新 alias。
+        """
+
+        del force
+        return self.build_alias()
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        """追踪元数据字段赋值，并在需要时通知拥有者。"""
+
+        if name.startswith("_") or name not in self.__class__.model_fields:
+            super().__setattr__(name, value)
+            return
+
+        old_value = getattr(self, name, None)
+        old_uid = self.uid
+        old_alias = getattr(self, "alias", None)
+        super().__setattr__(name, value)
+
+        if self._change_callback is None or self._suspend_change_callback:
+            return
+        try:
+            self._change_callback(self, old_uid, old_alias)
+        except Exception:
+            self._suspend_change_callback = True
+            try:
+                super().__setattr__(name, old_value)
+            finally:
+                self._suspend_change_callback = False
+            raise
+
+    def bind_change_callback(
+        self,
+        callback: Callable[[MetadataBase, str, str | None], None] | None,
+    ) -> None:
+        """绑定或清空元数据变更回调。"""
+
+        self._change_callback = callback
+
     def identity_payload(self) -> dict[str, Any]:
         """返回 schema 定义的身份字段。"""
 
-        payload = self.model_dump(exclude={"uid", "schema_name", "schema_version"})
+        payload = self.model_dump(exclude={"uid", "alias", "schema_name", "schema_version"})
         return self.metadata_schema.normalize_identity(payload)
 
     def attribute_payload(self) -> dict[str, Any]:
         """返回 schema 定义的属性字段。"""
 
-        payload = self.model_dump(exclude={"uid", "schema_name", "schema_version"})
+        payload = self.model_dump(exclude={"uid", "alias", "schema_name", "schema_version"})
         return self.metadata_schema.normalize_attributes(payload)
 
     def extra_payload(self) -> dict[str, Any] | None:
@@ -183,10 +258,33 @@ class MetadataBase(BaseModel):
     def update(self, **kwargs: Any) -> None:
         """原地更新字段。"""
 
-        for key, value in kwargs.items():
-            if key not in self.__class__.model_fields:
-                raise KeyError(f"未知元数据字段: {key}")
-            setattr(self, key, value)
+        old_payload = self.model_dump()
+        old_uid = self.uid
+        old_alias = getattr(self, "alias", None)
+        self._suspend_change_callback = True
+        try:
+            for key, value in kwargs.items():
+                if key not in self.__class__.model_fields:
+                    raise KeyError(f"未知元数据字段: {key}")
+                super().__setattr__(key, value)
+        except Exception:
+            self._suspend_change_callback = False
+            raise
+        self._suspend_change_callback = False
+
+        if self._change_callback is None:
+            return
+        try:
+            self._change_callback(self, old_uid, old_alias)
+        except Exception:
+            self._suspend_change_callback = True
+            try:
+                for key, value in old_payload.items():
+                    if key in self.__class__.model_fields:
+                        super().__setattr__(key, value)
+            finally:
+                self._suspend_change_callback = False
+            raise
 
     def copy_with(self, **kwargs: Any) -> Self:
         """返回更新字段后的副本。"""
@@ -194,6 +292,7 @@ class MetadataBase(BaseModel):
         payload = self.model_dump()
         payload.update(kwargs)
         payload.pop("uid", None)
+        payload.pop("alias", None)
         return self.__class__(**payload)
 
     def to_flatten_dict(self, sep: str = "@") -> dict[str, Any]:
@@ -208,6 +307,7 @@ class MetadataBase(BaseModel):
 
         payload = denormalize_flat_dict(data, sep=sep)
         payload.pop("uid", None)
+        payload.pop("alias", None)
         return cls(**payload)
 
     def match(self, **criteria: Any) -> bool:
@@ -233,6 +333,7 @@ class MetadataBase(BaseModel):
 
         payload = dict(data)
         payload.pop("uid", None)
+        payload.pop("alias", None)
         payload.pop("schema_name", None)
         payload.pop("schema_version", None)
         return cls(**payload)

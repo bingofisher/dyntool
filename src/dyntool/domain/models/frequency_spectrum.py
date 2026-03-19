@@ -209,10 +209,10 @@ class FreqAmpSeries(DataModelBase):
         )
 
     @classmethod
-    def from_arrays(cls, axis: np.ndarray, value: np.ndarray, **kwargs: object) -> Self:
+    def from_arrays(cls, axis: np.ndarray, value: np.ndarray, **options: Any) -> Self:
         """从原始数组重建频率-幅值序列。"""
 
-        return cls.from_data(axis, value, **kwargs)
+        return cls.from_data(axis, value, **options)
 
     def slice_freq(self, f_low: float, f_high: float) -> Self:
         """按频率范围截取频谱。"""
@@ -510,10 +510,10 @@ class FreqPhaSeries(DataModelBase):
         return cls._from_base_data(freq_arr, phase_arr, units=current, unit_system=unit_system)
 
     @classmethod
-    def from_arrays(cls, axis: np.ndarray, value: np.ndarray, **kwargs: object) -> Self:
+    def from_arrays(cls, axis: np.ndarray, value: np.ndarray, **options: Any) -> Self:
         """从原始数组重建频率-相位序列。"""
 
-        return cls.from_data(axis, value, **kwargs)
+        return cls.from_data(axis, value, **options)
 
     def slice_freq(self, f_low: float, f_high: float) -> Self:
         """按频率范围截取相位频谱。"""
@@ -783,16 +783,16 @@ class FreqSpec(DataModelBase):
         cls,
         axis: np.ndarray,
         value: np.ndarray,
-        **kwargs: Any,
+        **options: Any,
     ) -> Self:
         """根据共享轴和矩阵构建组合频谱。"""
 
         matrix = np.asarray(value)
         if matrix.ndim == 1:
-            return cls.from_data(axis, amp=matrix, **kwargs)
+            return cls.from_data(axis, amp=matrix, **options)
         if matrix.ndim != 2 or matrix.shape[1] < 2:
             raise ValueError("FreqSpec.from_arrays expects a Nx2 array for amp/pha.")
-        return cls.from_data(axis, amp=matrix[:, 0], pha=matrix[:, 1], **kwargs)
+        return cls.from_data(axis, amp=matrix[:, 0], pha=matrix[:, 1], **options)
 
     def to_pandas(self) -> pd.DataFrame:
         """将组合频谱转换为 DataFrame。"""

@@ -1,17 +1,17 @@
-"""查看内置元数据模式。"""
+"""对比不同元数据模式。"""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from examples._legacy_runner import run_legacy_example
+from examples._scenario_impls import _recipe_metadata_patterns
 
 
 def main(output_dir: Path | None = None) -> dict[str, object]:
-    """运行元数据模式 recipe。"""
+    """运行对应示例入口。"""
 
     # docs:begin metadata_minimal
-    return run_legacy_example("examples/03_metadata/metadata_domains.py", output_dir=output_dir)
+    return _recipe_metadata_patterns(output_dir=output_dir)
     # docs:end metadata_minimal
 
 

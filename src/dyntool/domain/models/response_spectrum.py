@@ -211,10 +211,10 @@ class ResponseSpectrum(DataModelBase):
         return cls._from_base_data(period_arr, value_arr, units=current, unit_system=unit_system)
 
     @classmethod
-    def from_arrays(cls, axis: np.ndarray, value: np.ndarray, **kwargs: object) -> Self:
+    def from_arrays(cls, axis: np.ndarray, value: np.ndarray, **options: Any) -> Self:
         """从数组重建响应谱。"""
 
-        return cls.from_data(axis, value, **kwargs)
+        return cls.from_data(axis, value, **options)
 
     def slice_period(self, t_min: float, t_max: float) -> Self:
         """按周期范围截取响应谱。"""
@@ -645,7 +645,7 @@ class RespSpec(DataModelBase):
         cls,
         axis: np.ndarray,
         value: np.ndarray,
-        **kwargs: Any,
+        **options: Any,
     ) -> Self:
         """根据周期轴和矩阵构建组合响应谱。"""
 
@@ -659,7 +659,7 @@ class RespSpec(DataModelBase):
             sd=matrix[:, 2],
             psa=matrix[:, 3],
             psv=matrix[:, 4],
-            **kwargs,
+            **options,
         )
 
     def to_pandas(self) -> pd.DataFrame:

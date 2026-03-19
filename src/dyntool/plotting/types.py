@@ -6,7 +6,11 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
-from ..domain.plot_types import PlotBackend, PlotKind
+from matplotlib.artist import Artist
+from matplotlib.axes import Axes
+from matplotlib.figure import Figure
+
+from ..domain.plot_types import PlotKind
 
 
 class PlotterKind(StrEnum):
@@ -21,29 +25,30 @@ class PlotterKind(StrEnum):
 class PlotResult:
     """统一封装绘图结果对象。"""
 
-    raw: object
-    backend: PlotBackend
-    figure: object | None = None
-    axes: tuple[object, ...] = field(default_factory=tuple)
-    artists: tuple[object, ...] = field(default_factory=tuple)
+    raw: Figure | Axes | tuple[Axes, ...]
+    figure: Figure | None = None
+    axes: tuple[Axes, ...] = field(default_factory=tuple)
+    artists: tuple[Artist, ...] = field(default_factory=tuple)
 
     @classmethod
-    def from_raw(cls, raw: object, *, backend: PlotBackend) -> "PlotResult":
+    def from_raw(cls, raw: Figure | Axes | tuple[Axes, ...] | list[Axes]) -> "PlotResult":
         """从底层绘图返回值构造标准结果。"""
 
         if isinstance(raw, cls):
             return raw
-        figure = raw if hasattr(raw, "axes") else None
-        axes_value = getattr(raw, "axes", None)
-        if axes_value is None:
-            axes: tuple[object, ...] = ()
-        elif isinstance(axes_value, tuple):
-            axes = axes_value
-        elif isinstance(axes_value, list):
-            axes = tuple(axes_value)
+        if isinstance(raw, Figure):
+            figure = raw
+            axes = tuple(raw.axes)
+        elif isinstance(raw, Axes):
+            figure = raw.figure
+            axes = (raw,)
+        elif isinstance(raw, tuple):
+            axes = raw
+            figure = axes[0].figure if axes else None
         else:
-            axes = (axes_value,)
-        return cls(raw=raw, backend=backend, figure=figure, axes=axes)
+            axes = tuple(raw)
+            figure = axes[0].figure if axes else None
+        return cls(raw=raw, figure=figure, axes=axes)
 
     def __getattr__(self, name: str) -> Any:
         """将未知属性委托给底层 figure 或 raw 对象。"""
@@ -52,4 +57,4 @@ class PlotResult:
         return getattr(target, name)
 
 
-__all__ = ["PlotBackend", "PlotKind", "PlotResult", "PlotterKind"]
+__all__ = ["PlotKind", "PlotResult", "PlotterKind"]

@@ -1,44 +1,43 @@
-"""AdvDynTool 的正式绘图模块。"""
+"""AdvDynTool 正式 plotting 模块。"""
 
 from __future__ import annotations
 
-from .config import ZhPlotConfig, configure_zh
-from .payloads import (
-    FramePanelPayload,
-    FramePlotPayload,
-    OctavePlotPayload,
-    PlotLinePayload,
-    PlotPayload,
-    StoryLimitPayload,
-    StorySeriesPayload,
-    StoryValuePayload,
-    normalize_payload,
+from .axes import (
+    AxisFrame,
+    AxisHelper,
+    AxisNumberFormatter,
+    DiscreteAxisFormatter,
+    GridFrame,
+    LegendHelper,
 )
-from .plotters import AxisFrame, FramePlotter, OctaveBandSpec, OneThirdOctavePlotter, StoryValuePlotter
-from .render import render_payload, render_plotter
-from .types import PlotBackend, PlotKind, PlotResult, PlotterKind
+from .config import ZhPlotConfig, configure_zh
+from .dataset import PlotCategory, PlotDataset
+from .plotters import (
+    FramePlotter,
+    OctaveBandSpec,
+    OneThirdOctavePlotter,
+    PlotterBase,
+    StoryValuePlotter,
+)
+from .types import PlotKind, PlotResult, PlotterKind
 
 __all__ = [
     "AxisFrame",
-    "FramePanelPayload",
-    "FramePlotPayload",
+    "AxisHelper",
+    "AxisNumberFormatter",
+    "DiscreteAxisFormatter",
+    "GridFrame",
+    "LegendHelper",
     "FramePlotter",
     "OctaveBandSpec",
-    "OctavePlotPayload",
     "OneThirdOctavePlotter",
-    "PlotBackend",
+    "PlotCategory",
+    "PlotDataset",
+    "PlotterBase",
     "PlotKind",
-    "PlotLinePayload",
-    "PlotPayload",
     "PlotResult",
     "PlotterKind",
-    "StoryLimitPayload",
-    "StorySeriesPayload",
-    "StoryValuePayload",
     "StoryValuePlotter",
     "ZhPlotConfig",
     "configure_zh",
-    "normalize_payload",
-    "render_payload",
-    "render_plotter",
 ]

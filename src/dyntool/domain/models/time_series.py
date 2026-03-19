@@ -45,7 +45,15 @@ from ...compute.solvers import LinearSequence, SDOFSolveMethod, WeightType
 
 if TYPE_CHECKING:
     from .frequency_spectrum import FreqAmpSeries, FreqPhaSeries, FreqSpec
-    from .response_spectrum import RespSpec
+    from .response_spectrum import (
+        PSpecAccelSeries,
+        PSpecVelSeries,
+        RespSpec,
+        ResponseSpectrum,
+        SpecAccelSeries,
+        SpecDispSeries,
+        SpecVelSeries,
+    )
     from .vibration_evaluation import FDMVLEval, FPVDVEval, OTOVLEval, ZVLEval
 
 
@@ -332,10 +340,10 @@ class TimeSeries(DataModelBase):
         )
 
     @classmethod
-    def from_arrays(cls, axis: np.ndarray, value: np.ndarray, **kwargs: Any) -> Self:
+    def from_arrays(cls, axis: np.ndarray, value: np.ndarray, **options: Any) -> Self:
         """根据数组重建时程序列对象。"""
 
-        return cls.from_data(value, time=axis, **kwargs)
+        return cls.from_data(value, time=axis, **options)
 
     def truncate(self, start: float, end: float) -> Self:
         """按秒为单位裁剪时程。"""
@@ -631,16 +639,25 @@ class AccelSeries(TimeSeries):
         calc_unit_system: UnitSystem | None = None,
         output_unit: str | None = None,
         output_unit_system: UnitSystem | None = None,
-        **kwargs: object,
+        **options: Any,
     ) -> "VelSeries":
-        """按固定基准单位规则将加速度积分为速度。"""
+        """按固定基准单位规则将加速度积分为速度。
+
+        Args:
+            method: 积分方法。
+            calc_unit_system: 计算阶段采用的单位制；为空时使用当前默认单位制。
+            output_unit: 显式指定输出速度单位；为空时使用 `output_unit_system` 的速度单位。
+            output_unit_system: 输出对象采用的单位制。
+            **options: 传给积分器的具名参数。当前仅在 `method` 对应的积分实现需要时生效，
+                常见键包括 `initial`。
+        """
 
         calc_units = calc_unit_system or get_default_unit_system()
         out_units = output_unit_system or get_default_unit_system()
         vel_array = Integration(
             y=self.get_value(unit=calc_units.acceleration),
             dx=self.dt,
-        ).integ1d(method=method, **kwargs)
+        ).integ1d(method=method, **options)
         target_value_unit = output_unit or out_units.velocity
         units = {"time": out_units.time, "value": target_value_unit}
         return VelSeries._from_base_data(
@@ -661,7 +678,7 @@ class AccelSeries(TimeSeries):
         calc_unit_system: UnitSystem | None = None,
         output_unit: str | None = None,
         output_unit_system: UnitSystem | None = None,
-        **kwargs: object,
+        **options: Any,
     ) -> "DispSeries":
         """将加速度二次积分为位移。"""
 
@@ -669,13 +686,13 @@ class AccelSeries(TimeSeries):
             method=method,
             calc_unit_system=calc_unit_system,
             output_unit_system=output_unit_system,
-            **kwargs,
+            **options,
         ).calc_disp(
             method=method,
             calc_unit_system=calc_unit_system,
             output_unit=output_unit,
             output_unit_system=output_unit_system,
-            **kwargs,
+            **options,
         )
 
     def calc_fft_series(
@@ -744,7 +761,7 @@ class AccelSeries(TimeSeries):
         calc_unit_system: UnitSystem | None = None,
         output_unit_system: UnitSystem | None = None,
         periods: np.ndarray | None = None,
-    ) -> object:
+    ) -> "RespSpec":
         """按显式单位规则由加速度计算响应谱。"""
 
         calc_units = calc_unit_system or get_default_unit_system()
@@ -792,7 +809,7 @@ class AccelSeries(TimeSeries):
         calc_unit_system: UnitSystem | None = None,
         output_unit_system: UnitSystem | None = None,
         periods: np.ndarray | None = None,
-    ) -> Any:
+    ) -> "ResponseSpectrum":
         bundle = self.calc_respspec_bundle(
             method=method,
             calc_unit_system=calc_unit_system,
@@ -811,7 +828,7 @@ class AccelSeries(TimeSeries):
         calc_unit_system: UnitSystem | None = None,
         output_unit_system: UnitSystem | None = None,
         periods: np.ndarray | None = None,
-    ) -> Any:
+    ) -> "SpecAccelSeries":
         """计算谱加速度分量。"""
 
         return self._calc_respspec_component(
@@ -829,7 +846,7 @@ class AccelSeries(TimeSeries):
         calc_unit_system: UnitSystem | None = None,
         output_unit_system: UnitSystem | None = None,
         periods: np.ndarray | None = None,
-    ) -> Any:
+    ) -> "SpecVelSeries":
         """计算谱速度分量。"""
 
         return self._calc_respspec_component(
@@ -847,7 +864,7 @@ class AccelSeries(TimeSeries):
         calc_unit_system: UnitSystem | None = None,
         output_unit_system: UnitSystem | None = None,
         periods: np.ndarray | None = None,
-    ) -> Any:
+    ) -> "SpecDispSeries":
         """计算谱位移分量。"""
 
         return self._calc_respspec_component(
@@ -865,7 +882,7 @@ class AccelSeries(TimeSeries):
         calc_unit_system: UnitSystem | None = None,
         output_unit_system: UnitSystem | None = None,
         periods: np.ndarray | None = None,
-    ) -> Any:
+    ) -> "PSpecAccelSeries":
         """计算伪谱加速度分量。"""
 
         return self._calc_respspec_component(
@@ -883,7 +900,7 @@ class AccelSeries(TimeSeries):
         calc_unit_system: UnitSystem | None = None,
         output_unit_system: UnitSystem | None = None,
         periods: np.ndarray | None = None,
-    ) -> Any:
+    ) -> "PSpecVelSeries":
         """计算伪谱速度分量。"""
 
         return self._calc_respspec_component(
@@ -1035,7 +1052,7 @@ class VelSeries(TimeSeries):
         calc_unit_system: UnitSystem | None = None,
         output_unit: str | None = None,
         output_unit_system: UnitSystem | None = None,
-        **kwargs: object,
+        **options: Any,
     ) -> "DispSeries":
         """按固定基准单位规则将速度积分为位移。"""
 
@@ -1044,7 +1061,7 @@ class VelSeries(TimeSeries):
         disp_array = Integration(
             y=self.get_value(unit=calc_units.velocity),
             dx=self.dt,
-        ).integ1d(method=method, **kwargs)
+        ).integ1d(method=method, **options)
         target_value_unit = output_unit or out_units.displacement
         units = {"time": out_units.time, "value": target_value_unit}
         return DispSeries._from_base_data(
@@ -1065,7 +1082,7 @@ class VelSeries(TimeSeries):
         calc_unit_system: UnitSystem | None = None,
         output_unit: str | None = None,
         output_unit_system: UnitSystem | None = None,
-        **kwargs: object,
+        **options: Any,
     ) -> AccelSeries:
         """按固定基准单位规则将速度微分为加速度。"""
 
@@ -1074,7 +1091,7 @@ class VelSeries(TimeSeries):
         accel_array = Differentiation(
             y=self.get_value(unit=calc_units.velocity),
             dx=self.dt,
-        ).diff1d(method=method, **kwargs)
+        ).diff1d(method=method, **options)
         target_value_unit = output_unit or out_units.acceleration
         units = {"time": out_units.time, "value": target_value_unit}
         return AccelSeries._from_base_data(
@@ -1125,7 +1142,7 @@ class DispSeries(TimeSeries):
         calc_unit_system: UnitSystem | None = None,
         output_unit: str | None = None,
         output_unit_system: UnitSystem | None = None,
-        **kwargs: object,
+        **options: Any,
     ) -> VelSeries:
         """按固定基准单位规则将位移微分为速度。"""
 
@@ -1134,7 +1151,7 @@ class DispSeries(TimeSeries):
         vel_array = Differentiation(
             y=self.get_value(unit=calc_units.displacement),
             dx=self.dt,
-        ).diff1d(method=method, **kwargs)
+        ).diff1d(method=method, **options)
         target_value_unit = output_unit or out_units.velocity
         units = {"time": out_units.time, "value": target_value_unit}
         return VelSeries._from_base_data(
@@ -1155,7 +1172,7 @@ class DispSeries(TimeSeries):
         calc_unit_system: UnitSystem | None = None,
         output_unit: str | None = None,
         output_unit_system: UnitSystem | None = None,
-        **kwargs: object,
+        **options: Any,
     ) -> AccelSeries:
         """将位移二次微分为加速度。"""
 
@@ -1163,11 +1180,11 @@ class DispSeries(TimeSeries):
             method=method,
             calc_unit_system=calc_unit_system,
             output_unit_system=output_unit_system,
-            **kwargs,
+            **options,
         ).calc_accel(
             method=method,
             calc_unit_system=calc_unit_system,
             output_unit=output_unit,
             output_unit_system=output_unit_system,
-            **kwargs,
+            **options,
         )

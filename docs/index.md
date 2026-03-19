@@ -1,42 +1,26 @@
 # AdvDynTool 文档中心
 
-AdvDynTool 是面向动力学计算、振动处理与结果评价的 Python 工具库。本站不再按源码目录平铺，而是按“先会用，再查细节”的顺序组织。
-
 稳定性：`Public API`
 
-## 推荐阅读路径
+AdvDynTool 文档按“先会用，再看边界，最后查内部说明”的顺序组织。
 
-### 路径一：第一次接入
+当前发布版本：`v1.1.0`
 
-1. [使用总览](user_guide.md)
-2. [数据输入与标准类型](usage/01_input_and_types.md)
-3. [样本与样本集组织](usage/02_samples_and_sets.md)
-4. [最小闭环教程](workflows/01_minimal_roundtrip.md)
+## 当前正式公开面
 
-### 路径二：已经会建模，想跑完整闭环
+- 顶层对象 API：常用模型、元数据、样本、样本集、结果对象和必要枚举
+- 动作模块：`dyntool.storage`、`dyntool.plotting`、`dyntool.logging`
+- 支持模块：`dyntool.config`、`dyntool.resources`
 
-1. [处理、评价与结果对象](usage/03_processing_and_results.md)
-2. [存储模式与读写规则](usage/04_storage_rules.md)
-3. [样本集批处理教程](workflows/04_sample_set_batch.md)
+## 文档导航
 
-### 路径三：补图、补日志、补资源
+- 用户路径：`docs/usage`
+- 教程路径：`docs/workflows`
+- 公开 API：`docs/api/public_api.md`
+- 开发者说明：`docs/developer`
 
-1. [绘图、日志与资源](usage/05_plotting_logging_resources.md)
-2. [资源驱动评价教程](workflows/06_resource_driven_eval.md)
-3. [公开 API](api/public_api.md)
+## 稳定性说明
 
-## 常用入口
-
-- `AccelSeries.from_data(...)`
-- `AccelSeries.from_csv(...)`
-- `Sample.from_accel_data(...)`
-- `SampleSet.from_samples(...)`
-- `dyntool.storage.save_model(...)`
-- `dyntool.storage.save_sample_set(...)`
-- `accel.to_plot_payload(...)`
-- `dyntool.plotting.render_payload(...)`
-- `DynTool().resource`
-
-## 常见关键词
-
-`标准类型`、`样本域`、`数据类别`、`存储模式`、`存储方案`、`CSV 读取参数`、`样本集 H5`
+- `Public API`：正式支持的对象与模块入口
+- `Internal API`：可供维护者和扩展开发使用，但不承诺稳定
+- `Private / implementation detail`：实现细节，不建议外部使用

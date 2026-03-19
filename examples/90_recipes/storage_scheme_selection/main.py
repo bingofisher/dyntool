@@ -4,14 +4,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from examples._legacy_runner import run_legacy_example
+from examples._scenario_impls import _recipe_storage_scheme_selection
 
 
 def main(output_dir: Path | None = None) -> dict[str, object]:
-    """运行存储方案选择 recipe。"""
+    """运行对应示例入口。"""
 
     # docs:begin storage_scheme_compare
-    return run_legacy_example("examples/07_storage_io/storage_schemes.py", output_dir=output_dir)
+    return _recipe_storage_scheme_selection(output_dir=output_dir)
     # docs:end storage_scheme_compare
 
 

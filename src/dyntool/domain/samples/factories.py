@@ -204,7 +204,7 @@ def create_sample(
 
     sample = sample_cls(metadata=metadata, data_vars=resolved_data_vars)  # type: ignore[call-arg]
     if alias:
-        sample.alias = alias
+        sample.set_alias(alias)
     return sample
 
 

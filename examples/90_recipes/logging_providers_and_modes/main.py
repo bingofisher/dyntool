@@ -1,17 +1,17 @@
-"""切换日志 provider 与输出模式。"""
+"""比较日志 provider 与模式。"""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from examples._legacy_runner import run_legacy_example
+from examples._scenario_impls import _recipe_logging_providers_and_modes
 
 
 def main(output_dir: Path | None = None) -> dict[str, object]:
-    """运行日志 provider 与模式 recipe。"""
+    """运行对应示例入口。"""
 
     # docs:begin logging_mode_compare
-    return run_legacy_example("examples/09_logging_config/logging_modes.py", output_dir=output_dir)
+    return _recipe_logging_providers_and_modes(output_dir=output_dir)
     # docs:end logging_mode_compare
 
 

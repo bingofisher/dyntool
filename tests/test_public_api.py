@@ -1,66 +1,62 @@
-"""公开 API 回归测试。"""
+"""正式公开面回归测试。"""
 
 from __future__ import annotations
 
-import importlib
-import sys
 from pathlib import Path
-
-import matplotlib.pyplot as plt
-import pytest
 
 import dyntool
 import dyntool.config as dt_config
 import dyntool.logging as dt_logging
 import dyntool.plotting as dt_plotting
+import dyntool.resources as dt_resource
 import dyntool.storage as dt_storage
 from dyntool import (
     AccelSeries,
+    AttrDataFormat,
+    BatchOperationReport,
+    ContainerFormat,
     DispSeries,
-    DataModelBase,
-    DynTool,
     FDMVLEval,
+    FDMVLLimit,
     FPVDVEval,
+    FPVDVLimit,
     FreqAmpSeries,
     FreqPhaSeries,
     FreqSpec,
     ForceSeries,
     LoggingMode,
+    MagnitudeConversion,
     Metadata,
-    MetadataBase,
-    MetadataIDGenerator,
-    MetadataSchema,
+    OperationResult,
     OTOVLEval,
+    OTOVLLimit,
+    PlotKind,
     PSpecAccelSeries,
     PSpecVelSeries,
-    PlotKind,
     RespSpec,
     ResponseSpectrum,
     Sample,
-    SampleBase,
-    SampleBaseModel,
     SampleDomain,
-    SampleSchema,
     SampleSet,
-    SampleSetBase,
-    SampleSlotSpec,
     SpecAccelSeries,
     SpecDispSeries,
     SpecVelSeries,
     StorageMode,
+    StorageScheme,
     TimeSeries,
     UnitSystem,
     VelSeries,
+    VibrationTestMetadata,
     VibrationTestSample,
     VibrationTestSampleSet,
-    VibrationTestMetadata,
     ZVLEval,
-    metadata_from_structured_payload,
-    model_from_structured_payload,
-    sample_from_structured_payload,
-    sample_set_from_structured_payload,
+    ZVLLimit,
+    config,
+    logging,
+    plotting,
+    resources,
+    storage,
 )
-from dyntool.plotting import FramePlotter, PlotResult, StoryValuePlotter
 
 
 def _make_vibration_kwargs() -> dict[str, object]:
@@ -74,20 +70,9 @@ def _make_vibration_kwargs() -> dict[str, object]:
     }
 
 
-def test_dyntool_exposes_only_resource_and_options() -> None:
-    tool = DynTool()
-    public_members = {name for name in vars(tool) if not name.startswith("_")}
-
-    assert public_members == {"resource", "options"}
-    assert not hasattr(tool, "models")
-    assert not hasattr(tool, "sample")
-
-
-def test_top_level_exports_match_canonical_baseline() -> None:
+def test_top_level_exports_match_current_public_surface() -> None:
     assert set(dyntool.__all__) == {
         "__version__",
-        "DynTool",
-        "DataModelBase",
         "MagnitudeConversion",
         "TimeSeries",
         "AccelSeries",
@@ -104,29 +89,29 @@ def test_top_level_exports_match_canonical_baseline() -> None:
         "PSpecAccelSeries",
         "PSpecVelSeries",
         "RespSpec",
+        "BatchOperationReport",
+        "OperationResult",
+        "TransferFunctionAnalyzer",
+        "TransferFunctionResult",
         "ZVLEval",
         "OTOVLEval",
         "FPVDVEval",
         "FDMVLEval",
-        "MetadataBase",
+        "ZVLLimit",
+        "OTOVLLimit",
+        "FPVDVLimit",
+        "FDMVLLimit",
+        "ZVLLimitStandard",
+        "OTOVLLimitStandard",
+        "FPVDVLimitStandard",
+        "FDMVLLimitStandard",
         "Metadata",
-        "MetadataIDGenerator",
-        "MetadataSchema",
-        "metadata_from_structured_payload",
-        "SampleBase",
-        "SampleBaseModel",
-        "SampleSchema",
-        "SampleSlotSpec",
+        "VibrationTestMetadata",
         "Sample",
-        "SampleSetBase",
         "SampleSet",
         "VibrationTestSample",
         "VibrationTestSampleSet",
-        "sample_from_structured_payload",
-        "sample_set_from_structured_payload",
         "SampleDomain",
-        "VibrationTestMetadata",
-        "model_from_structured_payload",
         "UnitSystem",
         "StorageScheme",
         "StorageMode",
@@ -136,115 +121,97 @@ def test_top_level_exports_match_canonical_baseline() -> None:
         "logging",
         "storage",
         "config",
+        "resources",
         "PlotKind",
-        "PlotBackend",
         "plotting",
-        "VibEvalCommand",
     }
 
 
-def test_top_level_extension_exports_are_available() -> None:
-    assert issubclass(AccelSeries, DataModelBase)
-    assert issubclass(VelSeries, DataModelBase)
-    assert issubclass(DispSeries, DataModelBase)
-    assert issubclass(ForceSeries, DataModelBase)
-    assert issubclass(TimeSeries, DataModelBase)
-    assert issubclass(Metadata, MetadataBase)
-    assert issubclass(Sample, SampleBase)
-    assert issubclass(SampleSet, SampleSetBase)
-    assert issubclass(VibrationTestSample, SampleBase)
-    assert issubclass(VibrationTestSampleSet, SampleSetBase)
-    assert issubclass(FreqAmpSeries, DataModelBase)
-    assert issubclass(FreqPhaSeries, DataModelBase)
-    assert issubclass(FreqSpec, DataModelBase)
-    assert issubclass(ResponseSpectrum, DataModelBase)
-    assert issubclass(SpecAccelSeries, DataModelBase)
-    assert issubclass(SpecVelSeries, DataModelBase)
-    assert issubclass(SpecDispSeries, DataModelBase)
-    assert issubclass(PSpecAccelSeries, DataModelBase)
-    assert issubclass(PSpecVelSeries, DataModelBase)
-    assert issubclass(RespSpec, DataModelBase)
-    assert issubclass(ZVLEval, DataModelBase)
-    assert issubclass(OTOVLEval, DataModelBase)
-    assert issubclass(FPVDVEval, DataModelBase)
-    assert issubclass(FDMVLEval, DataModelBase)
-    assert issubclass(SampleBaseModel, SampleBaseModel)
-    assert isinstance(MetadataSchema(name="demo"), MetadataSchema)
-    assert isinstance(SampleSlotSpec(name="accel", model_type=AccelSeries), SampleSlotSpec)
-    assert MetadataIDGenerator.quick_id({"demo": 1})
-    assert isinstance(SampleSchema(name="demo"), SampleSchema)
-    assert callable(model_from_structured_payload)
-    assert callable(metadata_from_structured_payload)
-    assert callable(sample_from_structured_payload)
-    assert callable(sample_set_from_structured_payload)
+def test_removed_top_level_symbols_stay_removed() -> None:
+    for name in (
+        "DynTool",
+        "resource",
+        "PlotBackend",
+        "DataModelBase",
+        "MetadataBase",
+        "SampleBase",
+        "SampleBaseModel",
+        "SampleSetBase",
+        "MetadataSchema",
+        "SampleSchema",
+        "SampleSlotSpec",
+        "MetadataIDGenerator",
+        "model_from_structured_payload",
+        "metadata_from_structured_payload",
+        "sample_from_structured_payload",
+        "sample_set_from_structured_payload",
+        "VibEvalCommand",
+    ):
+        assert not hasattr(dyntool, name)
 
 
-def test_top_level_exports_reference_same_objects_as_submodules() -> None:
-    from dyntool.domain.metadata import Metadata as DomainMetadata
-    from dyntool.domain.metadata import metadata_from_structured_payload as domain_metadata_from_structured_payload
-    from dyntool.domain.models import FreqSpec as DomainFreqSpec
-    from dyntool.domain.models import model_from_structured_payload as domain_model_from_structured_payload
-    from dyntool.domain.samples import Sample as DomainSample
-    from dyntool.domain.samples import sample_set_from_structured_payload as domain_sample_set_from_structured_payload
-    from dyntool.domain.samples import sample_from_structured_payload as domain_sample_from_structured_payload
-
-    assert Metadata is DomainMetadata
-    assert FreqSpec is DomainFreqSpec
-    assert Sample is DomainSample
-    assert model_from_structured_payload is domain_model_from_structured_payload
-    assert metadata_from_structured_payload is domain_metadata_from_structured_payload
-    assert sample_from_structured_payload is domain_sample_from_structured_payload
-    assert sample_set_from_structured_payload is domain_sample_set_from_structured_payload
-
-
-def test_custom_time_series_can_register_with_string_category_and_roundtrip() -> None:
-    class JerkSeries(TimeSeries):
-        category = "ts_jerk_test_public_api"
-
-        @classmethod
-        def _base_value_unit(cls) -> str:
-            return "meter/second**3"
-
-    jerk = JerkSeries.from_data(
-        [0.0, 1.0, -0.5],
-        dt=0.1,
-        axis_unit="second",
-        data_unit="meter/second**3",
-    )
-
-    restored = model_from_structured_payload(jerk.to_structured_payload())
-
-    assert DataModelBase.from_category("ts_jerk_test_public_api") is JerkSeries
-    assert isinstance(restored, JerkSeries)
-
-
-def test_top_level_core_exports_are_available() -> None:
-    accel = AccelSeries.from_data([0.0, 0.1, -0.02], dt=0.01)
-    sample = Sample.from_models(
-        metadata=Metadata(attributes={"source": "top-level"}),
-        accel=accel,
-    )
-    sample_set = SampleSet.from_samples([sample])
-
-    assert accel.__class__.__name__ == "AccelSeries"
-    assert sample.accel is not None
-    assert len(sample_set) == 1
-    assert isinstance(UnitSystem.si(), UnitSystem)
+def test_top_level_exports_reference_expected_objects() -> None:
+    assert MagnitudeConversion.__name__ == "MagnitudeConversion"
+    assert TimeSeries.__name__ == "TimeSeries"
+    assert AccelSeries.__name__ == "AccelSeries"
+    assert VelSeries.__name__ == "VelSeries"
+    assert DispSeries.__name__ == "DispSeries"
+    assert ForceSeries.__name__ == "ForceSeries"
+    assert FreqAmpSeries.__name__ == "FreqAmpSeries"
+    assert FreqPhaSeries.__name__ == "FreqPhaSeries"
+    assert FreqSpec.__name__ == "FreqSpec"
+    assert ResponseSpectrum.__name__ == "ResponseSpectrum"
+    assert SpecAccelSeries.__name__ == "SpecAccelSeries"
+    assert SpecVelSeries.__name__ == "SpecVelSeries"
+    assert SpecDispSeries.__name__ == "SpecDispSeries"
+    assert PSpecAccelSeries.__name__ == "PSpecAccelSeries"
+    assert PSpecVelSeries.__name__ == "PSpecVelSeries"
+    assert RespSpec.__name__ == "RespSpec"
+    assert ZVLEval.__name__ == "ZVLEval"
+    assert OTOVLEval.__name__ == "OTOVLEval"
+    assert FPVDVEval.__name__ == "FPVDVEval"
+    assert FDMVLEval.__name__ == "FDMVLEval"
+    assert ZVLLimit.__name__ == "ZVLLimit"
+    assert OTOVLLimit.__name__ == "OTOVLLimit"
+    assert FPVDVLimit.__name__ == "FPVDVLimit"
+    assert FDMVLLimit.__name__ == "FDMVLLimit"
+    assert Metadata.__name__ == "Metadata"
+    assert VibrationTestMetadata.__name__ == "VibrationTestMetadata"
+    assert Sample.__name__ == "Sample"
+    assert SampleSet.__name__ == "SampleSet"
+    assert VibrationTestSample.__name__ == "VibrationTestSample"
+    assert VibrationTestSampleSet.__name__ == "VibrationTestSampleSet"
+    assert SampleDomain.VIBRATION_TEST.value == "vibration_test"
+    assert UnitSystem.si() is not None
+    assert StorageScheme.SET_H5.value == "set_h5"
+    assert StorageMode.OPEN.value == "open"
+    assert AttrDataFormat.CSV.value == "csv"
+    assert ContainerFormat.H5.value == "h5"
+    assert LoggingMode.CONSOLE_ONLY.value == "console_only"
+    assert PlotKind.TIME.value == "time"
 
 
-def test_sample_set_no_longer_exposes_direct_csv_h5_shortcuts() -> None:
-    assert not hasattr(SampleSet, "to_h5")
-    assert not hasattr(SampleSet, "from_h5")
-    assert not hasattr(SampleSet, "to_csv")
-    assert not hasattr(SampleSet, "from_csv")
+def test_formal_modules_are_available() -> None:
+    assert logging is dt_logging
+    assert storage is dt_storage
+    assert config is dt_config
+    assert resources is dt_resource
+    assert plotting is dt_plotting
 
 
-def test_top_level_metadata_exports_are_available() -> None:
-    vibration_meta = VibrationTestMetadata(**_make_vibration_kwargs())
-    assert vibration_meta.uid
+def test_resource_module_exposes_formal_actions() -> None:
+    manifest = dt_resource.manifest()
+
+    assert isinstance(dt_resource.keys(), tuple)
+    assert "center_freq" in manifest
+    assert dt_resource.path("center_freq").exists()
+    csv = dt_resource.csv("center_freq")
+    assert not csv.empty
+    freqs, index = dt_resource.center_freqs((2.0, 80.0))
+    assert len(freqs) == len(index)
 
 
-def test_sample_class_supports_class_first_creation_and_eval() -> None:
+def test_sample_and_sampleset_support_current_class_first_flow(tmp_path: Path) -> None:
     sample = Sample.from_accel_data(
         [0.0, 0.1, -0.02],
         dt=0.01,
@@ -252,192 +219,27 @@ def test_sample_class_supports_class_first_creation_and_eval() -> None:
         metadata_cls=VibrationTestMetadata,
         **_make_vibration_kwargs(),
     )
-
-    success, _ = sample.eval_zvl(overwrite=True, freq_range=(2.0, 60.0))
-
-    assert success is True
-    assert sample.zvl is not None
-
-
-def test_sample_set_class_supports_from_samples_and_storage_roundtrip(tmp_path: Path) -> None:
-    sample = Sample.from_accel_data(
-        [0.0, 0.1, -0.02],
-        dt=0.01,
-        sample_domain=SampleDomain.VIBRATION_TEST,
-        metadata_cls=VibrationTestMetadata,
-        **_make_vibration_kwargs(),
-    )
+    result = sample.eval_zvl(overwrite=True, freq_range=(2.0, 60.0))
     sample_set = SampleSet.from_samples([sample], sample_domain=SampleDomain.VIBRATION_TEST)
-    result = sample_set.eval_zvl(overwrite=True, freq_range=(2.0, 60.0))
-    store_path = tmp_path / "samples.h5"
-
-    sample_set.save(store_path, storage_scheme=dyntool.StorageScheme.SET_H5)
-
+    store_path = tmp_path / "sample_set.h5"
+    sample_set.save(store_path, storage_scheme=StorageScheme.SET_H5)
     loaded = SampleSet.from_storage(
         store_path,
         sample_domain=SampleDomain.VIBRATION_TEST,
-        storage_scheme=dyntool.StorageScheme.SET_H5,
+        storage_scheme=StorageScheme.SET_H5,
     )
 
-    assert sample.uid in result
+    assert isinstance(result, OperationResult)
+    assert isinstance(sample_set.eval_zvl(overwrite=True, freq_range=(2.0, 60.0)), BatchOperationReport)
     assert loaded[sample.uid].zvl is not None
 
 
-def test_logging_module_supports_directory_mode(tmp_path: Path) -> None:
-    log_dir = tmp_path / "logs"
-    config = dt_logging.configure_logging(
-        provider="stdlib",
-        mode=LoggingMode.DIRECTORY,
-        log_dir=log_dir,
-        level="INFO",
-        mirror_to_console=False,
-    )
-    logger = dt_logging.get_logger("storage")
-    logger.info("save done")
-
-    assert config.log_dir == log_dir
-    assert log_dir.exists()
-    assert (log_dir / "storage.log").exists()
-    assert "stdlib" in dt_logging.available_providers()
-    assert dt_logging.get_active_provider_name() == "stdlib"
-
-
-def test_storage_module_roundtrip_model_and_sample_set(tmp_path: Path) -> None:
-    accel = AccelSeries.from_data([0.0, 0.1, -0.05], dt=0.01)
-    model_path = tmp_path / "accel.csv"
-    sample = Sample.from_accel_data(
-        [0.0, 0.1, -0.02],
-        dt=0.01,
-        sample_domain=SampleDomain.VIBRATION_TEST,
-        metadata_cls=VibrationTestMetadata,
-        **_make_vibration_kwargs(),
-    )
-    sample_set = SampleSet.from_samples([sample], sample_domain=SampleDomain.VIBRATION_TEST)
-    set_path = tmp_path / "samples.h5"
-
-    saved_path = dt_storage.save_model(accel, model_path)
-    loaded_model = dt_storage.load_model(saved_path, type(accel))
-    units = dt_storage.inspect_model_units(saved_path, type(accel))
-    dt_storage.save_sample_set(sample_set, set_path)
-    loaded_set = dt_storage.load_sample_set(set_path, domain=SampleDomain.VIBRATION_TEST)
-
-    assert loaded_model.get_value().shape == accel.get_value().shape
-    assert "time" in units
-    assert loaded_set[sample.uid].accel is not None
-
-
-def test_plotting_module_returns_plot_result_for_model_payloads() -> None:
-    accel = AccelSeries.from_data([0.0, 0.1, -0.05], dt=0.01)
-    model_result = dt_plotting.render_payload(accel.to_plot_payload(kind=PlotKind.TIME))
-    raw_result = dt_plotting.render_payload(
-        dt_plotting.FramePlotPayload(
-            panels=(
-                dt_plotting.FramePanelPayload(
-                    series=(dt_plotting.PlotLinePayload(y=[0.0, 1.0], label="curve-1"),),
-                ),
-            ),
-        )
-    )
-
-    assert isinstance(model_result, PlotResult)
-    assert isinstance(raw_result, PlotResult)
-
-
-def test_plotting_module_exports_plotter_first_types() -> None:
-    assert FramePlotter.__module__ == "dyntool.plotting.plotters"
-    assert StoryValuePlotter.__module__ == "dyntool.plotting.plotters"
-
-
-def test_package_import_does_not_apply_default_zh_font_side_effect() -> None:
-    original = list(plt.rcParams["font.sans-serif"])
-    try:
-        plt.rcParams["font.sans-serif"] = ["__sentinel_font__"]
-        importlib.reload(dyntool)
-        assert plt.rcParams["font.sans-serif"][0] == "__sentinel_font__"
-    finally:
-        plt.rcParams["font.sans-serif"] = original
-        importlib.reload(dyntool)
-
-
-def test_object_level_plotting_methods_are_removed() -> None:
-    accel = AccelSeries.from_data([0.0, 0.1, -0.05], dt=0.01)
-    sample = Sample.from_accel_data(
-        [0.0, 0.1, -0.02],
-        dt=0.01,
-        sample_domain=SampleDomain.VIBRATION_TEST,
-        metadata_cls=VibrationTestMetadata,
-        **_make_vibration_kwargs(),
-    )
-    sample_set = SampleSet.from_samples([sample], sample_domain=SampleDomain.VIBRATION_TEST)
-
-    assert not hasattr(accel, "plot")
-    assert not hasattr(accel, "plot_static")
-    assert not hasattr(sample, "plot")
-    assert not hasattr(sample_set, "plot_sample")
-
-
-def test_enum_only_guards() -> None:
-    sample = Sample.from_accel_data(
-        [0.0, 0.1, -0.02],
-        dt=0.01,
-        sample_domain=SampleDomain.VIBRATION_TEST,
-        metadata_cls=VibrationTestMetadata,
-        **_make_vibration_kwargs(),
-    )
-    sample_set = SampleSet.from_samples([sample], sample_domain=SampleDomain.VIBRATION_TEST)
-    with pytest.raises(TypeError):
-        sample_set.connect_storage(
-            ".",
-            storage_scheme="sample_dir",  # type: ignore[arg-type]
-            mode=StorageMode.CREATE,
-        )
-    with pytest.raises(TypeError):
-        sample_set.save(
-            "tmp-invalid.h5",
-            storage_scheme="set_h5",  # type: ignore[arg-type]
-        )
-
-
-def test_config_module_exposes_generic_loader() -> None:
+def test_config_module_keeps_generic_loader() -> None:
     assert hasattr(dt_config, "Config")
     assert hasattr(dt_config, "load_config")
-    assert not hasattr(dt_config, "get_preset_path")
+    assert hasattr(dt_config, "read_config_file")
 
 
-def test_interfaces_package_is_removed() -> None:
-    with pytest.raises(ModuleNotFoundError):
-        importlib.import_module("dyntool.interfaces")
-    with pytest.raises(ModuleNotFoundError):
-        importlib.import_module("dyntool.interfaces.plot")
-    with pytest.raises(ModuleNotFoundError):
-        importlib.import_module("dyntool.interfaces.cli")
-
-
-def test_legacy_models_module_is_removed() -> None:
-    with pytest.raises(ModuleNotFoundError):
-        importlib.import_module("dyntool.models")
-    assert "dyntool.models" not in sys.modules
-
-
-def test_compat_modules_are_removed() -> None:
-    for module_name in (
-        "dyntool._bootstrap_runtime",
-        "dyntool._compat_warnings",
-        "dyntool.compute.processing",
-        "dyntool.domain.metadata._core",
-    ):
-        with pytest.raises(ModuleNotFoundError):
-            importlib.import_module(module_name)
-
-
-def test_sample_compat_alias_methods_are_removed() -> None:
-    sample = Sample.from_accel_data(
-        [0.0, 0.1, -0.02],
-        dt=0.01,
-        sample_domain=SampleDomain.VIBRATION_TEST,
-        metadata_cls=VibrationTestMetadata,
-        **_make_vibration_kwargs(),
-    )
-
-    assert not hasattr(sample, "save_data")
-    assert not hasattr(sample, "load_data")
+def test_plotting_module_no_longer_exposes_backend_tokens() -> None:
+    assert not hasattr(dt_plotting, "PlotBackend")
+    assert "PlotBackend" not in getattr(dyntool, "__all__", ())

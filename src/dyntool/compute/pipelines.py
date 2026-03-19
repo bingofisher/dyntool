@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Iterable
+from typing import Any, Iterable, Protocol
 
 import numpy as np
 
@@ -19,7 +19,19 @@ from .signals import (
 )
 
 
-def _is_accel_like(accel: object) -> bool:
+class _AccelLike(Protocol):
+    """加速度样本的最小协议。"""
+
+    dt: float
+
+    def get_axis(self) -> np.ndarray: ...
+
+    def get_value(self) -> np.ndarray: ...
+
+    def current_units(self) -> dict[str, str]: ...
+
+
+def _is_accel_like(accel: Any) -> bool:
     return all(hasattr(accel, name) for name in ("get_axis", "get_value", "dt", "current_units"))
 
 

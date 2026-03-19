@@ -4,25 +4,59 @@ from __future__ import annotations
 
 from collections import UserDict
 from pathlib import Path
-from typing import Any, Callable, ClassVar, Generic, Mapping, Self, TypeVar, cast
+from typing import Any, Callable, ClassVar, Generic, Iterable, Mapping, Self, TypeVar, cast
 
 import pandas as pd
 from pydantic import ValidationError
 
 from ...logging import get_logger
-from ..constants import DataCategory
+from ..constants import DataCategory, SAMPLE_ATTR_TO_DATA_CATEGORY
 from ..enums import SampleDomain
 from ..metadata import MetadataBase
 from ..models import DataModelBase
+from ..runtime.errors import RecoverableIOError
 from ..runtime import resolve_sample_set_runtime
 from ..serialization import StructuredPayload, normalize_payload
 from .base import SampleBase
-from .batch import run_callable_batch, run_vibeval_batch, select_sample_items
+from .batch import (
+    BatchOperationReport,
+    OperationResult,
+    infer_batch_status,
+    make_operation_result,
+    run_callable_batch,
+    run_vibeval_batch,
+    select_sample_items,
+)
 from .commands import VibEvalCommand
 from .namespaces import SampleSetEvaluationNamespace, SampleSetProcessingNamespace
+from .types import SampleField, SampleLoadMode
 
 SampleType = TypeVar("SampleType", bound=SampleBase)
 logger = get_logger("samples")
+
+
+def _require_storage_mode(value: Any | None) -> None:
+    """校验公开 `mode` 参数必须使用正式枚举。"""
+
+    if value is None or type(value).__name__ == "StorageMode":
+        return
+    raise TypeError("mode 参数必须是 StorageMode 枚举")
+
+
+def _require_storage_scheme(value: Any | None) -> None:
+    """校验公开 `storage_scheme` 参数必须使用正式枚举。"""
+
+    if value is None or type(value).__name__ == "StorageScheme":
+        return
+    raise TypeError("storage_scheme 参数必须是 StorageScheme 枚举")
+
+
+def _require_name_resolver(value: Any | None) -> None:
+    """校验公开 `name_resolver` 参数。"""
+
+    if value is None or callable(value):
+        return
+    raise TypeError("name_resolver 参数必须是可调用对象")
 
 
 class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ignore[type-var]
@@ -39,6 +73,8 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
         self._validate_class_configuration()
         self.storage: Any = None
         self.strict: bool = True
+        self.storage_dirty: bool = False
+        self._last_operation_report: BatchOperationReport[Any] | None = None
 
         if samples:
             if isinstance(samples, list):
@@ -49,6 +85,9 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
                 raise TypeError("samples 参数必须是字典或列表类型")
 
     def __setitem__(self, key: str, item: Any) -> None:
+        _ = key
+        self._bind_sample_internal(item)
+        return
         normalized_key = key.strip()
         expected_type = self.sample_type
         if not isinstance(item, expected_type):
@@ -56,6 +95,7 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
         expected_key = item.uid.strip()
         if normalized_key != expected_key:
             normalized_key = expected_key
+        item._storage_set = self
         super().__setitem__(normalized_key, item)
 
     def __getitem__(self, key: str) -> SampleType:
@@ -64,6 +104,36 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
     def __repr__(self) -> str:
         return f"<{self.__class__.__name__}[{self.sample_type.__name__}] ({len(self)} samples)>"
 
+    def _bind_sample_internal(self, sample: SampleType) -> str:
+        """内部绑定样本并返回规范化 UID。"""
+
+        expected_type = self.sample_type
+        if not isinstance(sample, expected_type):
+            raise TypeError(f"类型错误: {self.__class__.__name__} 仅接受 {expected_type.__name__} 类型")
+        uid = sample.uid.strip()
+        sample._storage_set = self
+        super().__setitem__(uid, sample)
+        return uid
+
+    def add_sample(self, sample: SampleType) -> SampleType:
+        """向样本集添加单个样本。"""
+
+        self._bind_sample_internal(sample)
+        if self.storage is not None:
+            self.storage_dirty = True
+        return sample
+
+    def replace_sample(self, uid: str, sample: SampleType) -> SampleType:
+        """按 UID 替换样本集中的样本。"""
+
+        resolved_uid = uid.strip()
+        if resolved_uid in self.data:
+            self.data.pop(resolved_uid, None)
+        self._bind_sample_internal(sample)
+        if self.storage is not None:
+            self.storage_dirty = True
+        return sample
+
     @property
     def sample_type(self) -> type[SampleType]:
         """返回样本集管理的样本类型。"""
@@ -71,10 +141,41 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
         return cast(type[SampleType], self._sample_type)
 
     @property
-    def sample_schema(self):
+    def sample_schema(self) -> Any:
         """返回样本 schema。"""
 
         return self.sample_type.sample_schema
+
+    @classmethod
+    def supported_categories(cls) -> tuple[DataCategory, ...]:
+        """返回当前样本集支持的公开 DataCategory 子集。"""
+
+        return cls._sample_type.supported_categories()
+
+    @classmethod
+    def storable_categories(cls) -> tuple[DataCategory, ...]:
+        """返回当前样本集允许进入存储流程的 DataCategory 子集。"""
+
+        return cls._sample_type.storable_categories()
+
+    @classmethod
+    def supported_fields(cls) -> tuple[SampleField, ...]:
+        """返回当前样本集内部使用的 SampleField 列表。"""
+
+        return cls._sample_type.supported_fields()
+
+    @classmethod
+    def storable_fields(cls) -> tuple[SampleField, ...]:
+        """返回当前样本集可持久化读写的 SampleField 列表。"""
+
+        return cls._sample_type.storable_fields()
+
+    def available_categories(self, uid: str) -> tuple[DataCategory, ...]:
+        """返回指定样本当前已加载或可从已绑定 storage 读取的分类。"""
+
+        if uid not in self:
+            raise KeyError(f"样本 '{uid}' 不存在于样本集中")
+        return self[uid].available_categories()
 
     @classmethod
     def get_sample_attr_types(cls, *attrs: str) -> dict[str, type]:
@@ -105,21 +206,186 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
         for sample in samples:
             self[sample.uid] = sample
 
-    def update_data(self, uid: str, data: DataModelBase) -> None:
+    def update_data(
+        self,
+        uid: str,
+        data: DataModelBase,
+        *,
+        strict: bool | None = None,
+    ) -> bool:
         """更新指定样本的特定类别数据。"""
+
+        strict_mode = self.strict if strict is None else strict
+        if uid not in self:
+            message = f"样本 '{uid}' 不存在于样本集中"
+            if strict_mode:
+                logger.error(f"update_data failed: {message}")
+                raise KeyError(message)
+            logger.warning(f"update_data skipped: {message}")
+            return False
+        field = self.sample_schema.resolve_field(data.category)
+        self[uid].set_data_var(field, data)
+        logger.info(f"update_data done: uid={uid}, field={field.value}")
+        return True
+
+    def update_sample(self, uid: str, *, strict: bool | None = None, **patch: Any) -> SampleType:
+        """更新指定 UID 的样本。
+
+        Args:
+            uid: 待更新样本的 UID。
+            strict: 是否覆盖样本更新过程的严格模式。
+            **patch: 支持键为 `Sample.update()` 允许的字段，包括 `alias`、
+                `metadata`、`data_vars` 以及样本 schema 声明的顶层槽位名。
+
+        Returns:
+            更新后的样本对象。
+        """
+
+        strict_mode = self.strict if strict is None else strict
+        if uid not in self:
+            raise KeyError(f"样本 '{uid}' 不存在于样本集中")
+        sample = self[uid]
+        sample.update(strict=strict_mode, **patch)
+        if self.storage is not None:
+            self.storage_dirty = True
+        return sample
+
+    def update_metadata(self, uid: str, *, strict: bool | None = None, **patch: Any) -> SampleType:
+        """更新指定 UID 样本的 metadata 字段。
+
+        Args:
+            uid: 待更新样本的 UID。
+            strict: 预留的严格模式参数；当前 metadata 校验由 metadata 模型本身负责。
+            **patch: 支持键为当前 metadata 类型声明的字段名，例如 VibTest 主线中的
+                `case`、`point`、`instr`、`dir`、`record`、`timestamp`、`extra`。
+
+        Returns:
+            更新后的样本对象。
+        """
+
+        del strict
+        if uid not in self:
+            raise KeyError(f"样本 '{uid}' 不存在于样本集中")
+        sample = self[uid]
+        sample.update_metadata(**patch)
+        if self.storage is not None:
+            self.storage_dirty = True
+        return sample
+
+    def load_data(
+        self,
+        uid: str,
+        *,
+        categories: Iterable[DataCategory | str] | None = None,
+    ) -> SampleType:
+        """显式加载指定样本的槽位数据。"""
 
         if uid not in self:
             raise KeyError(f"样本 '{uid}' 不存在于样本集中")
-        slot_name = self._resolve_slot_name(data.category)
-        self[uid].set_data_var(slot_name, data)
+        normalized_fields = self._categories_to_fields(categories)
+        sample = self[uid]
+        sample.ensure_loaded(categories=normalized_fields)
+        return sample
+
+    def load_many(
+        self,
+        *,
+        uids: Iterable[str] | None = None,
+        categories: Iterable[DataCategory | str] | None = None,
+        filter: Callable[[SampleType], bool] | None = None,
+    ) -> Self:
+        """批量显式加载多个样本的槽位数据。"""
+
+        normalized_fields = self._categories_to_fields(categories)
+        selected_items = self._select_samples(uid=None, uids=list(uids) if uids is not None else None, filter=filter)
+        for _, sample in selected_items:
+            sample.ensure_loaded(categories=normalized_fields)
+        return self
+
+    def prefetch(
+        self,
+        *,
+        uids: Iterable[str] | None = None,
+        categories: Iterable[DataCategory | str] | None = None,
+        filter: Callable[[SampleType], bool] | None = None,
+    ) -> Self:
+        """预热指定样本的槽位数据。"""
+
+        return self.load_many(uids=uids, categories=categories, filter=filter)
+
+    def update_many(
+        self,
+        *,
+        uids: Iterable[str] | None = None,
+        criteria: Mapping[str, Any] | None = None,
+        filter: Callable[[SampleType], bool] | None = None,
+        metadata_patch: Mapping[str, Any] | None = None,
+        data_patch: Mapping[str, DataModelBase | None] | None = None,
+        alias: str | None = None,
+        force_alias: bool = False,
+    ) -> Self:
+        """批量更新命中样本的 metadata、数据槽位和 alias。"""
+
+        matched = self.find(uids=uids, criteria=criteria, filter=filter)
+        for sample in matched.values():
+            if metadata_patch:
+                sample.update_metadata(**dict(metadata_patch))
+            if data_patch:
+                sample.update_data(**dict(data_patch))
+            if alias is not None:
+                sample.set_alias(alias)
+            elif force_alias:
+                sample.refresh_alias(force=force_alias)
+        if self.storage is not None and len(matched) > 0:
+            self.storage_dirty = True
+        return self
+
+    def delete_many(
+        self,
+        *,
+        uids: Iterable[str] | None = None,
+        criteria: Mapping[str, Any] | None = None,
+        filter: Callable[[SampleType], bool] | None = None,
+    ) -> list[str]:
+        """删除命中的样本并返回已删除 UID 列表。"""
+
+        matched = self.find(uids=uids, criteria=criteria, filter=filter)
+        removed = list(matched.keys())
+        for uid in removed:
+            self.data.pop(uid, None)
+        if self.storage is not None and removed:
+            self.storage_dirty = True
+        return removed
+
+    @property
+    def last_operation_report(self) -> BatchOperationReport[Any] | None:
+        """返回最近一次批处理报告。"""
+
+        return self._last_operation_report
 
     def get_metadata(self, **metadata_criteria: Any) -> list[MetadataBase]:
-        """根据元数据条件筛选样本元数据。"""
+        """根据 metadata 等值条件筛选样本元数据。
+
+        Args:
+            **metadata_criteria: 支持键为当前 metadata 类型声明的字段名；只有字段值全
+                部匹配的样本才会被返回。
+
+        Returns:
+            命中样本的 metadata 对象列表。
+        """
 
         return [sample.metadata for sample in self.values() if sample.metadata.match(**metadata_criteria)]
 
     def get_uids(self, **metadata_criteria: Any) -> list[str]:
-        """根据元数据条件获取匹配样本 UID 列表。"""
+        """根据 metadata 等值条件获取匹配样本 UID 列表。
+
+        Args:
+            **metadata_criteria: 支持键为当前 metadata 类型声明的字段名；只有字段值全
+                部匹配的样本才会被返回。
+
+        Returns:
+            命中样本的 UID 列表。
+        """
 
         return [meta.uid for meta in self.get_metadata(**metadata_criteria)]
 
@@ -137,24 +403,90 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
         metadata_list = [meta.to_flatten_dict(sep=flatten_sep) for meta in self.get_metadata()]
         return pd.DataFrame(metadata_list)
 
-    def _resolve_slot_name(self, category: str | DataCategory) -> str:
-        raw_name = DataCategory.to_sample_attr_name(category) if isinstance(category, DataCategory) else str(category)
-        return self.sample_schema.slot(raw_name).name
+    def _normalize_requested_categories(
+        self,
+        categories: Iterable[DataCategory | str] | None = None,
+        *,
+        load_mode: SampleLoadMode | None = None,
+    ) -> list[DataCategory] | None:
+        """将公开 `categories` 解析为去重后的 `DataCategory` 列表。"""
+
+        if load_mode is SampleLoadMode.METADATA_ONLY and categories is not None:
+            raise ValueError("load_mode=METADATA_ONLY 时不允许同时声明 categories")
+        if categories is None:
+            return None
+
+        resolved: list[DataCategory] = []
+        supported = set(self.supported_categories())
+        for raw_category in categories:
+            normalized_text = str(raw_category).strip()
+            try:
+                category = raw_category if isinstance(raw_category, DataCategory) else DataCategory(normalized_text)
+            except ValueError as exc:
+                category = SAMPLE_ATTR_TO_DATA_CATEGORY.get(normalized_text)
+                if category is None:
+                    raise ValueError(
+                        f"无效的 categories 取值: {raw_category}。请使用 DataCategory 枚举、其 value 字符串，或正式槽位名。"
+                    ) from exc
+            if category not in supported:
+                raise ValueError(f"DataCategory '{category.value}' 不能作为样本加载选择器。")
+            if category not in resolved:
+                resolved.append(category)
+        return resolved or None
+
+    def _categories_to_fields(
+        self,
+        categories: Iterable[DataCategory | str] | None = None,
+        *,
+        load_mode: SampleLoadMode | None = None,
+    ) -> list[SampleField] | None:
+        """把公开 categories 解析为内部 SampleField 列表。"""
+
+        normalized = self._normalize_requested_categories(categories, load_mode=load_mode)
+        if normalized is None:
+            return None
+        return [self.sample_schema.resolve_field(category) for category in normalized]
+
+    def find_by_alias(self, alias: str) -> SampleType | None:
+        """按 alias 查找单个样本。"""
+
+        target = str(alias).strip()
+        for sample in self.values():
+            if sample.alias == target:
+                return sample
+        return None
+
+    def get_uid_by_alias(self, alias: str) -> str:
+        """按 alias 返回样本 UID。"""
+
+        sample = self.find_by_alias(alias)
+        if sample is None:
+            raise KeyError(f"未找到 alias 对应的样本: {alias}")
+        return sample.uid
+
+    def refresh_aliases(self, *, force: bool = False) -> Self:
+        """批量刷新样本集内样本 alias。"""
+
+        for sample in self.values():
+            sample.refresh_alias(force=force)
+        if self.storage is not None:
+            self.storage_dirty = True
+        return self
 
     def get_data(self, uid: str, category: str | DataCategory) -> DataModelBase | None:
         """获取指定样本的特定类别数据。"""
 
         if uid not in self:
             raise KeyError(f"样本 '{uid}' 不存在于样本集中")
-        return self[uid].get_data_var(self._resolve_slot_name(category))
+        return self[uid].get_data_var(self.sample_schema.resolve_field(category))
 
     def get_data_dict(self, category: str | DataCategory) -> dict[str, DataModelBase]:
         """获取指定类别的所有样本数据字典。"""
 
-        slot_name = self._resolve_slot_name(category)
+        field = self.sample_schema.resolve_field(category)
         data_dict: dict[str, DataModelBase] = {}
         for uid, sample in self.items():
-            data = sample.get_data_var(slot_name)
+            data = sample.get_data_var(field)
             if isinstance(data, DataModelBase):
                 data_dict[uid] = data
         return data_dict
@@ -182,13 +514,12 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
         self,
         filter: Callable[[SampleType], bool] | None = None,
     ) -> Self:
-        """返回符合谓词条件的新样本集。"""
+        """返回符合条件的新样本集。"""
 
         return self.__class__(dict(self._filtered_items(filter=filter)))
 
     def get_sample(
-        self,
-        filter: Callable[[SampleType], bool] | None = None,
+        self, filter: Callable[[SampleType], bool] | None = None, *, strict: bool = True
     ) -> SampleType | None:
         """返回唯一匹配的样本。"""
 
@@ -197,7 +528,114 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
             if matched_sample is not None:
                 raise ValueError("expected exactly one matched sample")
             matched_sample = sample
+        if strict and matched_sample is None:
+            raise ValueError("no matched sample found")
         return matched_sample
+
+    def find(
+        self,
+        *,
+        uids: Iterable[str] | None = None,
+        criteria: Mapping[str, Any] | None = None,
+        filter: Callable[[SampleType], bool] | None = None,
+        sort_by: str | None = None,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> Self:
+        """按 UID、metadata 条件和过滤函数查询样本。"""
+
+        selected_uids = {str(uid).strip() for uid in uids} if uids is not None else None
+        criteria_map = dict(criteria or {})
+        items = list(self.items())
+        if selected_uids is not None:
+            items = [(uid, sample) for uid, sample in items if uid in selected_uids]
+        if criteria_map:
+            items = [
+                (uid, sample)
+                for uid, sample in items
+                if all(getattr(sample.metadata, field, None) == expected for field, expected in criteria_map.items())
+            ]
+        if filter is not None:
+            items = [(uid, sample) for uid, sample in items if filter(sample)]
+        if sort_by is not None:
+            items.sort(key=lambda item: getattr(item[1].metadata, sort_by, None))
+        if offset > 0:
+            items = items[offset:]
+        if limit is not None:
+            items = items[:limit]
+        return self.__class__(dict(items))
+
+    def find_one(
+        self,
+        *,
+        uids: Iterable[str] | None = None,
+        criteria: Mapping[str, Any] | None = None,
+        filter: Callable[[SampleType], bool] | None = None,
+        sort_by: str | None = None,
+    ) -> SampleType | None:
+        """返回按查询条件命中的首个样本。"""
+
+        matched = self.find(uids=uids, criteria=criteria, filter=filter, sort_by=sort_by, limit=1)
+        return next(iter(matched.values()), None)
+
+    def count(
+        self,
+        *,
+        uids: Iterable[str] | None = None,
+        criteria: Mapping[str, Any] | None = None,
+        filter: Callable[[SampleType], bool] | None = None,
+    ) -> int:
+        """返回按条件命中的样本数量。"""
+
+        return len(self.find(uids=uids, criteria=criteria, filter=filter))
+
+    def exists(
+        self,
+        *,
+        uids: Iterable[str] | None = None,
+        criteria: Mapping[str, Any] | None = None,
+        filter: Callable[[SampleType], bool] | None = None,
+    ) -> bool:
+        """判断是否存在按条件命中的样本。"""
+
+        return self.count(uids=uids, criteria=criteria, filter=filter) > 0
+
+    def distinct(
+        self,
+        field: str,
+        *,
+        uids: Iterable[str] | None = None,
+        criteria: Mapping[str, Any] | None = None,
+        filter: Callable[[SampleType], bool] | None = None,
+    ) -> tuple[Any, ...]:
+        """返回指定 metadata 字段的去重值。"""
+
+        values: list[Any] = []
+        for sample in self.find(uids=uids, criteria=criteria, filter=filter).values():
+            value = getattr(sample.metadata, field, None)
+            if value not in values:
+                values.append(value)
+        return tuple(values)
+
+    def project_metadata(
+        self,
+        *,
+        fields: Iterable[str] | None = None,
+        uids: Iterable[str] | None = None,
+        criteria: Mapping[str, Any] | None = None,
+        filter: Callable[[SampleType], bool] | None = None,
+    ) -> list[dict[str, Any]]:
+        """投影返回命中样本的 metadata 字段。"""
+
+        selected_fields = [str(field) for field in fields] if fields is not None else None
+        projected: list[dict[str, Any]] = []
+        for sample in self.find(uids=uids, criteria=criteria, filter=filter).values():
+            metadata_dict = sample.metadata.to_dict()
+            if selected_fields is None:
+                projected.append(metadata_dict)
+                continue
+            projected.append({field: metadata_dict.get(field) for field in selected_fields})
+        return projected
 
     def filter(
         self,
@@ -220,6 +658,32 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
         if filter is None:
             return list(self.items())
         return [(uid, sample) for uid, sample in self.items() if filter(sample)]
+
+    def _on_sample_metadata_changed(self, sample: SampleType, old_uid: str) -> None:
+        """在样本元数据变更后重写 UID 索引并标记存储为脏。"""
+
+        new_uid = sample.uid
+        if new_uid != old_uid and new_uid in self and self[new_uid] is not sample:
+            raise ValueError(f"样本集内已存在 UID 冲突: {new_uid}")
+        if old_uid in self.data and self.data[old_uid] is sample:
+            del self.data[old_uid]
+        self.data[new_uid] = sample
+        sample._storage_set = self
+        if self.storage is not None:
+            self.storage_dirty = True
+
+    def _on_sample_identity_changed(
+        self,
+        sample: SampleType,
+        old_uid: str,
+        old_alias: str | None = None,
+        *,
+        force_alias: bool = False,
+    ) -> None:
+        """统一处理样本 identity 变化后的重索引。"""
+
+        del old_alias, force_alias
+        self._on_sample_metadata_changed(sample, old_uid)
 
     @classmethod
     def build_from_metadatadf(cls, df: Any) -> Self:
@@ -244,11 +708,28 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
     def connect_storage(
         self,
         base_dir: str | Path,
+        *,
+        strict: bool | None = None,
         **kwargs: Any,
     ) -> Self:
-        """连接样本集存储。"""
+        """为当前样本集绑定存储上下文。
 
-        return cast(
+        Args:
+            base_dir: 样本集根目录、集合文件路径或容器目录。
+            strict: 是否覆盖当前样本集的严格模式。`None` 表示保留现有设置。
+            **kwargs: 支持键包括 `mode`、`storage_scheme`、`data_options`、
+                `name_resolver`、`set_filename`。这些键分别用于控制创建/打开模式、
+                存储方案、底层存储配置、样本命名解析和集合级文件名。
+
+        Returns:
+            当前样本集对象本身。
+        """
+
+        _require_storage_mode(kwargs.get("mode"))
+        _require_storage_scheme(kwargs.get("storage_scheme"))
+        _require_name_resolver(kwargs.get("name_resolver"))
+
+        result = cast(
             Self,
             resolve_sample_set_runtime(self, action="connect_storage").connect_sample_set_storage(
                 self,
@@ -256,25 +737,53 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
                 **kwargs,
             ),
         )
+        if strict is not None:
+            result.strict = strict
+        return result
 
     def save(
         self,
         path: str | Path | None = None,
         *,
-        mode: object | None = None,
-        storage_scheme: object | None = None,
+        mode: Any | None = None,
+        storage_scheme: Any | None = None,
         data_options: dict[str, Any] | None = None,
-        categories: list[str] | None = None,
-        strict: bool = True,
+        categories: list[DataCategory | str] | None = None,
+        strict: bool | None = None,
         filter: Callable[[SampleType], bool] | None = None,
         workers: int = 1,
         chunk_size: int = 256,
-        name_resolver: object | None = None,
+        name_resolver: Any | None = None,
         set_filename: str | None = None,
     ) -> Self:
-        """保存当前样本集。"""
+        """保存当前样本集级元信息与样本内容。
 
-        return cast(
+        Args:
+            path: 可选的显式目标路径；为 `None` 时要求当前样本集已连接存储。
+            mode: 存储打开模式，通常为创建或覆盖。
+            storage_scheme: 存储方案枚举，例如 `SET_H5`、`SAMPLE_DIR`。
+            data_options: 传给底层存储实现的命名配置映射。
+            categories: 公开读取/保存选择器。支持 `DataCategory` 枚举或其 value 字符串。
+            strict: 是否覆盖当前样本集的严格模式。
+            filter: 样本过滤函数，仅对命中的样本执行保存。
+            workers: 批量保存并行 worker 数量。
+            chunk_size: 批量保存的分块大小。
+            name_resolver: 自定义样本文件名解析器。
+            set_filename: 集合级文件名，仅在容器化方案下生效。
+
+        Returns:
+            当前样本集对象本身。
+
+        Notes:
+            `categories` 会先统一映射到内部 `SampleField`，再参与后续存储路由。
+        """
+
+        _require_storage_mode(mode)
+        _require_storage_scheme(storage_scheme)
+        _require_name_resolver(name_resolver)
+        resolved_categories = self._categories_to_fields(categories)
+
+        result = cast(
             Self,
             resolve_sample_set_runtime(self, action="save").save_sample_set(
                 self,
@@ -282,8 +791,8 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
                 mode=mode,
                 storage_scheme=storage_scheme,
                 data_options=data_options,
-                categories=categories,
-                strict=strict,
+                categories=resolved_categories,
+                strict=self.strict if strict is None else strict,
                 filter=filter,
                 workers=workers,
                 chunk_size=chunk_size,
@@ -291,24 +800,52 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
                 set_filename=set_filename,
             ),
         )
+        result.storage_dirty = False
+        return result
 
     def load(
         self,
         path: str | Path | None = None,
         *,
-        mode: object | None = None,
-        storage_scheme: object | None = None,
+        mode: Any | None = None,
+        storage_scheme: Any | None = None,
         data_options: dict[str, Any] | None = None,
-        categories: list[str] | None = None,
+        categories: list[DataCategory | str] | None = None,
+        load_mode: SampleLoadMode = SampleLoadMode.LAZY,
         strict: bool | None = None,
         filter: Callable[[SampleType], bool] | None = None,
         workers: int = 1,
         chunk_size: int = 256,
         set_filename: str | None = None,
     ) -> Self:
-        """加载样本集内容。"""
+        """加载当前样本集内容。
 
-        return cast(
+        Args:
+            path: 可选的显式来源路径；为 `None` 时从已连接存储上下文读取。
+            mode: 存储打开模式，通常为打开或只读。
+            storage_scheme: 存储方案枚举，例如 `SET_H5`、`SAMPLE_DIR`。
+            data_options: 传给底层存储实现的命名配置映射。
+            categories: 公开读取选择器。支持 `DataCategory` 枚举或其 value 字符串。
+            load_mode: 样本加载模式。`METADATA_ONLY` 只恢复索引，`LAZY` 按需读取，
+                `EAGER` 立即加载声明目标槽位。
+            strict: 是否覆盖当前样本集的严格模式。
+            filter: 样本过滤函数，仅对命中的样本执行加载。
+            workers: 批量加载并行 worker 数量。
+            chunk_size: 批量加载的分块大小。
+            set_filename: 集合级文件名，仅在容器化方案下生效。
+
+        Returns:
+            当前样本集对象本身。
+        """
+
+        _require_storage_mode(mode)
+        _require_storage_scheme(storage_scheme)
+        normalized_fields = self._categories_to_fields(categories, load_mode=load_mode)
+        runtime_categories = (
+            [] if load_mode in {SampleLoadMode.METADATA_ONLY, SampleLoadMode.LAZY} else normalized_fields
+        )
+
+        result = cast(
             Self,
             resolve_sample_set_runtime(self, action="load").load_sample_set(
                 self,
@@ -316,7 +853,7 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
                 mode=mode,
                 storage_scheme=storage_scheme,
                 data_options=data_options,
-                categories=categories,
+                categories=runtime_categories,
                 strict=strict,
                 filter=filter,
                 workers=workers,
@@ -324,65 +861,149 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
                 set_filename=set_filename,
             ),
         )
+        for sample in result.values():
+            sample._set_load_mode_internal(load_mode)
+        result.storage_dirty = False
+        return result
+
+    def _build_storage_report(
+        self,
+        *,
+        action: str,
+        strict: bool,
+        items: list[tuple[str, SampleType]],
+        errors: dict[str, Exception],
+    ) -> BatchOperationReport[Self]:
+        """根据底层存储错误映射构造正式批量报告。"""
+
+        report = BatchOperationReport[Self](action=action, strict=strict)
+        report.stats.valid_samples = len(items)
+        for item_uid, _ in items:
+            error = errors.get(item_uid)
+            if error is None:
+                report.add(
+                    item_uid,
+                    make_operation_result(action=action, success=True, message="完成", value=self),
+                )
+                continue
+            report.add(
+                item_uid,
+                make_operation_result(
+                    action=action,
+                    success=False,
+                    message=str(error),
+                    value=self,
+                    error=error,
+                ),
+            )
+        self._last_operation_report = report
+        return report
 
     def save_all(
         self,
         *,
-        categories: list[str] | None = None,
-        strict: bool = True,
+        categories: list[DataCategory | str] | None = None,
+        strict: bool | None = None,
         filter: Callable[[SampleType], bool] | None = None,
         workers: int = 1,
         chunk_size: int = 256,
-    ) -> dict[str, Exception]:
-        """批量保存当前样本集中的样本。"""
+    ) -> BatchOperationReport[Self]:
+        """批量保存当前样本集中的样本。
 
-        return resolve_sample_set_runtime(
+        Args:
+            categories: 公开保存选择器。支持 `DataCategory` 枚举或其 value 字符串。
+            strict: 是否覆盖当前样本集的严格模式。
+            filter: 样本过滤函数，仅对命中的样本执行保存。
+            workers: 并行 worker 数量。
+            chunk_size: 每批处理的样本数量。
+
+        Returns:
+            `BatchOperationReport[Self]`，报告逐样本保存结果。
+        """
+
+        effective_strict = self.strict if strict is None else strict
+        resolved_categories = self._categories_to_fields(categories)
+        items = self._filtered_items(filter=filter)
+        errors = resolve_sample_set_runtime(
             self,
             action="save_all",
         ).save_all_samples(
             self,
-            categories=categories,
-            strict=strict,
+            categories=resolved_categories,
+            strict=effective_strict,
             filter=filter,
             workers=workers,
             chunk_size=chunk_size,
         )
+        report = self._build_storage_report(action="save_all", strict=effective_strict, items=items, errors=errors)
+        if report.stats.failed == 0:
+            self.storage_dirty = False
+        return report
 
     def load_all(
         self,
         *,
         progress_callback: Callable[[int, int], None] | None = None,
-        categories: list[str] | None = None,
+        categories: list[DataCategory | str] | None = None,
+        load_mode: SampleLoadMode = SampleLoadMode.EAGER,
         strict: bool | None = None,
         filter: Callable[[SampleType], bool] | None = None,
         workers: int = 1,
         chunk_size: int = 256,
-    ) -> dict[str, Exception]:
-        """批量加载样本集中的样本。"""
+    ) -> BatchOperationReport[Self]:
+        """批量加载样本集中的样本。
 
-        return resolve_sample_set_runtime(
+        Args:
+            progress_callback: 进度回调，参数为 `(completed, total)`。
+            categories: 公开加载选择器。支持 `DataCategory` 枚举或其 value 字符串。
+            load_mode: 样本加载模式。`METADATA_ONLY` 只恢复索引，`LAZY` 按需读取，
+                `EAGER` 立即加载声明目标槽位。
+            strict: 是否覆盖当前样本集的严格模式。
+            filter: 样本过滤函数，仅对命中的样本执行加载。
+            workers: 并行 worker 数量。
+            chunk_size: 每批处理的样本数量。
+
+        Returns:
+            `BatchOperationReport[Self]`，报告逐样本加载结果。
+        """
+
+        effective_strict = self.strict if strict is None else strict
+        normalized_fields = self._categories_to_fields(categories, load_mode=load_mode)
+        runtime_categories = (
+            [] if load_mode in {SampleLoadMode.METADATA_ONLY, SampleLoadMode.LAZY} else normalized_fields
+        )
+        errors = resolve_sample_set_runtime(
             self,
             action="load_all",
         ).load_all_samples(
             self,
             progress_callback=progress_callback,
-            categories=categories,
-            strict=strict,
+            categories=runtime_categories,
+            strict=effective_strict,
             filter=filter,
             workers=workers,
             chunk_size=chunk_size,
         )
+        for sample in self.values():
+            sample._set_load_mode_internal(load_mode)
+        items = self._filtered_items(filter=filter)
+        report = self._build_storage_report(action="load_all", strict=effective_strict, items=items, errors=errors)
+        if report.stats.failed == 0:
+            self.storage_dirty = False
+        return report
 
     def organize_storage(self) -> Self:
-        """整理样本集存储。"""
+        """按当前样本集清理存储中的冗余条目。"""
 
-        return cast(
+        result = cast(
             Self,
             resolve_sample_set_runtime(
                 self,
                 action="organize_storage",
             ).organize_sample_set_storage(self),
         )
+        result.storage_dirty = False
+        return result
 
     def export_metadata(self, path: str | Path, *, flatten_sep: str = "@") -> Path:
         """将元数据表导出为 CSV。"""
@@ -397,11 +1018,21 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
         return target
 
     def import_metadata(self, path: str | Path) -> Self:
-        """用 metadata CSV 替换当前样本集。"""
+        """从 metadata CSV 导入并补丁更新现有样本元数据。"""
 
-        imported = self.__class__.build_from_metadatadf(pd.read_csv(path))
-        self.clear()
-        self.update(imported)
+        metadata_df = pd.read_csv(path, encoding="utf-8")
+        metadata_class = self._sample_type.sample_schema.metadata_type
+        for _, row in metadata_df.iterrows():
+            payload = row.to_dict()
+            exported_uid = str(payload.get("uid", "")).strip()
+            metadata = metadata_class.from_flatten_dict(payload)  # type: ignore[union-attr]
+            if exported_uid and exported_uid in self:
+                self[exported_uid].replace_metadata(metadata)
+                continue
+            if metadata.uid in self:
+                self[metadata.uid].replace_metadata(metadata)
+                continue
+            self[metadata.uid] = self.sample_type(metadata=metadata)  # type: ignore[call-arg]
         return self
 
     @property
@@ -416,39 +1047,149 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
 
         return SampleSetEvaluationNamespace(self)
 
-    def preprocess(self, **kwargs: Any) -> Any:
-        """执行样本集预处理工作流。"""
+    def preprocess(self, *, strict: bool | None = None, **kwargs: Any) -> BatchOperationReport[Self]:
+        """执行样本集预处理工作流。
+
+        Args:
+            strict: 是否覆盖当前样本集的严格模式。
+            **kwargs: 支持键包括 `truncate_range`、`baseline`、`baseline_order`、
+                `highpass`、`lowpass`、`bandpass`、`filter_order`。这些键会逐样本
+                传给 `Sample.preprocess()`。
+        """
 
         from .workflows import preprocess_sample_set
 
-        return preprocess_sample_set(self, **kwargs)
+        return cast(BatchOperationReport[Self], preprocess_sample_set(self, strict=strict, **kwargs))
 
-    def evaluate(self, command: VibEvalCommand, **kwargs: Any) -> Any:
-        """执行样本集评价命令。"""
+    def evaluate(self, command: VibEvalCommand, **kwargs: Any) -> BatchOperationReport[Self]:
+        """执行样本集评价命令。
+
+        Args:
+            command: 要执行的 `VibEvalCommand` 枚举值。
+            **kwargs: 支持键包括 `overwrite`、`strict`、`uid`、`uids`、`filter`，
+                以及评价命令支持的参数：`freq_range`、`weight_type`、`time_windows`、
+                `nsup`、`calc_unit_system`、`output_unit_system`。
+        """
 
         from .workflows import evaluate_sample_set
 
-        return evaluate_sample_set(self, command, **kwargs)
+        return cast(BatchOperationReport[Self], evaluate_sample_set(self, command, **kwargs))
 
-    def eval_zvl(self, **kwargs: Any) -> Any:
-        """执行 ZVL 批量评价。"""
+    def eval_zvl(
+        self,
+        *,
+        overwrite: bool = False,
+        uid: str | None = None,
+        uids: list[str] | None = None,
+        filter: Callable[[SampleType], bool] | None = None,
+        **kwargs: Any,
+    ) -> BatchOperationReport[Self]:
+        """执行 ZVL 批量评价。
 
-        return self.evaluate(VibEvalCommand.ZVL, **kwargs)
+        Args:
+            overwrite: 是否允许覆盖已有 `zvl` 结果。
+            uid: 仅处理单个样本 UID。
+            uids: 处理多个样本 UID。
+            filter: 样本过滤函数。
+            **kwargs: 支持键包括 `strict`、`freq_range`、`weight_type`、
+                `time_windows`、`calc_unit_system`、`output_unit_system`。
+        """
 
-    def eval_otovl(self, **kwargs: Any) -> Any:
-        """执行 OTOVL 批量评价。"""
+        return self.evaluate(
+            VibEvalCommand.ZVL,
+            overwrite=overwrite,
+            uid=uid,
+            uids=uids,
+            filter=filter,
+            **kwargs,
+        )
 
-        return self.evaluate(VibEvalCommand.OTOVL, **kwargs)
+    def eval_otovl(
+        self,
+        *,
+        overwrite: bool = False,
+        uid: str | None = None,
+        uids: list[str] | None = None,
+        filter: Callable[[SampleType], bool] | None = None,
+        **kwargs: Any,
+    ) -> BatchOperationReport[Self]:
+        """执行 OTOVL 批量评价。
 
-    def eval_fdmvl(self, **kwargs: Any) -> Any:
-        """执行 FDMVL 批量评价。"""
+        Args:
+            overwrite: 是否允许覆盖已有 `otovl` 结果。
+            uid: 仅处理单个样本 UID。
+            uids: 处理多个样本 UID。
+            filter: 样本过滤函数。
+            **kwargs: 支持键包括 `strict`、`freq_range`、`time_windows`、
+                `calc_unit_system`、`output_unit_system`。
+        """
 
-        return self.evaluate(VibEvalCommand.FDMVL, **kwargs)
+        return self.evaluate(
+            VibEvalCommand.OTOVL,
+            overwrite=overwrite,
+            uid=uid,
+            uids=uids,
+            filter=filter,
+            **kwargs,
+        )
 
-    def eval_fpvdv(self, **kwargs: Any) -> Any:
-        """执行 FPVDV 批量评价。"""
+    def eval_fdmvl(
+        self,
+        *,
+        overwrite: bool = False,
+        uid: str | None = None,
+        uids: list[str] | None = None,
+        filter: Callable[[SampleType], bool] | None = None,
+        **kwargs: Any,
+    ) -> BatchOperationReport[Self]:
+        """执行 FDMVL 批量评价。
 
-        return self.evaluate(VibEvalCommand.FPVDV, **kwargs)
+        Args:
+            overwrite: 是否允许覆盖已有 `fdmvl` 结果。
+            uid: 仅处理单个样本 UID。
+            uids: 处理多个样本 UID。
+            filter: 样本过滤函数。
+            **kwargs: 支持键包括 `strict`、`freq_range`、`calc_unit_system`、
+                `output_unit_system`。
+        """
+
+        return self.evaluate(
+            VibEvalCommand.FDMVL,
+            overwrite=overwrite,
+            uid=uid,
+            uids=uids,
+            filter=filter,
+            **kwargs,
+        )
+
+    def eval_fpvdv(
+        self,
+        *,
+        overwrite: bool = False,
+        uid: str | None = None,
+        uids: list[str] | None = None,
+        filter: Callable[[SampleType], bool] | None = None,
+        **kwargs: Any,
+    ) -> BatchOperationReport[Self]:
+        """执行 FPVDV 批量评价。
+
+        Args:
+            overwrite: 是否允许覆盖已有 `fpvdv` 结果。
+            uid: 仅处理单个样本 UID。
+            uids: 处理多个样本 UID。
+            filter: 样本过滤函数。
+            **kwargs: 支持键包括 `strict`、`freq_range`、`nsup`、
+                `calc_unit_system`、`output_unit_system`。
+        """
+
+        return self.evaluate(
+            VibEvalCommand.FPVDV,
+            overwrite=overwrite,
+            uid=uid,
+            uids=uids,
+            filter=filter,
+            **kwargs,
+        )
 
     def flow(self) -> Any:
         """返回以当前样本集为起点的计算流。"""
@@ -475,38 +1216,135 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
 
     @staticmethod
     def _recoverable_io_error() -> type[Exception]:
-        module = __import__(
-            "dyntool.infrastructure.persistence",
-            fromlist=["RecoverableIOError"],
-        )
-        return module.RecoverableIOError
+        return RecoverableIOError
 
     def _batch_vibeval(
         self,
         command: VibEvalCommand,
         overwrite: bool = False,
+        strict: bool | None = None,
         uid: str | None = None,
         uids: list[str] | None = None,
         filter: Callable[[SampleType], bool] | None = None,
-        **kwargs: object,
-    ) -> dict[str, tuple[bool, str]] | tuple[bool, str]:
+        **options: Any,
+    ) -> BatchOperationReport[Self]:
         """批量振动评价通用实现。"""
 
         items = self._select_samples(uid=uid, uids=uids, filter=filter)
-        results, stats = run_vibeval_batch(
+        strict_mode = self.strict if strict is None else strict
+        report = run_vibeval_batch(
             items,
             command=command,
             overwrite=overwrite,
+            strict=strict_mode,
+            **options,
+        )
+        self._last_operation_report = cast(BatchOperationReport[Any], report)
+        logger.info(
+            f"{command.label} summary: strict={strict_mode}, overwrite={overwrite}, "
+            f"total={report.stats.total}, valid={report.stats.valid_samples}, "
+            f"success={report.stats.succeeded}, skipped={report.stats.skipped}, failed={report.stats.failed}"
+        )
+        return cast(BatchOperationReport[Self], report)
+
+    def _batch_sample_method(
+        self,
+        method_name: str,
+        *,
+        overwrite: bool = False,
+        strict: bool | None = None,
+        uid: str | None = None,
+        uids: list[str] | None = None,
+        filter: Callable[[SampleType], bool] | None = None,
+        **kwargs: Any,
+    ) -> BatchOperationReport[Self]:
+        """按统一规则批量调用样本实例方法。"""
+
+        sample_method = getattr(self.sample_type, method_name, None)
+        if not callable(sample_method):
+            raise TypeError(f"{self.sample_type.__name__} 不支持 {method_name}()")
+
+        items = self._select_samples(uid=uid, uids=uids, filter=filter)
+        strict_mode = self.strict if strict is None else strict
+        report = BatchOperationReport[Self](action=method_name, strict=strict_mode)
+        report.stats.valid_samples = sum(1 for _, sample in items if getattr(sample, "accel", None) is not None)
+        recoverable_io_error = self._recoverable_io_error()
+        for item_uid, sample in items:
+            bound_method = getattr(sample, method_name, None)
+            if not callable(bound_method):
+                raise TypeError(f"{type(sample).__name__} 不支持 {method_name}()")
+
+            result = bound_method(overwrite=overwrite, **kwargs)
+            if not isinstance(result, OperationResult):
+                status = infer_batch_status(bool(result[0]), str(result[1]))  # type: ignore[index]
+                result = OperationResult(
+                    action=method_name,
+                    status=status,
+                    message=str(result[1]),  # type: ignore[index]
+                    value=self,
+                )
+            report.add(item_uid, cast(OperationResult[Self], result))
+            if result.status == "failed":
+                logger.warning(f"{method_name} failed: uid={item_uid}, message={result.message}")
+                if strict_mode:
+                    self._last_operation_report = cast(BatchOperationReport[Any], report)
+                    raise recoverable_io_error(f"批处理失败: {item_uid}") from result.error
+            elif result.status == "skipped":
+                logger.warning(f"{method_name} skipped: uid={item_uid}, message={result.message}")
+            else:
+                logger.info(f"{method_name} done: uid={item_uid}")
+
+        self._last_operation_report = cast(BatchOperationReport[Any], report)
+        logger.info(
+            f"{method_name} summary: strict={strict_mode}, overwrite={overwrite}, "
+            f"total={report.stats.total}, valid={report.stats.valid_samples}, "
+            f"success={report.stats.succeeded}, skipped={report.stats.skipped}, failed={report.stats.failed}"
+        )
+        return cast(BatchOperationReport[Self], report)
+
+    def calc_freqspec(
+        self,
+        *,
+        overwrite: bool = False,
+        strict: bool | None = None,
+        uid: str | None = None,
+        uids: list[str] | None = None,
+        filter: Callable[[SampleType], bool] | None = None,
+        **kwargs: Any,
+    ) -> BatchOperationReport[Self]:
+        """批量计算样本集内样本的组合频谱。"""
+
+        return self._batch_sample_method(
+            "calc_freqspec",
+            overwrite=overwrite,
+            strict=strict,
+            uid=uid,
+            uids=uids,
+            filter=filter,
             **kwargs,
         )
-        logger.info(
-            f"{command.label} 计算完成 (overwrite={overwrite}): "
-            f"总有效样本 {stats.valid_samples}, 处理 {stats.processed}, "
-            f"跳过 {stats.skipped}, 失败 {stats.failed}"
+
+    def calc_respspec(
+        self,
+        *,
+        overwrite: bool = False,
+        strict: bool | None = None,
+        uid: str | None = None,
+        uids: list[str] | None = None,
+        filter: Callable[[SampleType], bool] | None = None,
+        **kwargs: Any,
+    ) -> BatchOperationReport[Self]:
+        """批量计算样本集内样本的组合反应谱。"""
+
+        return self._batch_sample_method(
+            "calc_respspec",
+            overwrite=overwrite,
+            strict=strict,
+            uid=uid,
+            uids=uids,
+            filter=filter,
+            **kwargs,
         )
-        if uid is not None:
-            return results[uid]
-        return results
 
     def batch(
         self,
@@ -515,13 +1353,14 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
         uid: str | None = None,
         uids: list[str] | None = None,
         filter: Callable[[SampleType], bool] | None = None,
-        strict: bool = True,
+        strict: bool | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
         """对样本集中的每个样本执行批处理函数。"""
 
         items = self._select_samples(uid=uid, uids=uids, filter=filter)
-        if not strict:
+        strict_mode = self.strict if strict is None else strict
+        if not strict_mode:
             return run_callable_batch(items, func=func, strict=False, **kwargs)
 
         recoverable_io_error = self._recoverable_io_error()
@@ -594,9 +1433,10 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
         path: str | Path,
         *,
         sample_domain: SampleDomain | None = None,
-        storage_scheme: object | None = None,
+        storage_scheme: Any | None = None,
         data_options: dict[str, Any] | None = None,
-        categories: list[str] | None = None,
+        categories: list[DataCategory | str] | None = None,
+        load_mode: SampleLoadMode = SampleLoadMode.LAZY,
         strict: bool | None = None,
         filter: Callable[[SampleType], bool] | None = None,
         workers: int = 1,
@@ -613,6 +1453,7 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
                 storage_scheme=storage_scheme,
                 data_options=data_options,
                 categories=categories,
+                load_mode=load_mode,
                 strict=strict,
                 filter=filter,
                 workers=workers,

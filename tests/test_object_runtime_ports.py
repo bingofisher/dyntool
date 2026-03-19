@@ -17,6 +17,7 @@ from dyntool.domain.runtime import (
     clear_default_runtimes,
 )
 from dyntool.domain.samples import Sample, SampleSet
+from dyntool.domain.samples.batch import BatchOperationReport
 
 
 class _DummyModelRuntime:
@@ -197,8 +198,8 @@ def test_instance_bound_sample_set_runtime_delegates_object_workflow() -> None:
     sample_set.connect_storage("store")
     sample_set.save("store")
     sample_set.load("store")
-    assert sample_set.save_all() == {}
-    assert sample_set.load_all() == {}
+    assert isinstance(sample_set.save_all(), BatchOperationReport)
+    assert isinstance(sample_set.load_all(), BatchOperationReport)
     sample_set.organize_storage()
 
     assert [name for name, _ in runtime.calls] == [
@@ -330,8 +331,8 @@ def test_default_sample_runtimes_delegate_to_application_services(monkeypatch) -
     sample_set.connect_storage("set-store")
     sample_set.save("set-store")
     sample_set.load("set-store")
-    assert sample_set.save_all() == {}
-    assert sample_set.load_all() == {}
+    assert isinstance(sample_set.save_all(), BatchOperationReport)
+    assert isinstance(sample_set.load_all(), BatchOperationReport)
     sample_set.organize_storage()
 
     assert [name for name, _ in calls] == [

@@ -14,7 +14,6 @@ import dyntool.plotting as dt_plotting
 from dyntool import (
     AccelSeries,
     LoggingMode,
-    PlotKind,
     Sample,
     SampleDomain,
     SampleSet,
@@ -78,8 +77,13 @@ def test_phase7_minimal_closed_loop_covers_log_storage_and_plot(
         sample_domain=SampleDomain.VIBRATION_TEST,
         storage_scheme=StorageScheme.SET_H5,
     )
-    payload = loaded[sample.uid].accel.to_plot_payload(kind=PlotKind.TIME)  # type: ignore[union-attr]
-    result = dt_plotting.render_payload(payload)
+    plotter = dt_plotting.FramePlotter()
+    plotter.add(
+        loaded[sample.uid].accel,  # type: ignore[arg-type]
+        name="workflow-accel",
+        category=dt_plotting.PlotCategory.SAMPLE,
+    )
+    result = plotter.plot()
     assert result.figure is not None
     result.figure.savefig(plot_path, dpi=120)
     dt_logging.get_logger("evaluation").info("phase7 closed loop complete")
@@ -150,7 +154,7 @@ def test_phase7_real_input_file_roundtrip_uses_class_first_api(
 def test_phase7_workflow_examples_use_class_first_paths() -> None:
     """工作流示例应优先展示类与独立模块入口。"""
 
-    workflow_path = PROJECT_ROOT / "examples" / "90_workflows" / "workflow_real_file_import.py"
+    workflow_path = PROJECT_ROOT / "examples" / "10_scenarios" / "01_import_and_normalize" / "main.py"
     text = workflow_path.read_text(encoding="utf-8")
 
     assert "AccelSeries.from_csv" in text

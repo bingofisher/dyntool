@@ -16,10 +16,4 @@ class PlotKind(StrEnum):
     OTOVL = "otovl"
 
 
-class PlotBackend(StrEnum):
-    """公开绘图后端。"""
-
-    MATPLOTLIB = "matplotlib"
-
-
-__all__ = ["PlotBackend", "PlotKind"]
+__all__ = ["PlotKind"]

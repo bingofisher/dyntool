@@ -34,6 +34,7 @@ class DataModelBase:
     category: ClassVar[str | DataCategory] = DataCategory.UNDEFINED
     axis_field: ClassVar[str | None] = None
     value_field: ClassVar[str | None] = None
+    strict: ClassVar[bool] = True
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
@@ -78,7 +79,7 @@ class DataModelBase:
 
     @staticmethod
     def get_magnitude(data: Any) -> np.ndarray:
-        """兼容旧逻辑的纯数值读取辅助函数。"""
+        """将输入值规范化为纯数值数组。"""
 
         return ensure_ndarray(data, dtype=None)
 
@@ -148,15 +149,39 @@ class DataModelBase:
             raise AttributeError(f"{self.__class__.__name__} 没有主值字段。")
         return self.get_field(self.value_field, unit=unit)
 
-    def get_axis_array(self) -> np.ndarray:
-        """兼容旧逻辑的主轴读取别名。"""
+    def to_array(self) -> np.ndarray:
+        """将主轴和值字段导出为 `numpy.ndarray`。
 
-        return self.get_axis()
+        Returns:
+            当模型同时定义主轴和值字段时，返回轴列在前、值列在后的二维数组；
+            当模型没有主轴字段时，仅返回值字段对应的数组。
 
-    def get_value_array(self) -> np.ndarray:
-        """兼容旧逻辑的主值读取别名。"""
+        Raises:
+            AttributeError: 当前模型未定义主值字段时抛出。
+            ValueError: 轴数组与值数组首维长度不一致时抛出。
+        """
 
-        return self.get_value()
+        if self.value_field is None:
+            raise AttributeError(f"{self.__class__.__name__} 没有主值字段，无法导出为数组。")
+
+        value = np.asarray(self.get_value())
+        if self.axis_field is None:
+            return np.atleast_1d(value)
+
+        axis = np.asarray(self.get_axis())
+        if axis.ndim == 0:
+            axis = np.asarray([axis])
+        axis = axis.reshape(-1, 1)
+
+        if value.ndim == 0:
+            value = np.asarray([value])
+        if value.ndim == 1:
+            value = value.reshape(-1, 1)
+
+        if value.shape[0] != axis.shape[0]:
+            raise ValueError(f"{self.__class__.__name__} 的轴数组与值数组在第 0 维长度不一致，无法导出为二维数组。")
+
+        return np.column_stack((axis, value))
 
     def convert_units(
         self,
@@ -350,7 +375,15 @@ class DataModelBase:
             return cls.from_dict(merged)
 
     def to_file(self, path: PathLike, *, fmt: str = "h5", **options: Any) -> None:
-        """将模型保存到文件。"""
+        """将模型保存到文件。
+
+        Args:
+            path: 目标文件路径。
+            fmt: 存储格式，当前正式支持 `csv` 与 `h5`。
+            **options: 支持键包括 `units`、`csv_read_options` 与格式控制项。`units`
+                用于显式声明字段级单位；`csv_read_options` 用于 CSV 导出/读回协同时
+                保留解析参数；其余键由已绑定的 model runtime 解释。
+        """
 
         resolve_model_runtime(self, action="save").save_model(
             self,
@@ -360,14 +393,22 @@ class DataModelBase:
         )
 
     @classmethod
-    def from_file(cls, path: PathLike, *, fmt: str = "h5", **options: Any) -> Self:
+    def from_file(
+        cls,
+        path: PathLike,
+        *,
+        fmt: str = "h5",
+        strict: bool | None = None,
+        **options: Any,
+    ) -> Self:
         """从文件加载数据模型。
 
         Args:
             path: 待读取的文件路径。
             fmt: 存储格式，主线支持 `csv` 和 `h5`。
-            **options: 透传给底层运行时的附加参数。常见键包括 `units`、
-                `csv_read_options` 和格式控制项。
+            **options: 具名运行时参数。常见键包括 `units`、`csv_read_options` 和格式
+                控制项；其中 `units` 用于显式声明字段级单位，`csv_read_options` 用于
+                指定 CSV 解析选项，其余键由已绑定的模型运行时实现解释。
 
         Returns:
             当前类型对应的数据模型实例。
@@ -384,6 +425,7 @@ class DataModelBase:
             cls,
             Path(path),
             fmt=fmt,
+            strict=cls.strict if strict is None else strict,
             **options,
         )
         if not isinstance(data, cls):
@@ -409,6 +451,7 @@ class DataModelBase:
         encoding: str | None = "utf-8",
         comment: str | None = None,
         decimal: str | None = None,
+        strict: bool | None = None,
         **options: Any,
     ) -> dict[str, str]:
         """在不完整加载对象的前提下检查文件单位。
@@ -429,7 +472,9 @@ class DataModelBase:
             encoding: CSV 文件编码；优先级低于 `csv_read_options` 中的同名键。
             comment: CSV 注释符；优先级低于 `csv_read_options` 中的同名键。
             decimal: CSV 小数点符号；优先级低于 `csv_read_options` 中的同名键。
-            **options: 额外透传给底层运行时的参数。
+            **options: 具名运行时参数。支持键会与前面的显式 CSV 参数合并后交给已绑定的
+                模型运行时实现；若同名键同时出现在 `csv_read_options` 与显式参数中，
+                以前者为准。
 
         Returns:
             字段名到单位字符串的映射，通常至少覆盖轴字段和值字段。
@@ -469,17 +514,28 @@ class DataModelBase:
                 cls,
                 Path(path),
                 fmt=fmt,
+                strict=cls.strict if strict is None else strict,
                 **options,
             ),
         )
 
     def to_csv(self, path: PathLike, **options: Any) -> None:
-        """保存为 CSV。"""
+        """保存为 CSV。
+
+        Args:
+            path: 目标 CSV 路径。
+            **options: 支持键包括 `units`、`csv_read_options` 与 CSV 相关格式控制项。
+        """
 
         self.to_file(path, fmt="csv", **options)
 
     def to_h5(self, path: PathLike, **options: Any) -> None:
-        """保存为 HDF5。"""
+        """保存为 HDF5。
+
+        Args:
+            path: 目标 HDF5 路径。
+            **options: 支持键包括 `units` 以及底层 HDF5 存储实现识别的格式控制项。
+        """
 
         self.to_file(path, fmt="h5", **options)
 
@@ -501,6 +557,7 @@ class DataModelBase:
         encoding: str | None = "utf-8",
         comment: str | None = None,
         decimal: str | None = None,
+        strict: bool | None = None,
         **options: Any,
     ) -> Self:
         """从 CSV 文件恢复数据模型。
@@ -520,7 +577,8 @@ class DataModelBase:
             encoding: CSV 文件编码；优先级低于 `csv_read_options` 中的同名键。
             comment: CSV 注释符；优先级低于 `csv_read_options` 中的同名键。
             decimal: CSV 小数点符号；优先级低于 `csv_read_options` 中的同名键。
-            **options: 额外透传给底层运行时的参数。
+            **options: 具名运行时参数。支持键会与显式 HDF5 单位参数一并传给已绑定的
+                模型运行时实现；常见场景包括补充单位映射和底层格式控制项。
 
         Returns:
             当前类型对应的数据模型实例。
@@ -551,6 +609,7 @@ class DataModelBase:
         return cls.from_file(
             path,
             fmt="csv",
+            strict=cls.strict if strict is None else strict,
             units=resolved_units,
             csv_read_options=parser_options,
             **options,
@@ -564,13 +623,24 @@ class DataModelBase:
         axis_unit: str | None = None,
         data_unit: str | None = None,
         units: Mapping[str, str | None] | None = None,
+        strict: bool | None = None,
         **options: Any,
     ) -> Self:
-        """从 HDF5 文件恢复数据模型。"""
+        """从 HDF5 文件恢复数据模型。
+
+        Args:
+            path: 待读取的 HDF5 路径。
+            axis_unit: 主轴字段的显式输入单位。
+            data_unit: 主值字段的显式输入单位。
+            units: 字段级单位映射。
+            strict: 是否覆盖模型类默认严格模式。
+            **options: 支持键包括 `units` 以及底层 HDF5 读取实现识别的格式控制项。
+        """
 
         return cls.from_file(
             path,
             fmt="h5",
+            strict=cls.strict if strict is None else strict,
             units=cls._merge_input_units(
                 axis_unit=axis_unit,
                 data_unit=data_unit,
@@ -648,23 +718,27 @@ class DataModelBase:
                 merged[key] = value
         return merged
 
-    def to_plot_payload(
-        self,
-        *,
-        kind: object | None = None,
-    ) -> dict[str, object]:
-        """导出与 plotting 模块兼容的标准绘图 payload。"""
-
-        from ..plot_types import PlotKind
-        from .plot_payloads import model_to_plot_payload
-
-        if kind is not None and not isinstance(kind, PlotKind):
-            raise TypeError("kind 必须是 PlotKind 枚举")
-        return model_to_plot_payload(self, kind=kind)
-
     @classmethod
     def from_arrays(cls, axis: np.ndarray, value: np.ndarray, **kwargs: Any) -> Self:
-        """从轴数组和值数组构建模型。"""
+        """从轴数组和值数组构建模型。
+
+        Args:
+            axis: 主轴数组。
+            value: 主值数组。
+            **kwargs: 支持键由具体数据模型子类定义，例如 `units`、`unit_system`、
+                `dt` 或字段级数据列。子类必须在自身 docstring 中明确列出实际支持键及
+                业务含义。
+
+        Returns:
+            当前数据模型类型对应的新实例。
+
+        Raises:
+            NotImplementedError: 基类未实现数组构造逻辑时抛出。
+
+        Notes:
+            该接口是数组构造主入口；具体子类应保持“轴和值优先、附加字段显式声明”的
+            参数风格，不要继续扩展语义不清的开放参数。
+        """
 
         raise NotImplementedError(f"{cls.__name__} 尚未实现 from_arrays()。")
 

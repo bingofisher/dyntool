@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from examples._legacy_runner import run_legacy_example
+from examples._scenario_impls import _scenario_logged_run
 
 
 def main(output_dir: Path | None = None) -> dict[str, object]:
-    """运行带日志的任务场景。"""
+    """运行对应示例入口。"""
 
-    return run_legacy_example("examples/90_workflows/workflow_logged_run.py", output_dir=output_dir)
+    return _scenario_logged_run(output_dir=output_dir)
 
 
 if __name__ == "__main__":

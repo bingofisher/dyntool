@@ -62,7 +62,7 @@ class _SampleJsonStrategy(_StorageStrategy):
         with open(self.ctx.base_dir / f"{name}.json", encoding="utf-8") as f:
             payload = json.load(f)
         sample = self.ctx.sampleset.sample_type(metadata=self.ctx.metadata_from_dict(payload["metadata"]))
-        sample.alias = payload.get("alias", uid)
+        sample._restore_alias_internal(payload.get("alias", uid))
         selected_categories = set(self.resolve_load_categories(categories))
         for category, value in payload.get("data", {}).items():
             if category not in selected_categories:
@@ -104,30 +104,47 @@ class _SampleH5Strategy(_StorageStrategy):
                 continue
         return index
 
+    def _write_payload_group(self, group: Any, payload: dict[str, Any]) -> None:
+        units = payload.get("_units", {})
+        for key, value in payload.items():
+            if key == "_units" or value is None:
+                continue
+            if isinstance(value, dict):
+                self._write_payload_group(group.create_group(key), value)
+                continue
+            arr = np.asarray(value)
+            if arr.dtype == object:
+                raise TypeError(f"H5 存储暂不支持对象数组字段: {key}")
+            dataset = group.create_dataset(key, data=arr)
+            unit = units.get(key, "")
+            if unit:
+                dataset.attrs[H5_ATTR_UNIT] = unit
+
     def _write_group(self, group: Any, category: str, data: Any) -> None:
         payload = self.ctx.serialize_container(data)
         cat_grp = group.create_group(category)
-        units = payload.get("_units", {})
-        for key, value in payload.items():
-            if key == "_units":
-                continue
-            arr = np.asarray(value)
-            cat_grp.create_dataset(key, data=arr)
-            unit = units.get(key, "")
-            if unit:
-                cat_grp[key].attrs[H5_ATTR_UNIT] = unit
+        self._write_payload_group(cat_grp, payload)
 
     def _read_group_payload(self, group: Any) -> dict[str, Any]:
         import h5py
 
-        payload: dict[str, Any] = {"_units": {}}
+        payload: dict[str, Any] = {}
+        units: dict[str, Any] = {}
         for key in group.keys():
-            ds = group[key]
-            if not isinstance(ds, h5py.Dataset):
+            node = group[key]
+            if isinstance(node, h5py.Group):
+                payload[key] = self._read_group_payload(node)
                 continue
-            payload[key] = ds[()]
-            if H5_ATTR_UNIT in ds.attrs:
-                payload["_units"][key] = ds.attrs[H5_ATTR_UNIT]
+            if not isinstance(node, h5py.Dataset):
+                continue
+            value = node[()]
+            if isinstance(value, bytes):
+                value = value.decode("utf-8")
+            payload[key] = value
+            if H5_ATTR_UNIT in node.attrs:
+                units[key] = node.attrs[H5_ATTR_UNIT]
+        if units:
+            payload["_units"] = units
         return payload
 
     def save_sample(self, sample: SampleBaseModel, categories: list[str] | None = None) -> None:
@@ -156,7 +173,7 @@ class _SampleH5Strategy(_StorageStrategy):
                 metadata_json = metadata_json.decode("utf-8")
             sample = self.ctx.sampleset.sample_type(metadata=self.ctx.metadata_from_dict(json.loads(metadata_json)))
             alias = f.attrs.get(H5_ATTR_ALIAS, uid)
-            sample.alias = alias.decode("utf-8") if isinstance(alias, bytes) else str(alias)
+            sample._restore_alias_internal(alias.decode("utf-8") if isinstance(alias, bytes) else str(alias))
             selected_categories = set(self.resolve_load_categories(categories))
             for category in f.keys():
                 if category not in selected_categories:
@@ -223,7 +240,7 @@ class _SetH5Strategy(_SampleH5Strategy):
                 metadata_json = metadata_json.decode("utf-8")
             sample = self.ctx.sampleset.sample_type(metadata=self.ctx.metadata_from_dict(json.loads(metadata_json)))
             alias = grp.attrs.get(H5_ATTR_ALIAS, uid)
-            sample.alias = alias.decode("utf-8") if isinstance(alias, bytes) else str(alias)
+            sample._restore_alias_internal(alias.decode("utf-8") if isinstance(alias, bytes) else str(alias))
             selected_categories = set(self.resolve_load_categories(categories))
             for category in grp.keys():
                 if category not in selected_categories:
@@ -310,7 +327,7 @@ class _AttrTableStrategy(_StorageStrategy):
             raise FileNotFoundError(f"metadata.csv 中不存在 UID: {uid}")
         metadata_json = row.iloc[0][META_COL_METADATA_JSON]
         sample = self.ctx.sampleset.sample_type(metadata=self.ctx.metadata_from_dict(json.loads(str(metadata_json))))
-        sample.alias = str(row.iloc[0].get(META_COL_ALIAS, uid))
+        sample._restore_alias_internal(str(row.iloc[0].get(META_COL_ALIAS, uid)))
         fmt = self.ctx.attr_data_format()
         for category in self.resolve_load_categories(categories):
             if fmt is AttrDataFormat.CSV:
@@ -403,7 +420,7 @@ class _SampleDirStrategy(_StorageStrategy):
         metadata_dict = payload.get("metadata", payload)
         metadata = self.ctx.metadata_from_dict(metadata_dict)
         sample = self.ctx.sampleset.sample_type(metadata=metadata)
-        sample.alias = str(payload.get("alias", uid))
+        sample._restore_alias_internal(str(payload.get("alias", uid)))
         data_path = sample_dir / DATA_NPZ_FILENAME
         if not data_path.exists():
             return sample

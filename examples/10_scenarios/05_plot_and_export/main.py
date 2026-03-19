@@ -1,17 +1,17 @@
-"""导出 payload 并绘图。"""
+"""绘图并导出结果。"""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from examples._legacy_runner import run_legacy_example
+from examples._scenario_impls import _scenario_plot_and_export
 
 
 def main(output_dir: Path | None = None) -> dict[str, object]:
-    """运行绘图与导出场景。"""
+    """运行对应示例入口。"""
 
     # docs:begin plotting_minimal
-    return run_legacy_example("examples/08_visualization/plotting_demo.py", output_dir=output_dir)
+    return _scenario_plot_and_export(output_dir=output_dir)
     # docs:end plotting_minimal
 
 

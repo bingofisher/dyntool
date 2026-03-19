@@ -1,22 +1,24 @@
-"""旧示例路径到当前场景实现的过渡运行器。"""
+"""示例场景与 recipes 的共享实现。"""
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import matplotlib
 import numpy as np
 
 import dyntool.logging as dt_logging
 import dyntool.plotting as dt_plotting
+import dyntool.resources as dt_resource
 from dyntool import (
     AccelSeries,
-    DataModelBase,
-    DynTool,
+    OTOVLLimit,
+    OTOVLLimitStandard,
     LoggingMode,
     Metadata,
-    PlotKind,
+    ZVLLimit,
+    ZVLLimitStandard,
     Sample,
     SampleDomain,
     SampleSet,
@@ -117,7 +119,7 @@ def _scenario_evaluate_vibration(output_dir: Path | None = None) -> dict[str, ob
         values=np.sin(np.linspace(0.0, 4.0 * np.pi, 512)) * 0.05,
     )
     sample.calc_freqspec()
-    sample.calc_respspec(force=True)
+    sample.calc_respspec(overwrite=True)
     sample.eval_zvl(overwrite=True, freq_range=(2.0, 60.0))
     return {
         "freqspec_type": type(sample.freqspec).__name__,
@@ -132,6 +134,8 @@ def _scenario_store_and_reload(output_dir: Path | None = None) -> dict[str, obje
     plot_path = output_root / "sample_set.png"
 
     sample = _make_vibration_sample(suffix="store", values=[0.0, 0.08, -0.02, 0.03, 0.0])
+    sample.calc_freqspec(overwrite=True)
+    sample.calc_respspec(overwrite=True)
     sample.eval_zvl(overwrite=True, freq_range=(2.0, 60.0))
     sample_set = SampleSet.from_samples([sample], sample_domain=SampleDomain.VIBRATION_TEST)
     sample_set.save(store_path, storage_scheme=StorageScheme.SET_H5)
@@ -140,8 +144,13 @@ def _scenario_store_and_reload(output_dir: Path | None = None) -> dict[str, obje
         sample_domain=SampleDomain.VIBRATION_TEST,
         storage_scheme=StorageScheme.SET_H5,
     )
-    payload = loaded[sample.uid].accel.to_plot_payload(kind=PlotKind.TIME)  # type: ignore[union-attr]
-    result = dt_plotting.render_payload(payload)
+    plotter = dt_plotting.FramePlotter()
+    plotter.add(
+        loaded[sample.uid].accel,  # type: ignore[arg-type]
+        name="stored-accel",
+        category=dt_plotting.PlotCategory.SAMPLE,
+    )
+    result = plotter.plot()
     assert result.figure is not None
     result.figure.savefig(plot_path, dpi=120)
 
@@ -149,6 +158,8 @@ def _scenario_store_and_reload(output_dir: Path | None = None) -> dict[str, obje
         "loaded_count": len(loaded),
         "store_path": str(store_path),
         "plot_path": str(plot_path),
+        "freqspec_restored": loaded[sample.uid].freqspec is not None,
+        "respspec_restored": loaded[sample.uid].respspec is not None,
     }
 
 
@@ -158,9 +169,18 @@ def _scenario_plot_and_export(output_dir: Path | None = None) -> dict[str, objec
     model_plot = output_root / "model_time.png"
 
     accel = AccelSeries.from_data([0.0, 0.12, -0.03, 0.01], dt=0.01)
-    payload = accel.to_plot_payload(kind=PlotKind.TIME)
-    raw_result = dt_plotting.render_payload(payload)
-    model_result = dt_plotting.render_payload(accel.to_plot_payload(kind=PlotKind.TIME))
+    raw_dataset = dt_plotting.PlotDataset.from_axis_value(
+        axis=accel.get_axis(),
+        value=accel.get_value(),
+        name="raw-accel",
+        category=dt_plotting.PlotCategory.SAMPLE,
+        axis_unit=accel.axis_unit,
+        value_unit=accel.value_unit,
+    )
+    raw_result = dt_plotting.FramePlotter().plot_dataset(raw_dataset)
+    model_plotter = dt_plotting.FramePlotter()
+    model_plotter.add(accel, name="model-accel", category=dt_plotting.PlotCategory.SAMPLE)
+    model_result = model_plotter.plot()
     assert raw_result.figure is not None
     assert model_result.figure is not None
     raw_result.figure.savefig(raw_plot, dpi=120)
@@ -198,20 +218,34 @@ def _scenario_resource_driven_eval(output_dir: Path | None = None) -> dict[str, 
     output_root = _ensure_output_dir(output_dir, "resource_driven_eval")
     summary_path = output_root / "resource_summary.txt"
 
-    tool = DynTool()
-    freqs, _ = tool.resource.center_freqs(freq_range=(2.0, 80.0))
+    freqs, _ = dt_resource.center_freqs((2.0, 80.0))
+    city_limit = ZVLLimit.from_standard(
+        ZVLLimitStandard.GB_10070_1988,
+        scene="特殊住宅区昼间",
+    )
+    otovl_limit = OTOVLLimit.from_standard(
+        OTOVLLimitStandard.GB_T_50355_2018,
+        scene="卧室昼间一级",
+    )
     sample = _make_vibration_sample(
         suffix="resource",
         values=np.sin(np.linspace(0.0, 2.0 * np.pi, 1024)) * 0.02,
     )
     sample.eval_otovl(freq_range=(2.0, 80.0))
     summary_path.write_text(
-        f"freq_start={float(freqs[0])}\nfreq_end={float(freqs[-1])}\n",
+        (
+            f"freq_start={float(freqs[0])}\n"
+            f"freq_end={float(freqs[-1])}\n"
+            f"city_limit={float(city_limit.zvl.flat[0])}\n"
+            f"otovl_scene={otovl_limit.scene}\n"
+        ),
         encoding="utf-8",
     )
     return {
         "freq_start": float(freqs[0]),
         "freq_end": float(freqs[-1]),
+        "city_limit": float(city_limit.zvl.flat[0]),
+        "otovl_scene": otovl_limit.scene,
         "summary_path": str(summary_path),
     }
 
@@ -241,7 +275,7 @@ def _scenario_custom_extension(output_dir: Path | None = None) -> dict[str, obje
     sample_set.save(sample_set_dir, storage_scheme=StorageScheme.SAMPLE_DIR)
 
     return {
-        "registered_model_class": DataModelBase.from_category("ts_jerk_example").__name__,
+        "registered_model_class": TimeSeries.from_category("ts_jerk_example").__name__,
         "sample_count": len(sample_set),
         "model_path": str(model_path),
         "sample_set_dir": str(sample_set_dir),
@@ -297,7 +331,7 @@ def _recipe_sample_set_filter_parallel_io(output_dir: Path | None = None) -> dic
     }
 
 
-def _recipe_plot_payload_and_plotters(output_dir: Path | None = None) -> dict[str, object]:
+def _recipe_plot_dataset_and_plotters(output_dir: Path | None = None) -> dict[str, object]:
     return _scenario_plot_and_export(output_dir)
 
 
@@ -356,28 +390,19 @@ def _recipe_storage_scheme_selection(output_dir: Path | None = None) -> dict[str
     }
 
 
-_LEGACY_EXAMPLE_DISPATCH: dict[str, Callable[[Path | None], dict[str, object]]] = {
-    "examples/90_workflows/workflow_real_file_import.py": _scenario_import_and_normalize,
-    "examples/05_sample_sets/sample_set_ops.py": _scenario_build_and_manage_samples,
-    "examples/06_processing_evaluation/processing_eval.py": _scenario_evaluate_vibration,
-    "examples/90_workflows/workflow_minimal_roundtrip.py": _scenario_store_and_reload,
-    "examples/08_visualization/plotting_demo.py": _scenario_plot_and_export,
-    "examples/90_workflows/workflow_logged_run.py": _scenario_logged_run,
-    "examples/90_workflows/workflow_resource_driven_eval.py": _scenario_resource_driven_eval,
-    "examples/11_custom_extension/custom_domain_extension.py": _scenario_custom_extension,
-    "examples/02_units/unit_views.py": _recipe_units_and_unit_views,
-    "examples/03_metadata/metadata_domains.py": _recipe_metadata_patterns,
-    "examples/90_workflows/workflow_sample_set_batch.py": _recipe_sample_set_filter_parallel_io,
-    "examples/09_logging_config/logging_modes.py": _recipe_logging_providers_and_modes,
-    "examples/07_storage_io/storage_schemes.py": _recipe_storage_scheme_selection,
-}
-
-
-def run_legacy_example(relative_path: str, output_dir: Path | None = None) -> dict[str, object]:
-    """执行旧示例路径对应的当前实现。"""
-
-    try:
-        runner = _LEGACY_EXAMPLE_DISPATCH[relative_path]
-    except KeyError as exc:
-        raise FileNotFoundError(f"未注册的旧示例路径: {relative_path}") from exc
-    return runner(output_dir)
+__all__ = [
+    "_scenario_import_and_normalize",
+    "_scenario_build_and_manage_samples",
+    "_scenario_evaluate_vibration",
+    "_scenario_store_and_reload",
+    "_scenario_plot_and_export",
+    "_scenario_logged_run",
+    "_scenario_resource_driven_eval",
+    "_scenario_custom_extension",
+    "_recipe_units_and_unit_views",
+    "_recipe_metadata_patterns",
+    "_recipe_sample_set_filter_parallel_io",
+    "_recipe_plot_dataset_and_plotters",
+    "_recipe_logging_providers_and_modes",
+    "_recipe_storage_scheme_selection",
+]

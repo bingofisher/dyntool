@@ -13,7 +13,6 @@ import pytest
 import dyntool.logging as dt_logging
 import dyntool.storage as dt_storage
 from dyntool import Sample, SampleDomain, SampleSet, VibrationTestMetadata
-from dyntool.application.options import LoggingOptions
 from dyntool.storage.runtime import StorageRuntime
 
 logging_provider = importlib.import_module("dyntool.logging.provider")
@@ -84,15 +83,6 @@ def test_logging_module_configures_and_returns_logger(workspace_tmp_dir: Path) -
 
     assert config.log_dir == log_dir
     assert (log_dir / "plot.log").exists()
-
-
-def test_logging_options_keep_public_defaults() -> None:
-    options = LoggingOptions()
-
-    assert options.mode is dt_logging.LoggingMode.CONSOLE_ONLY
-    assert options.level == "INFO"
-    assert options.provider == "loguru"
-    assert options.provider_options == {}
 
 
 def test_logging_config_defaults_to_loguru() -> None:

@@ -10,7 +10,7 @@ from dyntool.compute.signals import fft_with_phase
 from dyntool.compute.metrics import otovl_from_accel, zvl_from_accel
 from dyntool.domain.constants import resolve_unit_system
 from dyntool.domain.metadata import Metadata
-from dyntool.domain.models import AccelSeries, DispSeries, SpecAccelSeries
+from dyntool.domain.models import AccelSeries, DispSeries, SpecAccelSeries, ZVLEval
 from dyntool.domain.samples import Sample, SampleSet
 from dyntool import UnitSystem
 
@@ -362,6 +362,60 @@ class TestTimeSeries:
         assert hasattr(result, "zvl")
         assert hasattr(result, "aw")
         assert result.zvl is not None or result.aw is not None
+
+    def test_to_array_places_axis_before_single_value_column(self) -> None:
+        """`to_array()` 搴旇繑鍥炶酱鍒楀湪鍓嶃€佸€煎垪鍦ㄥ悗鐨勪簩缁存暟缁勩€?"""
+
+        accel = AccelSeries.from_data([0.0, 1.0, -1.0], dt=0.5)
+
+        array = accel.to_array()
+
+        np.testing.assert_allclose(
+            array,
+            np.array(
+                [
+                    [0.0, 0.0],
+                    [0.5, 1.0],
+                    [1.0, -1.0],
+                ]
+            ),
+        )
+
+    def test_to_array_stacks_axis_before_multi_channel_values(self) -> None:
+        """`to_array()` 搴旀敮鎸佸皢澶氬垪鍊煎煙鍜岃酱鏁版嵁鎸夊垪鍚堝苟銆?"""
+
+        accel = AccelSeries.from_data(
+            np.array(
+                [
+                    [0.0, 10.0],
+                    [1.0, 11.0],
+                    [2.0, 12.0],
+                ]
+            ),
+            dt=0.2,
+        )
+
+        array = accel.to_array()
+
+        np.testing.assert_allclose(
+            array,
+            np.array(
+                [
+                    [0.0, 0.0, 10.0],
+                    [0.2, 1.0, 11.0],
+                    [0.4, 2.0, 12.0],
+                ]
+            ),
+        )
+
+    def test_to_array_returns_value_array_for_scalar_model_without_axis(self) -> None:
+        """娌℃湁涓昏酱瀛楁鏃讹紝`to_array()` 搴旂洿鎺ヨ繑鍥炰富鍊兼暟缁勩€?"""
+
+        result = ZVLEval.from_data(zvl=65.0, aw=0.001)
+
+        array = result.to_array()
+
+        np.testing.assert_allclose(array, np.array([65.0]))
 
     def test_sample_and_sampleset_convert_units_apply_per_instance(self) -> None:
         """sample 与 sampleset 应能级联转换容器内部单位。"""

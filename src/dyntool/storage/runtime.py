@@ -18,7 +18,7 @@ from ..domain.samples.factories import get_sample_set_class, require_sample_doma
 from ..infrastructure import persistence as persistence_runtime
 from ..infrastructure.sample_set_storage import SampleSetStorage
 from ..logging import get_logger
-from .types import StorageMode, StorageScheme
+from .types import NameResolver, StorageConnectOptions, StorageMode, StorageScheme
 
 logger = get_logger("storage")
 
@@ -54,7 +54,7 @@ class StorageRuntime:
         path: str | Path,
         *,
         fmt: str = "h5",
-        **options: object,
+        **options: Any,
     ) -> Path:
         """保存模型文件。"""
 
@@ -75,7 +75,8 @@ class StorageRuntime:
         path: str | Path,
         *,
         fmt: str = "h5",
-        **options: object,
+        strict: bool | None = None,
+        **options: Any,
     ) -> ModelT:
         """加载模型文件。"""
 
@@ -88,6 +89,7 @@ class StorageRuntime:
                     target,
                     fmt=fmt,
                     category=model_type.category,
+                    strict=getattr(model_type, "strict", True) if strict is None else strict,
                     **options,
                 ),
             )
@@ -103,7 +105,8 @@ class StorageRuntime:
         path: str | Path,
         *,
         fmt: str = "h5",
-        **options: object,
+        strict: bool | None = None,
+        **options: Any,
     ) -> dict[str, str]:
         """检查模型文件中的单位信息。"""
 
@@ -116,6 +119,7 @@ class StorageRuntime:
                     target,
                     fmt=fmt,
                     category=model_type.category,
+                    strict=getattr(model_type, "strict", True) if strict is None else strict,
                     **options,
                 ),
             )
@@ -158,7 +162,7 @@ class StorageRuntime:
         path: str | Path,
         *,
         domain: Literal[SampleDomain.DEFAULT],
-        scheme: object | None = None,
+        scheme: StorageScheme | None = None,
         data_options: dict[str, Any] | None = None,
         set_filename: str | None = None,
     ) -> SampleSet: ...
@@ -169,7 +173,7 @@ class StorageRuntime:
         path: str | Path,
         *,
         domain: Literal[SampleDomain.VIBRATION_TEST],
-        scheme: object | None = None,
+        scheme: StorageScheme | None = None,
         data_options: dict[str, Any] | None = None,
         set_filename: str | None = None,
     ) -> VibrationTestSampleSet: ...
@@ -179,7 +183,7 @@ class StorageRuntime:
         path: str | Path,
         *,
         domain: SampleDomain,
-        scheme: object | None = None,
+        scheme: StorageScheme | None = None,
         data_options: dict[str, Any] | None = None,
         set_filename: str | None = None,
         categories: list[str] | None = None,
@@ -241,11 +245,11 @@ class StorageRuntime:
         sample_set: SampleSetBase[Any],
         base_dir: str | Path,
         *,
-        options: object | None = None,
-        mode: object | None = None,
-        storage_scheme: object | None = None,
+        options: StorageConnectOptions | None = None,
+        mode: StorageMode | None = None,
+        storage_scheme: StorageScheme | None = None,
         data_options: dict[str, Any] | None = None,
-        name_resolver: object | None = None,
+        name_resolver: NameResolver | None = None,
         set_filename: str | None = None,
     ) -> SampleSetBase[Any]:
         """连接样本集存储。
@@ -314,15 +318,15 @@ class StorageRuntime:
         sample_set: SampleSetBase[Any],
         path: str | Path | None = None,
         *,
-        mode: object | None = None,
-        storage_scheme: object | None = None,
+        mode: StorageMode | None = None,
+        storage_scheme: StorageScheme | None = None,
         data_options: dict[str, Any] | None = None,
         categories: list[str] | None = None,
-        strict: bool = True,
+        strict: bool | None = None,
         filter: Callable[[Any], bool] | None = None,
         workers: int = 1,
         chunk_size: int = 256,
-        name_resolver: object | None = None,
+        name_resolver: NameResolver | None = None,
         set_filename: str | None = None,
     ) -> SampleSetBase[Any]:
         """保存样本集及其样本。
@@ -376,9 +380,10 @@ class StorageRuntime:
                 )
             if sample_set.storage is None:
                 raise RuntimeError("样本集尚未连接存储，请先调用 connect_storage()。")
+            effective_strict = sample_set.strict if strict is None else strict
             sample_set.storage.save_all(
                 categories=categories,
-                strict=strict,
+                strict=effective_strict,
                 filter=filter,
                 workers=workers,
                 chunk_size=chunk_size,
@@ -395,8 +400,8 @@ class StorageRuntime:
         sample_set: SampleSetBase[Any],
         path: str | Path | None = None,
         *,
-        mode: object | None = None,
-        storage_scheme: object | None = None,
+        mode: StorageMode | None = None,
+        storage_scheme: StorageScheme | None = None,
         data_options: dict[str, Any] | None = None,
         categories: list[str] | None = None,
         strict: bool | None = None,
@@ -564,7 +569,15 @@ class StorageRuntime:
         base_dir: str | Path,
         **kwargs: Any,
     ) -> SampleBaseModel:
-        """连接单个样本的存储。"""
+        """连接单个样本的存储。
+
+        Args:
+            sample: 待连接的样本对象。
+            base_dir: 样本根目录、单样本文件路径或容器目录。
+            **kwargs: 支持键包括 `mode`、`storage_scheme`、`data_options`、
+                `name_resolver`、`set_filename`。这些键会先在 runtime 层完成默认值
+                补全，再转发给样本集存储连接逻辑。
+        """
 
         sample_set = sample._storage_set
         if sample_set is None:
@@ -584,7 +597,16 @@ class StorageRuntime:
         path: str | Path | None = None,
         **kwargs: Any,
     ) -> SampleT:
-        """保存单个样本。"""
+        """保存单个样本。
+
+        Args:
+            sample: 待保存的样本对象。
+            path: 可选的显式目标路径；为 `None` 时要求样本已连接存储。
+            **kwargs: 支持键包括 `mode`、`storage_scheme`、`data_options`、
+                `name_resolver`、`set_filename`、`categories`。`categories` 用于选
+                择要写回的顶层槽位；其余键会在需要重建连接时转发给
+                `connect_sample_runtime()`。
+        """
 
         if path is not None:
             mode = kwargs.pop("mode", StorageMode.CREATE)
@@ -608,7 +630,16 @@ class StorageRuntime:
         path: str | Path | None = None,
         **kwargs: Any,
     ) -> SampleT:
-        """加载单个样本。"""
+        """加载单个样本。
+
+        Args:
+            sample: 待加载的样本对象。
+            path: 可选的显式来源路径；为 `None` 时从已连接存储读取。
+            **kwargs: 支持键包括 `mode`、`storage_scheme`、`data_options`、
+                `name_resolver`、`set_filename`、`categories`。`categories` 用于选
+                择要恢复的顶层槽位；其余键会在需要重建连接时转发给
+                `connect_sample_runtime()`。
+        """
 
         if path is not None:
             mode = kwargs.pop("mode", StorageMode.OPEN)
@@ -631,9 +662,9 @@ class StorageRuntime:
         logger.info("load_sample request")
         try:
             loaded = sample._storage_set.storage.load_sample(sample.uid, categories)
-            sample.alias = loaded.alias
-            sample.metadata = loaded.metadata
-            sample.data_vars = loaded.data_vars.copy()
+            sample._replace_metadata(loaded.metadata)
+            sample._restore_alias_internal(loaded.alias)
+            sample._replace_data_vars_internal(loaded.data_vars.copy())
             sample._storage_set[sample.uid] = sample
         except Exception:
             logger.exception("load_sample failed")
@@ -681,20 +712,30 @@ class StorageRuntime:
         return path, set_filename
 
     @staticmethod
-    def _require_scheme(scheme: object) -> StorageScheme:
+    def _require_scheme(scheme: StorageScheme | str) -> StorageScheme:
         """校验并返回存储方案枚举。"""
 
-        if not isinstance(scheme, StorageScheme):
-            raise TypeError("scheme must be a StorageScheme enum")
-        return scheme
+        if isinstance(scheme, StorageScheme):
+            return scheme
+        if isinstance(scheme, str):
+            try:
+                return StorageScheme(scheme)
+            except ValueError as exc:
+                raise TypeError("scheme 必须是 StorageScheme 枚举或其合法字符串值") from exc
+        raise TypeError("scheme 必须是 StorageScheme 枚举或其合法字符串值")
 
     @staticmethod
-    def _require_mode(mode: object) -> StorageMode:
+    def _require_mode(mode: StorageMode | str) -> StorageMode:
         """校验并返回存储模式枚举。"""
 
-        if not isinstance(mode, StorageMode):
-            raise TypeError("mode must be a StorageMode enum")
-        return mode
+        if isinstance(mode, StorageMode):
+            return mode
+        if isinstance(mode, str):
+            try:
+                return StorageMode(mode)
+            except ValueError as exc:
+                raise TypeError("mode 必须是 StorageMode 枚举或其合法字符串值") from exc
+        raise TypeError("mode 必须是 StorageMode 枚举或其合法字符串值")
 
 
 __all__ = ["StorageRuntime"]

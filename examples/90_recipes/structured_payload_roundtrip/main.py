@@ -5,7 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from dyntool import AccelSeries, model_from_structured_payload
+from dyntool import AccelSeries
+from dyntool.domain.models.registry import model_from_structured_payload
 from examples._bootstrap import print_summary
 
 

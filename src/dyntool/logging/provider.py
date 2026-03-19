@@ -7,12 +7,30 @@ import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 import sys
-from typing import Any, Callable
+from typing import Any, Callable, IO, Protocol, TypeAlias
 
 from .config import LoggingConfig
 from .types import LogContext, LoggingMode
 
 _STANDARD_LOG_RECORD_FIELDS = frozenset(logging.makeLogRecord({}).__dict__)
+LoguruSink: TypeAlias = Path | str | IO[str]
+LoguruSinkOptions: TypeAlias = dict[str, Any]
+
+
+class _LoguruLoggerProtocol(Protocol):
+    """loguru logger 的最小协议。"""
+
+    def add(self, sink: Any, **options: Any) -> int: ...
+
+    def remove(self, sink_id: int | None = None) -> None: ...
+
+    def patch(self, patcher: Callable[[dict[str, Any]], None]) -> "_LoguruLoggerProtocol": ...
+
+    def bind(self, **extra: Any) -> "_LoguruLoggerProtocol": ...
+
+    def opt(self, *, exception: Any = None) -> "_LoguruLoggerProtocol": ...
+
+    def log(self, level: str, message: str) -> None: ...
 
 
 class _FeatureFileRouterHandler(logging.Handler):
@@ -288,8 +306,26 @@ class LoguruLogProvider(LogProvider):
         )
         self._feature_sink_ids[feature] = sink_id
 
-    def _add_loguru_sink(self, sink: object, **extra_options: object) -> int:
-        options: dict[str, object] = {"level": self._config.level}
+    def _add_loguru_sink(self, sink: LoguruSink, **extra_options: Any) -> int:
+        """注册一个受 dyntool 管理的 loguru sink。
+
+        Args:
+            sink: loguru sink 目标。当前支持文件路径、路径字符串和文本流对象。
+            **extra_options: 传给 `loguru.logger.add()` 的具名配置键。常见键包括
+                `filter`、`format`、`serialize` 和 `enqueue`。
+
+        Returns:
+            新注册 sink 的 loguru 内部标识。
+
+        Raises:
+            RuntimeError: loguru 本身注册 sink 失败时由下游抛出。
+
+        Notes:
+            provider 级默认配置会先写入，再由 `provider_options` 和显式 `extra_options`
+            依次覆盖。
+        """
+
+        options: LoguruSinkOptions = {"level": self._config.level}
         options.update(self._config.provider_options)
         options.update(extra_options)
         if isinstance(sink, Path):
@@ -384,7 +420,7 @@ def _warn_default_provider_fallback_once() -> None:
     logging.getLogger("dyntool").warning(_DEFAULT_PROVIDER_FALLBACK_MESSAGE)
 
 
-def _load_loguru_logger() -> Any | None:
+def _load_loguru_logger() -> _LoguruLoggerProtocol | None:
     """按需加载 loguru logger。"""
 
     try:
@@ -394,7 +430,7 @@ def _load_loguru_logger() -> Any | None:
     return module.logger
 
 
-def _require_loguru_logger() -> Any:
+def _require_loguru_logger() -> _LoguruLoggerProtocol:
     """确保 loguru 可用。"""
 
     logger = _load_loguru_logger()

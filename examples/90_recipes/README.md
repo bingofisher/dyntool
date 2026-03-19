@@ -1,17 +1,11 @@
 # Recipes
 
-这些示例回答“某一步怎么写”。
+这里收录局部技巧示例，用于补充正式场景中不方便展开的细节。
 
-- 每个 recipe 保持单一目标
-- README 说明适用场景、最小代码和常见误区
-- 正式映射以 `docs/examples_manifest.toml` 为准
+典型主题：
 
-当前 recipes：
-
-- `units_and_unit_views`
-- `metadata_patterns`
-- `sample_set_filter_parallel_io`
-- `plot_payload_and_plotters`
-- `logging_providers_and_modes`
-- `storage_scheme_selection`
-- `structured_payload_roundtrip`
+- 单位与元数据
+- 样本集筛选与并行 I/O
+- 存储方案选择
+- 绘图数据集与 plotter
+- 日志 provider 与模式

@@ -85,7 +85,7 @@ def _is_dynamic_import_call(node: ast.AST) -> bool:
     func = node.func
     if isinstance(func, ast.Attribute):
         return func.attr == "import_module"
-    return isinstance(func, ast.Name) and func.id == "import_module"
+    return isinstance(func, ast.Name) and func.id in {"import_module", "__import__"}
 
 
 def _extract_dynamic_import_name(node: ast.Call) -> str | None:

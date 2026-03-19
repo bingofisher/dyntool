@@ -1,9 +1,9 @@
-"""绘图模块内部配置。"""
+"""绘图模块配置。"""
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 import warnings
 
 import matplotlib.pyplot as plt
@@ -30,10 +30,58 @@ def _coerce_font_list(value: Any) -> list[str]:
     return [str(item) for item in value]
 
 
-class ZhPlotConfig:
-    """管理 matplotlib 中文字体配置。"""
+def _flatten_rcparams(payload: Mapping[str, Any], *, prefix: str = "") -> dict[str, Any]:
+    flattened: dict[str, Any] = {}
+    for key, value in payload.items():
+        resolved_key = f"{prefix}.{key}" if prefix else str(key)
+        if isinstance(value, Mapping):
+            flattened.update(_flatten_rcparams(value, prefix=resolved_key))
+        else:
+            flattened[resolved_key] = value
+    return flattened
 
-    CONFIG_PATH = Path(__file__).resolve().parent / "assets" / "plotting.json"
+
+def load_plotting_section(
+    config_path: str | Path | None,
+    *,
+    section: str,
+    fallback_root: bool = False,
+) -> dict[str, Any]:
+    """读取统一 plotting 配置文件中的指定 section。
+
+    Args:
+        config_path: 配置文件路径。为 ``None`` 时使用默认 plotting 配置文件。
+        section: 需要读取的顶层 section 名称，例如 ``zh``、``axis_frame``。
+        fallback_root: 当目标 section 不存在时，是否回退到整个根字典。
+
+    Returns:
+        解析后的 section 字典。若 section 不存在且不允许回退，则返回空字典。
+
+    Raises:
+        TypeError: 当配置文件内容不能解析为字典时抛出。
+    """
+
+    path = Path(config_path) if config_path else ZhPlotConfig.CONFIG_PATH
+    payload = read_config_file(path)
+    if not isinstance(payload, dict):
+        raise TypeError("绘图配置必须解析为字典。")
+    section_payload = payload.get(section)
+    if isinstance(section_payload, dict):
+        return dict(section_payload)
+    if fallback_root:
+        return dict(payload)
+    return {}
+
+
+class ZhPlotConfig:
+    """管理 matplotlib 中文字体与 rcParams 配置。
+
+    Notes:
+        该对象只消费统一 plotting 配置文件中的 ``[zh]`` section，
+        不负责解释 ``axis_frame``、``grid_frame`` 或 ``legend`` 等其它 section。
+    """
+
+    CONFIG_PATH = Path(__file__).resolve().parent / "assets" / "plotting.toml"
 
     def __init__(
         self,
@@ -46,10 +94,8 @@ class ZhPlotConfig:
         self.config: dict[str, Any] | None = None
 
     def _set_config(self) -> None:
-        payload = read_config_file(self.config_path)
-        if not isinstance(payload, dict):
-            raise TypeError("绘图配置必须解析为字典。")
-        self.config = payload
+        payload = load_plotting_section(self.config_path, section="zh", fallback_root=True)
+        self.config = _flatten_rcparams(payload)
 
     def _list_installed_font_names(self) -> set[str]:
         return {font.name for font in font_manager.fontManager.ttflist}
@@ -99,7 +145,14 @@ class ZhPlotConfig:
         self.config["axes.unicode_minus"] = False
 
     def apply(self, update_fields: dict[str, Any] | None = None) -> str | None:
-        """应用中文字体配置。"""
+        """应用中文字体与 rcParams 配置。
+
+        Args:
+            update_fields: 读取 ``[zh]`` 后额外覆盖到 rcParams 的键值。
+
+        Returns:
+            当前生效的首选中文字体名称；若未成功解析字体则返回 ``None``。
+        """
 
         self._set_config()
         self._set_font()
@@ -119,7 +172,19 @@ def configure_zh(
     font_path: str | None = None,
     update_fields: dict[str, Any] | None = None,
 ) -> str | None:
-    """配置 matplotlib 中文绘图环境。"""
+    """配置 matplotlib 中文绘图环境。
+
+    Args:
+        config_path: 统一 plotting 配置文件路径。函数只读取其中的 ``[zh]`` section。
+        font_path: 可选字体文件路径。未提供时默认尝试仓库内置 SongTNR 字体。
+        update_fields: 读取 ``[zh]`` 后额外覆盖到 rcParams 的键值。
+
+    Returns:
+        当前生效的首选中文字体名称；若未成功解析字体则返回 ``None``。
+
+    Notes:
+        该函数不是 plotting 总配置入口，只负责中文与底层 rcParams 配置。
+    """
 
     global _CACHED_FONT_NAME
     if _CACHED_FONT_NAME is not None and config_path is None and font_path is None and update_fields is None:
@@ -131,4 +196,4 @@ def configure_zh(
     return _CACHED_FONT_NAME
 
 
-__all__ = ["ZhPlotConfig", "configure_zh"]
+__all__ = ["ZhPlotConfig", "configure_zh", "load_plotting_section"]

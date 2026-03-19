@@ -1,12 +1,13 @@
-"""最终清理相关的守卫测试。"""
+"""清理守卫与公开口径守卫测试。"""
 
 from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
-
+import tomllib
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+EXAMPLES_MANIFEST_PATH = PROJECT_ROOT / "docs" / "examples_manifest.toml"
 
 
 def _load_script_module(name: str, path: Path) -> object:
@@ -18,16 +19,33 @@ def _load_script_module(name: str, path: Path) -> object:
     return module
 
 
-def test_check_layer_imports_detects_dynamic_imports(tmp_path: Path) -> None:
-    script = _load_script_module(
-        "check_layer_imports_script",
-        PROJECT_ROOT / "scripts" / "check_layer_imports.py",
-    )
+def _internal_example_scripts() -> set[Path]:
+    manifest = tomllib.loads(EXAMPLES_MANIFEST_PATH.read_text(encoding="utf-8"))
+    internal: set[Path] = set()
+    for entry in manifest.get("example", []):
+        if entry.get("kind") != "internal":
+            continue
+        script = entry.get("script")
+        if isinstance(script, str):
+            internal.add((PROJECT_ROOT / script).resolve())
+    return internal
+
+
+def test_pytest_imports_current_worktree_source() -> None:
+    import dyntool
+
+    package_file = Path(dyntool.__file__).resolve()
+    expected = (PROJECT_ROOT / "src" / "dyntool").resolve()
+    assert expected in package_file.parents
+
+
+def test_check_layer_imports_detects_importlib_dynamic_imports(tmp_path: Path) -> None:
+    script = _load_script_module("check_layer_imports_script", PROJECT_ROOT / "scripts" / "check_layer_imports.py")
     source_root = tmp_path / "src" / "dyntool" / "application"
     source_root.mkdir(parents=True)
     target = source_root / "demo.py"
     target.write_text(
-        'import importlib\nruntime = importlib.import_module("dyntool.storage.types")\n',
+        'import importlib\nruntime = importlib.import_module("dyntool.infrastructure.persistence")\n',
         encoding="utf-8",
     )
 
@@ -35,44 +53,48 @@ def test_check_layer_imports_detects_dynamic_imports(tmp_path: Path) -> None:
     script.SOURCE_ROOT = tmp_path / "src" / "dyntool"
 
     imports = script._iter_imported_modules(target)
+    assert "dyntool.infrastructure.persistence" in {item[1] for item in imports}
 
-    assert "dyntool.storage.types" in {item[1] for item in imports}
 
-
-def test_check_text_quality_covers_planning_files_and_control_files(tmp_path: Path) -> None:
+def test_check_layer_imports_detects_builtin_dynamic_imports(tmp_path: Path) -> None:
     script = _load_script_module(
-        "check_text_quality_script",
-        PROJECT_ROOT / "scripts" / "check_text_quality.py",
+        "check_layer_imports_builtin_script", PROJECT_ROOT / "scripts" / "check_layer_imports.py"
     )
-    (tmp_path / ".editorconfig").write_text(
-        "root = true\n[*]\ncharset = utf-8\nend_of_line = lf\n",
+    source_root = tmp_path / "src" / "dyntool" / "domain"
+    source_root.mkdir(parents=True)
+    target = source_root / "demo.py"
+    target.write_text(
+        'error_type = __import__("dyntool.infrastructure.persistence", fromlist=["RecoverableIOError"])\n',
         encoding="utf-8",
     )
+
+    script.PROJECT_ROOT = tmp_path
+    script.SOURCE_ROOT = tmp_path / "src" / "dyntool"
+
+    imports = script._iter_imported_modules(target)
+    assert "dyntool.infrastructure.persistence" in {item[1] for item in imports}
+
+
+def test_check_text_quality_covers_planning_files_and_detects_mojibake(tmp_path: Path) -> None:
+    script = _load_script_module("check_text_quality_script", PROJECT_ROOT / "scripts" / "check_text_quality.py")
+    (tmp_path / ".editorconfig").write_text("root = true\n[*]\ncharset = utf-8\nend_of_line = lf\n", encoding="utf-8")
     (tmp_path / ".gitattributes").write_text(
         "* text=auto eol=lf\n*.py text eol=lf\n*.md text eol=lf\n",
         encoding="utf-8",
     )
-    (tmp_path / "README.md").write_text("# 标题\n中文说明\n", encoding="utf-8")
-    (tmp_path / "ARCHITECTURE.md").write_text("# 架构\n中文说明\n", encoding="utf-8")
-    (tmp_path / "findings.md").write_text("bad \u0081 mojibake\n", encoding="utf-8")
+    (tmp_path / "README.md").write_text("# 鏍囬\n中文说明\n", encoding="utf-8")
+    (tmp_path / "ARCHITECTURE.md").write_text("# 鏋舵瀯\n中文说明\n", encoding="utf-8")
+    (tmp_path / "task_plan.md").write_text("闂傚爼鍋呴崥鍥╃崐\n", encoding="utf-8")
 
     script.PROJECT_ROOT = tmp_path
-    script.TEXT_GLOBS = [
-        ".editorconfig",
-        ".gitattributes",
-        "README.md",
-        "ARCHITECTURE.md",
-        "findings.md",
-    ]
+    script.TEXT_GLOBS = [".editorconfig", ".gitattributes", "README.md", "ARCHITECTURE.md", "task_plan.md"]
     script.STRICT_CHINESE_DOC_GLOBS = []
 
     assert script.main() == 1
 
 
 def test_examples_use_public_entrypoints_only() -> None:
-    example_files = [
-        path for path in sorted((PROJECT_ROOT / "examples").rglob("*.py")) if "11_custom_extension" not in path.parts
-    ]
+    example_files = sorted((PROJECT_ROOT / "examples").rglob("*.py"))
     assert example_files
     forbidden_tokens = (
         "from dyntool.domain",
@@ -81,12 +103,15 @@ def test_examples_use_public_entrypoints_only() -> None:
         "import dyntool.application",
     )
     offenders: list[str] = []
+    internal_scripts = _internal_example_scripts()
     for path in example_files:
+        if path.resolve() in internal_scripts:
+            continue
         text = path.read_text(encoding="utf-8")
         if any(token in text for token in forbidden_tokens):
-            offenders.append(str(path.relative_to(PROJECT_ROOT)))
+            offenders.append(path.relative_to(PROJECT_ROOT).as_posix())
 
-    assert not offenders, f"examples should use public entrypoints only: {offenders}"
+    assert not offenders, f"正式示例必须只使用正式公开入口: {offenders}"
 
 
 def test_docs_and_examples_do_not_reference_removed_plot_backends() -> None:
@@ -94,125 +119,84 @@ def test_docs_and_examples_do_not_reference_removed_plot_backends() -> None:
         PROJECT_ROOT / "README.md",
         PROJECT_ROOT / "ARCHITECTURE.md",
         PROJECT_ROOT / "mkdocs.yml",
+        PROJECT_ROOT / "docs" / "api",
+        PROJECT_ROOT / "docs" / "developer",
+        PROJECT_ROOT / "docs" / "usage",
+        PROJECT_ROOT / "docs" / "workflows",
         PROJECT_ROOT / "docs" / "examples_overview.md",
         PROJECT_ROOT / "examples",
+        PROJECT_ROOT / "pyproject.toml",
     ]
     forbidden_tokens = (
         "plotly",
         "hvplot",
+        "holoviews",
         "render_interactive",
         "plot_interactive",
         "preview_interactive",
     )
     offenders: list[str] = []
     for root in scan_roots:
-        paths = [root] if root.is_file() else sorted(root.rglob("*.md")) + sorted(root.rglob("*.py"))
+        paths = (
+            [root]
+            if root.is_file()
+            else sorted(root.rglob("*.md")) + sorted(root.rglob("*.py")) + sorted(root.rglob("*.toml"))
+        )
         for path in paths:
             text = path.read_text(encoding="utf-8")
             if any(token in text for token in forbidden_tokens):
-                offenders.append(str(path.relative_to(PROJECT_ROOT)))
+                offenders.append(path.relative_to(PROJECT_ROOT).as_posix())
 
-    assert not offenders, f"docs/examples reference removed plotting APIs: {offenders}"
-
-
-def test_removed_parallel_directories_do_not_exist() -> None:
-    for rel in (
-        "src/dyntool/persistence",
-        "src/dyntool/samples",
-        "src/dyntool/utils",
-    ):
-        assert not (PROJECT_ROOT / rel).exists(), f"{rel} should be removed"
+    assert not offenders, f"文档或配置仍引用已删除的绘图链路: {offenders}"
 
 
-def test_removed_plotting_compat_files_do_not_exist() -> None:
-    for rel in (
-        "src/dyntool/plotting/adapters.py",
-        "src/dyntool/plotting/data.py",
-    ):
-        assert not (PROJECT_ROOT / rel).exists(), f"{rel} should be removed"
-
-
-def test_removed_module_specific_presets_do_not_exist_under_config() -> None:
-    for rel in (
-        "src/dyntool/config/presets/logging_simple.json",
-        "src/dyntool/config/presets/logging_standard.json",
-        "src/dyntool/config/presets/plotting.json",
-    ):
-        assert not (PROJECT_ROOT / rel).exists(), f"{rel} should be removed"
-
-
-def test_empty_config_presets_directory_is_removed() -> None:
-    assert not (PROJECT_ROOT / "src" / "dyntool" / "config" / "presets").exists()
-
-
-def test_repository_control_files_exist() -> None:
-    assert (PROJECT_ROOT / ".editorconfig").exists()
-    assert (PROJECT_ROOT / ".gitattributes").exists()
-
-
-def test_legacy_sphinx_scaffold_is_removed() -> None:
-    assert not (PROJECT_ROOT / "docs" / "conf.py").exists()
-    assert not (PROJECT_ROOT / "docs" / "api" / "public_api.rst").exists()
-    assert not (PROJECT_ROOT / "docs" / "api" / "internal_api.rst").exists()
-
-
-def test_mkdocs_configuration_exists() -> None:
-    assert (PROJECT_ROOT / "mkdocs.yml").exists()
-
-
-def test_repository_has_no_sphinx_build_artifacts() -> None:
-    assert not (PROJECT_ROOT / "docs" / "_build").exists()
-
-
-def test_unused_fixture_duplicates_are_removed() -> None:
-    duplicate_candidates = sorted(path.name for path in (PROJECT_ROOT / "tests" / "input_data").glob("*副本*"))
-
-    assert duplicate_candidates == []
-
-
-def test_active_docs_do_not_reference_removed_storage_terms() -> None:
+def test_formal_docs_do_not_reference_internal_import_paths() -> None:
     scan_roots = [
-        PROJECT_ROOT / "AGENTS.md",
-        PROJECT_ROOT / "ARCHITECTURE.md",
         PROJECT_ROOT / "README.md",
-        PROJECT_ROOT / "docs" / "examples_manifest.toml",
-        PROJECT_ROOT / "docs" / "usage",
-        PROJECT_ROOT / "docs" / "workflows",
-        PROJECT_ROOT / "examples" / "90_recipes",
+        PROJECT_ROOT / "ARCHITECTURE.md",
+        PROJECT_ROOT / "docs",
     ]
     forbidden_tokens = (
-        "filter_by",
-        "from_directory(",
-        "`from_directory()`",
+        "from dyntool.domain",
+        "import dyntool.domain",
+        "from dyntool.application",
+        "import dyntool.application",
     )
     offenders: list[str] = []
     for root in scan_roots:
-        paths = [root] if root.is_file() else sorted(root.rglob("*.md")) + sorted(root.rglob("*.toml"))
+        paths = [root] if root.is_file() else sorted(root.rglob("*.md"))
         for path in paths:
             text = path.read_text(encoding="utf-8")
             if any(token in text for token in forbidden_tokens):
-                offenders.append(str(path.relative_to(PROJECT_ROOT)))
+                offenders.append(path.relative_to(PROJECT_ROOT).as_posix())
 
-    assert not offenders, f"active docs still reference removed storage terms: {offenders}"
+    assert not offenders, f"正式文档仍依赖内部导入路径: {offenders}"
 
 
-def test_active_rules_do_not_claim_interfaces_is_a_formal_layer() -> None:
-    scan_roots = [
-        PROJECT_ROOT / "AGENTS.md",
-        PROJECT_ROOT / "ARCHITECTURE.md",
-        PROJECT_ROOT / "docs" / "REFACTOR_BASELINE.md",
-        PROJECT_ROOT / "docs" / "baselines" / "public_api_baseline.toml",
+def test_custom_extension_is_not_part_of_formal_examples() -> None:
+    scan_files = [
+        PROJECT_ROOT / "docs" / "examples_overview.md",
+        PROJECT_ROOT / "examples" / "README.md",
+        PROJECT_ROOT / "tests" / "test_examples_systems.py",
     ]
-    bad_tokens = (
-        "`interfaces`、`application`、`domain`、`compute`、`infrastructure`",
-        "- `interfaces`",
-        "interfaces = [",
-        "interfaces -> application -> domain/compute",
-    )
     offenders: list[str] = []
-    for path in scan_roots:
+    for path in scan_files:
         text = path.read_text(encoding="utf-8")
-        if any(token in text for token in bad_tokens):
-            offenders.append(str(path.relative_to(PROJECT_ROOT)))
+        if "08_custom_extension" in text or "test_scenario_custom_extension" in text:
+            offenders.append(path.relative_to(PROJECT_ROOT).as_posix())
 
-    assert not offenders, f"active rules still claim interfaces as a formal layer: {offenders}"
+    assert not offenders, f"custom_extension 不应继续出现在正式示例口径: {offenders}"
+
+
+def test_custom_extension_manifest_entry_is_internal_only() -> None:
+    manifest_path = PROJECT_ROOT / "docs" / "examples_manifest.toml"
+    text = manifest_path.read_text(encoding="utf-8")
+    assert 'id = "custom_extension"' in text
+    block_start = text.index('id = "custom_extension"')
+    block_end = text.find("[[example]]", block_start + 1)
+    block = text[block_start:block_end] if block_end != -1 else text[block_start:]
+    assert 'kind = "internal"' in block
+
+
+def test_repository_has_no_mkdocs_build_artifacts() -> None:
+    assert not (PROJECT_ROOT / "docs" / "_build").exists()

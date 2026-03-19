@@ -23,12 +23,15 @@ site/
 # Local environments
 .venv/
 .vscode/
-.codex/
 .worktrees/
+.agents/
+.codex/
 
 # Example/generated artifacts
 /examples/output/
 /examples/*_demo.png
+/tmp-invalid.h5
+/.tmp_plot_verify/
 
 # Local scratch files
 /temp.py
@@ -36,3 +39,4 @@ tmp_phase6_encoding_test.txt
 task_plan.md
 progress.md
 findings.md
+TODO.md

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from enum import StrEnum
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -126,9 +127,22 @@ class LinearSequence:
         interval: float | None = None,
         num: int | None = None,
         endpoint: bool = True,
-        **kwargs: object,
+        **options: Any,
     ) -> np.ndarray:
-        """按起止值与间隔或点数生成线性序列。"""
+        """按起止值与间隔或点数生成线性序列。
+
+        Args:
+            start: 序列起点。
+            end: 序列终点。
+            interval: 相邻点间隔；与 `num` 二选一。
+            num: 序列点数；与 `interval` 二选一。
+            endpoint: 是否包含终点。
+            **options: 传给 `numpy.linspace()` 的其余具名参数。当前主要保留给 `dtype`
+                等兼容选项使用。
+
+        Returns:
+            线性序列数组。
+        """
         if start > end:
             raise ValueError(f"起始值 ({start}) 不能大于结束值 ({end})")
         if start == end:
@@ -145,12 +159,12 @@ class LinearSequence:
             if abs(n_intervals - n_rounded) > 1e-10:
                 raise ValueError(f"interval={interval} 无法整除区间 [{start}, {end}]（跨度={total_span}）")
             num_computed = int(n_rounded) + 1
-            return np.linspace(start, end, num=num_computed, endpoint=True, **kwargs)
+            return np.linspace(start, end, num=num_computed, endpoint=True, **options)
 
         assert num is not None
         if num < 1:
             raise ValueError("'num' 必须 ≥ 1")
-        return np.linspace(start, end, num=num, endpoint=endpoint, **kwargs)
+        return np.linspace(start, end, num=num, endpoint=endpoint, **options)
 
     @classmethod
     def generate_time(
@@ -160,7 +174,7 @@ class LinearSequence:
         num: int | None = None,
         duration: float | None = None,
         endpoint: bool = True,
-        **kwargs: object,
+        **options: Any,
     ) -> np.ndarray:
         """根据 ``dt``、``num``、``duration`` 中任意两项生成时间轴。"""
         args = {"dt": dt, "num": num, "duration": duration}
@@ -178,13 +192,13 @@ class LinearSequence:
 
         if dt is None:
             assert duration is not None
-            return cls.generate(0.0, duration, num=num, endpoint=endpoint, **kwargs)
+            return cls.generate(0.0, duration, num=num, endpoint=endpoint, **options)
         if num is None:
             assert duration is not None
-            return cls.generate(0.0, duration, interval=dt, **kwargs)
+            return cls.generate(0.0, duration, interval=dt, **options)
         if duration is None:
             end = dt * (num - 1) if endpoint else dt * num
-            return cls.generate(0.0, end, num=num, endpoint=endpoint, **kwargs)
+            return cls.generate(0.0, end, num=num, endpoint=endpoint, **options)
         raise RuntimeError("逻辑错误：参数推导失败")
 
 
@@ -301,10 +315,10 @@ class SDOFSolver(SolverBase):
     def solve(
         self,
         method: SDOFSolveMethod | str = SDOFSolveMethod.NIGAM_JENNINGS,
-        **kwargs: dict,
+        **options: Any,
     ) -> dict[str, np.ndarray]:
         """求解单自由度体系的加速度、速度和位移响应。"""
-        del kwargs
+        del options
         if not hasattr(self, "m"):
             raise ValueError("请先用 `build_sdof()` 构建单自由度体系")
         if not hasattr(self, "ag"):
@@ -324,9 +338,21 @@ class SDOFSolver(SolverBase):
         accel: np.ndarray,
         accel_dt: float,
         method: SDOFSolveMethod | str = SDOFSolveMethod.NIGAM_JENNINGS,
-        **kwargs: dict,
+        **options: Any,
     ) -> pd.DataFrame:
-        """对多个周期批量求解响应谱相关结果。"""
+        """对多个周期批量求解响应谱相关结果。
+
+        Args:
+            periods: 目标周期数组。
+            accel: 输入加速度时程。
+            accel_dt: 输入加速度时程的采样间隔。
+            method: 单自由度求解方法。
+            **options: 传给 `SDOFSolver.solve()` 的具名参数。当前预留给不同求解方法的
+                专属配置键使用。
+
+        Returns:
+            包含 `psa/psv/sd/sv/sa` 的响应谱结果表。
+        """
         periods = np.asarray(periods, dtype=float)
         if np.any(periods <= 0):
             raise ValueError("周期必须为正数")
@@ -345,7 +371,7 @@ class SDOFSolver(SolverBase):
         )
         for i, Ti in enumerate(periods):
             sdof = cls(T=Ti, dt=accel_dt, ag=accel)
-            data = sdof.solve(method=method, **kwargs)
+            data = sdof.solve(method=method, **options)
             a, v, d = data["accel"], data["vel"], data["disp"]
             sa = np.max(np.abs(a))
             sv = np.max(np.abs(v))

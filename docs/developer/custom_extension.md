@@ -1,16 +1,17 @@
 # 自定义扩展
 
-`Internal API`
+稳定性：`Internal API`
 
-本页面向需要扩展元数据、数据模型、样本或样本集的开发者。
+本文只面向需要扩展自定义模型、元数据、样本或样本集的维护者。它不是正式公开 API 教程。
 
-## 建议路径
+## 参考入口
 
-1. 先阅读 `examples/11_custom_extension/custom_domain_extension.py`
-2. 再阅读 `domain.metadata`、`domain.models`、`domain.samples` 的基类和注册入口
-3. 最后确认扩展对象如何进入 `dyntool.storage`
+1. 阅读 `examples/10_scenarios/08_custom_extension/main.py`
+2. 阅读 `domain.metadata`、`domain.models`、`domain.samples` 的基础类型
+3. 最后确认如何接入 `dyntool.storage`
 
 ## 约束
 
 - 扩展对象优先复用正式 `storage` 和 `plotting` 入口
-- 不要把基础设施细节直接暴露给使用者
+- 不要把基础设施实现细节直接暴露给最终用户
+- 任何扩展都不应修改正式示例口径

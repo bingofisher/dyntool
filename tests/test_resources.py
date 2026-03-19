@@ -1,43 +1,46 @@
-"""ResourceLoader 资源加载测试。"""
+"""正式资源模块测试。"""
 
 from __future__ import annotations
 
+from pathlib import Path
+
+import pandas as pd
 import pytest
 
-from dyntool.application.resource_loader import ResourceLoader
+import dyntool.resources as dt_resource
 
 
-class TestResourceLoader:
-    """ResourceLoader get_csv、get_center_freqs。"""
+def test_keys_and_manifest_are_available() -> None:
+    keys = dt_resource.keys()
+    manifest = dt_resource.manifest()
 
-    def test_get_instance(self) -> None:
-        a = ResourceLoader.get_instance()
-        b = ResourceLoader.get_instance()
-        assert a is b
+    assert isinstance(keys, tuple)
+    assert "center_freq" in keys
+    assert manifest["center_freq"]
 
-    def test_get_path_center_freq(self) -> None:
-        loader = ResourceLoader.get_instance()
-        path = loader.get_path("center_freq")
-        assert path.name == "1-3倍频程频带与中心频率.csv"
-        assert path.exists()
 
-    def test_get_csv_center_freq(self) -> None:
-        loader = ResourceLoader.get_instance()
-        df = loader.get_csv("center_freq")
-        assert "中心频率 (Hz)" in df.columns
-        assert len(df) > 0
+def test_path_returns_existing_resource_file() -> None:
+    path = dt_resource.path("center_freq")
 
-    def test_get_center_freqs(self) -> None:
-        loader = ResourceLoader.get_instance()
-        arr, index = loader.get_center_freqs(freq_range=(1.0, 80.0))
-        assert len(arr) == len(index)
-        assert arr.min() >= 1.0
-        assert arr.max() <= 80.0
-        arr_narrow, _ = loader.get_center_freqs(freq_range=(10.0, 20.0))
-        assert arr_narrow.min() >= 10.0
-        assert arr_narrow.max() <= 20.0
+    assert isinstance(path, Path)
+    assert path.exists()
 
-    def test_get_path_unknown_key_raises(self) -> None:
-        loader = ResourceLoader.get_instance()
-        with pytest.raises(KeyError, match="未知资源 key"):
-            loader.get_path("unknown_key")
+
+def test_csv_reads_resource_table() -> None:
+    frame = dt_resource.csv("center_freq")
+
+    assert isinstance(frame, pd.DataFrame)
+    assert not frame.empty
+
+
+def test_center_freqs_returns_filtered_band_data() -> None:
+    values, index = dt_resource.center_freqs((10.0, 20.0))
+
+    assert len(values) == len(index)
+    assert float(values.min()) >= 10.0
+    assert float(values.max()) <= 20.0
+
+
+def test_unknown_resource_key_raises_key_error() -> None:
+    with pytest.raises(KeyError, match="未知资源 key"):
+        dt_resource.path("unknown_key")

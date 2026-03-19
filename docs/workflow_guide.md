@@ -2,25 +2,17 @@
 
 稳定性：`Public API`
 
-教程页只保留完整任务闭环，并与 `examples/10_scenarios/` 一一对应。
+教程页用于串联完整工作流，优先对应正式场景示例。
 
-## 推荐顺序
+## 当前正式教程
 
-1. [导入并标准化](workflows/02_real_file_import.md)
-2. [存储并回读](workflows/01_minimal_roundtrip.md)
-3. [带日志运行](workflows/05_logged_run.md)
-4. [资源驱动评价](workflows/06_resource_driven_eval.md)
+1. [最小闭环](workflows/01_minimal_roundtrip.md)
+2. [真实文件导入](workflows/02_real_file_import.md)
+3. [样本集批处理](workflows/04_sample_set_batch.md)
+4. [带日志运行](workflows/05_logged_run.md)
+5. [资源驱动评价](workflows/06_resource_driven_eval.md)
 
-## 每条教程回答什么
+## 使用建议
 
-| 教程 | 重点问题 |
-| --- | --- |
-| 导入并标准化 | 如何把真实文本输入转成正式对象，并统一单位 |
-| 存储并回读 | 如何完成标准存储闭环并验证输出 |
-| 带日志运行 | 如何通过正式日志入口控制等级、模式和输出位置 |
-| 资源驱动评价 | 如何利用内置标准资源约束评价流程 |
-
-## 进阶阅读
-
-- [模型分析](workflows/03_model_analysis.md)
-- [样本集批处理](workflows/04_sample_set_batch.md)
+- 先跑一条最小闭环，再根据问题回到主题页补细节。
+- 如果你需要扩展内部类型，请转到开发者文档，不要把内部扩展示例当作正式公开 API。

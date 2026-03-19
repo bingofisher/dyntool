@@ -134,6 +134,11 @@ class DataCategory(StrEnum):
     FDVL_MAX = "fdvl_max"
     FDVL_COMP = "fdvl_comp"
 
+    ZVL_LIMIT = "zvl_limit"
+    OTOVL_LIMIT = "otovl_limit"
+    FPVDV_LIMIT = "fpvdv_limit"
+    FDMVL_LIMIT = "fdmvl_limit"
+
     @staticmethod
     def list_categories() -> list[str]:
         """返回全部标准类别值列表。"""

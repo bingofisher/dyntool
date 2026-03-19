@@ -65,7 +65,7 @@ def register_backend(fmt: str, backend_cls: type[DataBackend]) -> None:
     """注册后端类型。"""
 
     _BACKEND_REGISTRY[fmt] = backend_cls
-    logger.debug("register backend: fmt=%s, backend=%s", fmt, backend_cls.__name__)
+    logger.debug("register persistence backend: fmt=%s, backend_name=%s", fmt, backend_cls.__name__)
 
 
 def get_backend(fmt: str) -> DataBackend:

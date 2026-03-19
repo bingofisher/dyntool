@@ -1,18 +1,18 @@
-"""1.0.0 最终公开入口回归测试。"""
+"""公开入口最小闭环测试。"""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from dyntool import DynTool, Sample, SampleDomain, SampleSet, StorageScheme
+import dyntool.resources as dt_resource
+from dyntool import Sample, SampleDomain, SampleSet, StorageScheme
 
 
-def test_dyntool_is_reduced_to_resource_and_options() -> None:
-    tool = DynTool()
+def test_resource_module_replaces_facade_resource_entry() -> None:
+    manifest = dt_resource.manifest()
 
-    public_members = {name for name in vars(tool) if not name.startswith("_")}
-
-    assert public_members == {"resource", "options"}
+    assert "center_freq" in manifest
+    assert dt_resource.path("center_freq").exists()
 
 
 def test_sample_class_can_build_vibration_sample_from_accel_data() -> None:
@@ -51,15 +51,13 @@ def test_sample_class_can_build_from_models_and_eval_zvl() -> None:
         accel=source.accel,
     )
 
-    success, _ = sample.eval_zvl(overwrite=True, freq_range=(2.0, 60.0))
+    result = sample.eval_zvl(overwrite=True, freq_range=(2.0, 60.0))
 
-    assert success is True
+    assert result.success is True
     assert sample.zvl is not None
 
 
-def test_sample_set_class_supports_from_samples_eval_and_h5_roundtrip(
-    tmp_path: Path,
-) -> None:
+def test_sample_set_class_supports_from_samples_eval_and_h5_roundtrip(tmp_path: Path) -> None:
     sample = Sample.from_accel_data(
         [0.0, 0.08, -0.02, 0.03, 0.0],
         dt=0.01,
@@ -71,10 +69,7 @@ def test_sample_set_class_supports_from_samples_eval_and_h5_roundtrip(
         record="R1",
         timestamp="2026-03-08 12:00:00",
     )
-    sample_set = SampleSet.from_samples(
-        [sample],
-        sample_domain=SampleDomain.VIBRATION_TEST,
-    )
+    sample_set = SampleSet.from_samples([sample], sample_domain=SampleDomain.VIBRATION_TEST)
 
     result = sample_set.eval_zvl(overwrite=True, freq_range=(2.0, 60.0))
     store_path = tmp_path / "samples.h5"

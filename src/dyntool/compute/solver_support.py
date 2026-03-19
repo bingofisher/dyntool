@@ -1,48 +1,30 @@
-"""Shared helpers for solver implementations."""
+"""求解器实现共享的资源与带宽辅助函数。"""
 
 from __future__ import annotations
-
-import io
-import json
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-_RESOURCES_ROOT = Path(__file__).resolve().parents[1] / "resources"
+from .. import resources as dt_resources
 
 
 def load_manifest() -> dict[str, str]:
-    """Load solver resource manifest."""
+    """返回求解器使用的资源清单。"""
 
-    text = (_RESOURCES_ROOT / "manifest.json").read_text(encoding="utf-8")
-    data = json.loads(text)
-    if not isinstance(data, dict):
-        raise ValueError("资源清单格式错误，预期为 JSON object")
-    return {str(k): str(v) for k, v in data.items()}
+    return dt_resources.manifest()
 
 
 def load_resource_csv(key: str) -> pd.DataFrame:
-    """Load csv resource declared in manifest."""
+    """读取资源清单中声明的 CSV 资源。"""
 
-    manifest = load_manifest()
-    if key not in manifest:
-        raise KeyError(f"未知资源 key: {key}")
-    rel = manifest[key]
-    text = (_RESOURCES_ROOT / rel).read_text(encoding="utf-8")
-    return pd.read_csv(io.StringIO(text))
+    return dt_resources.csv(key)
 
 
 def center_freqs(freq_range: tuple[float, float]) -> np.ndarray:
-    """Resolve center frequencies within a range."""
+    """返回指定频段内的中心频率数组。"""
 
-    df = load_resource_csv("center_freq")
-    freq_col = "中心频率 (Hz)"
-    if freq_col not in df.columns:
-        raise ValueError(f"CSV 缺少列 {freq_col}")
-    values = df[freq_col].to_numpy()
-    lower, upper = freq_range
-    return values[(values >= lower) & (values <= upper)]
+    values, _ = dt_resources.center_freqs(freq_range)
+    return values
 
 
 def read_weight_from_df(
@@ -50,7 +32,7 @@ def read_weight_from_df(
     df: pd.DataFrame,
     weight_key: str,
 ) -> np.ndarray:
-    """Read octave weights from a weight table."""
+    """从计权表中读取指定计权因子。"""
 
     weight_factor = 1000
     weight_cols = [
@@ -69,7 +51,7 @@ def read_weight_from_df(
 
 
 def read_weight_z_from_df(center_freqs: np.ndarray, df: pd.DataFrame) -> np.ndarray:
-    """Read Z weights from a weight table."""
+    """从计权表中读取 Z 计权因子。"""
 
     merged = pd.DataFrame(center_freqs, columns=["中心频率 (Hz)"]).merge(
         df,
@@ -81,29 +63,29 @@ def read_weight_z_from_df(center_freqs: np.ndarray, df: pd.DataFrame) -> np.ndar
 
 
 def calculate_lower(center: float, octave: float) -> float:
-    """Calculate octave-band lower frequency bound."""
+    """计算倍频带下边界频率。"""
 
     return center / 2 ** (octave / 2)
 
 
 def calculate_upper(center: float, octave: float) -> float:
-    """Calculate octave-band upper frequency bound."""
+    """计算倍频带上边界频率。"""
 
     return center * 2 ** (octave / 2)
 
 
 def get_min_nfft(num: int) -> int:
-    """Return the minimum power-of-two nfft."""
+    """返回不小于样本点数的最小 2 次幂 nfft。"""
 
     return int(np.around(np.power(2, np.ceil(np.log2(num)))))
 
 
 def build_bands(center_values: np.ndarray, octave: float) -> pd.DataFrame:
-    """Build a dataframe describing octave bands."""
+    """构造倍频带描述表。"""
 
     df = pd.DataFrame(center_values, columns=["中心频率 (Hz)"])
-    df["下边界频率(Hz)"] = df["中心频率 (Hz)"].apply(lambda value: calculate_lower(float(value), octave))
-    df["上边界频率(Hz)"] = df["中心频率 (Hz)"].apply(lambda value: calculate_upper(float(value), octave))
+    df["下边界频率 (Hz)"] = df["中心频率 (Hz)"].apply(lambda value: calculate_lower(float(value), octave))
+    df["上边界频率 (Hz)"] = df["中心频率 (Hz)"].apply(lambda value: calculate_upper(float(value), octave))
     return df
 
 
@@ -116,7 +98,7 @@ def band_rms(
     fs: int,
     octave: float,
 ) -> float:
-    """Calculate one octave-band RMS from an FFT window."""
+    """根据 FFT 窗口计算单个倍频带的 RMS。"""
 
     subwindow_fft = window_fft.copy()
     lower_freq = calculate_lower(center_freq, octave)

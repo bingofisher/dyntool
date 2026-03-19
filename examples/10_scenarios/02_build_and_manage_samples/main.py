@@ -4,14 +4,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from examples._legacy_runner import run_legacy_example
+from examples._scenario_impls import _scenario_build_and_manage_samples
 
 
 def main(output_dir: Path | None = None) -> dict[str, object]:
-    """运行样本与样本集组织场景。"""
+    """运行对应示例入口。"""
 
     # docs:begin sample_set_minimal
-    return run_legacy_example("examples/05_sample_sets/sample_set_ops.py", output_dir=output_dir)
+    return _scenario_build_and_manage_samples(output_dir=output_dir)
     # docs:end sample_set_minimal
 
 

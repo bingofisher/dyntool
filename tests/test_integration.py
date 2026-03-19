@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 import dyntool.plotting as dt_plotting
-from dyntool import PlotKind, Sample, SampleDomain, SampleSet, StorageScheme
+from dyntool import Sample, SampleDomain, SampleSet, StorageScheme
 
 
 def test_class_first_roundtrip_from_accel_to_eval_to_h5(tmp_path: Path) -> None:
@@ -30,7 +30,7 @@ def test_class_first_roundtrip_from_accel_to_eval_to_h5(tmp_path: Path) -> None:
 
     sample_set.eval_zvl(overwrite=True, freq_range=(2.0, 60.0))
     sample.calc_freqspec()
-    sample.calc_respspec(force=True)
+    sample.calc_respspec(overwrite=True)
 
     path = tmp_path / "samples.h5"
     sample_set.save(path, storage_scheme=StorageScheme.SET_H5)
@@ -45,7 +45,12 @@ def test_class_first_roundtrip_from_accel_to_eval_to_h5(tmp_path: Path) -> None:
     assert loaded_sample.zvl is not None
     assert loaded_sample.metadata.uid == sample.metadata.uid
 
-    payload = loaded[sample.uid].accel.to_plot_payload(kind=PlotKind.TIME)  # type: ignore[union-attr]
-    result = dt_plotting.render_payload(payload)
+    plotter = dt_plotting.FramePlotter()
+    plotter.add(
+        loaded[sample.uid].accel,  # type: ignore[arg-type]
+        name="loaded-accel",
+        category=dt_plotting.PlotCategory.SAMPLE,
+    )
+    result = plotter.plot()
     assert result.figure is not None
     plt.close(result.figure)

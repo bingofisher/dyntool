@@ -1,17 +1,20 @@
 # API 设计
 
-`Public API`
+稳定性：`Internal API`
 
-AdvDynTool 的正式公开面收口为类 API 与独立模块 API，不再恢复历史 `DynTool` 多入口门面。
+AdvDynTool 当前正式公开面遵循“两层公开面 + 内部实现下沉”的设计：
 
-## 公开边界
+- 顶层对象层：负责回答“你在操作什么对象”
+- 模块动作层：负责回答“你要执行什么动作”
 
-- 正式公开：`AccelSeries`、`Metadata`、`Sample`、`SampleSet`
-- 正式公开：`dyntool.storage`、`dyntool.plotting`、`dyntool.logging`
-- `DynTool` 只保留 `resource` 和 `options`
+当前正式模块为：
 
-## 设计原则
+- 动作模块层：`storage / plotting / logging`
+- 支持模块层：`config / resources`
 
-- 对象负责表达领域语义
-- 模块负责正式服务入口
-- 运行时与基础设施实现不直接暴露给普通使用者
+以下内容已明确移出正式公开面：
+
+- 旧门面对象
+- 旧绘图后端枚举
+- 旧后端选择参数
+- schema、registry、structured payload 和其他内部 helper 的顶层导出

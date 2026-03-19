@@ -1,17 +1,17 @@
-"""存储并重新加载标准对象。"""
+"""保存标准对象并重新加载。"""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from examples._legacy_runner import run_legacy_example
+from examples._scenario_impls import _scenario_store_and_reload
 
 
 def main(output_dir: Path | None = None) -> dict[str, object]:
-    """运行标准存储与回读场景。"""
+    """运行对应示例入口。"""
 
     # docs:begin workflow_minimal_roundtrip
-    return run_legacy_example("examples/90_workflows/workflow_minimal_roundtrip.py", output_dir=output_dir)
+    return _scenario_store_and_reload(output_dir=output_dir)
     # docs:end workflow_minimal_roundtrip
 
 
