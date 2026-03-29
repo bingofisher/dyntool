@@ -13,7 +13,7 @@ class SampleDomain(StrEnum):
         - ``VIBRATION_TEST``: 振动试验领域，使用振动试验专用元数据、样本模型和评价流程。
 
     影响:
-        该枚举会影响样本工厂选择的 ``Sample``/``SampleSet`` 具体类型、默认元数据类型，
+        该枚举会影响样本工厂选择的 ``DefaultSample``/``DefaultSampleSet`` 具体类型、默认元数据类型，
         以及 ``from_storage``、评价工作流和公开 API 中的领域分派行为。
     """
 

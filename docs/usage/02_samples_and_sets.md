@@ -4,14 +4,14 @@
 
 ## 这一页解决什么问题
 
-这一页说明如何创建 `Sample`、组织 `SampleSet`，以及如何让元数据、模型和批量操作保持一致。
+这一页说明如何创建 `DefaultSample`、组织 `DefaultSampleSet`，以及如何让元数据、模型和批量操作保持一致。
 
 ## 最短可运行用法
 
 ```python
-from dyntool import Sample, SampleDomain, SampleSet, VibrationTestMetadata
+from dyntool import DefaultSample, DefaultSampleSet, SampleDomain, VibrationTestMetadata
 
-sample = Sample.from_accel_data(
+sample = DefaultSample.from_accel_data(
     [0.0, 0.1, -0.03],
     dt=0.01,
     sample_domain=SampleDomain.VIBRATION_TEST,
@@ -23,7 +23,8 @@ sample = Sample.from_accel_data(
     record="R1",
     timestamp="2026-03-08 12:00:00",
 )
-sample_set = SampleSet.from_samples([sample], sample_domain=SampleDomain.VIBRATION_TEST)
+sample.patch_metadata(extra={"source": "docs"})
+sample_set = DefaultSampleSet.from_samples([sample], sample_domain=SampleDomain.VIBRATION_TEST)
 print(sample_set.count())
 ```
 
@@ -33,17 +34,19 @@ print(sample_set.count())
 
 ## 标准类型 / 枚举 / 参数契约
 
-- `Sample.from_accel_data(...)`
-- `Sample.update_data(...)`
-- `Sample.update_metadata(...)`
-- `SampleSet.from_samples(...)`
-- `SampleSet.find_by_alias(...)`
+- `DefaultSample.from_accel_data(...)`
+- `DefaultSample.update_data(...)`
+- `DefaultSample.replace_metadata(...)`
+- `DefaultSample.patch_metadata(...)`
+- `DefaultSample.reset_alias()`
+- `DefaultSampleSet.from_samples(...)`
+- `DefaultSampleSet.find_by_alias(...)`
 - `SampleDomain`
 
 ## 常见误区
 
-- 直接写内部属性，绕开 `update...()` 和 `replace...()` 入口
-- 把 `SampleSet` 当作普通字典使用，忽略正式筛选和批量入口
+- 直接写内部属性，绕开 `update...()`、`replace...()` 和 `patch...()` 入口
+- 把 `DefaultSampleSet` 当作普通字典使用，忽略正式查询和批量入口
 - 在正式代码里直接导入 `dyntool.application.*`
 
 ## 相关示例
@@ -53,7 +56,7 @@ print(sample_set.count())
 
 ## 相关 API
 
-- `Sample`
-- `SampleSet`
+- `DefaultSample`
+- `DefaultSampleSet`
 - `SampleDomain`
 - `VibrationTestMetadata`

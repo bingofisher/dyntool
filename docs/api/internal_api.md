@@ -15,6 +15,15 @@
 - 样本存储 `data_options` 校验与 H5 默认参数集中在
   `dyntool.infrastructure.storage_options`
 
+## 与公开面的边界
+
+- `dyntool.storage` 是正式公开模块，`StorageScheme`、`StorageMode`、
+  `SampleLoadMode`、`SampleSetViewOptions`、`StorageAccessMode`、`NameResolver`
+  等应从该模块导入
+- `dyntool.storage.runtime` 与 `dyntool.storage._*` 仅用于内部编排，不承诺稳定导入路径
+- `domain.runtime`、`application.runtime_binding`、`infrastructure.*` 只进入维护者文档，
+  不进入正式用户调用路径
+
 ## 阅读顺序
 
 1. `dyntool.application.runtime_binding`

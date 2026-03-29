@@ -23,7 +23,7 @@ AdvDynTool 以数值结果正确、单位一致和结果可追溯为第一优先
 
 ### 顶层对象层
 - 常用模型：`AccelSeries`、`FreqSpec`、`RespSpec`
-- 元数据与样本：`Metadata`、`VibrationTestMetadata`、`Sample`、`SampleSet`
+- 元数据与样本：`Metadata`、`VibrationTestMetadata`、`DefaultSample`、`DefaultSampleSet`
 - 结果与限制：`OperationResult`、`BatchOperationReport`、各类限制和评价对象
 - 必要枚举：`SampleDomain`、`UnitSystem`、`StorageScheme`、`StorageMode`、`LoggingMode`、`PlotKind`
 
@@ -58,10 +58,12 @@ AdvDynTool 以数值结果正确、单位一致和结果可追溯为第一优先
 - 运行时拆分到 `storage._runtime_common`、`_model_runtime`、`_sample_runtime`、`_sample_set_runtime`
 - 样本/样本集 `data_options` 契约与 H5 默认参数集中在 `infrastructure.storage_options`
 - H5 默认写入策略统一为 `gzip`，默认级别为 `4`
-- `StorageScheme.SET_SQLITE_H5` 采用 `index.sqlite + payload.h5` 双文件结构，其中 SQLite 只负责 metadata/presence 索引，H5 只负责 payload
-- `SampleSet.convert_storage(...)` 采用复制式转换语义：显式目标路径、非原地改制、完整转换才自动重绑当前实例
 
 这条链路负责把对象级 `save/load/connect_storage` 委托到正式存储实现，不再维护第二套平行门面。
+
+样本 payload 恢复当前接受的正式类别名包括 `DefaultSample`、`DefaultSampleSet`、
+`VibrationTestSample`、`VibrationTestSampleSet`；历史兼容类别名 `Sample` /
+`SampleSet` 已移除，并改为显式中文迁移报错。
 
 ## 文档与示例策略
 

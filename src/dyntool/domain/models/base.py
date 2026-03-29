@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, ClassVar, Mapping, Self, cast
 
 import numpy as np
+import pandas as pd
 
 from ..constants import (
     DataCategory,
@@ -13,7 +14,9 @@ from ..constants import (
     ensure_ndarray,
     normalize_unit,
     normalize_unit_map,
+    parse_label_unit,
 )
+from ..compute_api import DataModelComputeNamespace
 from ..runtime import resolve_model_runtime
 from .conversion import MagnitudeConversion
 
@@ -104,6 +107,12 @@ class DataModelBase:
         if self.value_field is None:
             return None
         return self.get_field_unit(self.value_field)
+
+    @property
+    def compute(self) -> DataModelComputeNamespace:
+        """杩斿洖鏁版嵁妯″瀷鐨勭粺涓€璁＄畻鍏ュ彛銆?"""
+
+        return DataModelComputeNamespace(self)
 
     def current_units(self) -> dict[str, str]:
         """返回实例当前单位。"""
@@ -373,6 +382,60 @@ class DataModelBase:
             return cls.from_dict(merged, units=normalized.units or None)
         except TypeError:
             return cls.from_dict(merged)
+
+    @classmethod
+    def from_compute_result(
+        cls,
+        result: Mapping[str, Any],
+        *,
+        unit_system: Any | None = None,
+    ) -> Self:
+        """从底层 compute 命名字典装配领域模型。"""
+
+        del unit_system
+        try:
+            return cls.from_dict(dict(result))
+        except TypeError as exc:
+            raise TypeError(f"{cls.__name__} 未实现 from_compute_result() 适配") from exc
+
+    def to_scalar_record(self) -> dict[str, float]:
+        """导出用于标量组合表的单行记录。"""
+
+        if not hasattr(self, "to_pandas"):
+            raise TypeError(f"{self.__class__.__name__} 不支持标量表格导出 to_pandas()")
+        frame = cast(Any, self).to_pandas()
+        if not isinstance(frame, pd.DataFrame):
+            raise TypeError(f"{self.__class__.__name__}.to_pandas() 必须返回 DataFrame")
+        if len(frame) != 1:
+            raise TypeError(f"{self.__class__.__name__} 标量导出要求模型只产生一行数据")
+
+        row = frame.iloc[0]
+        record: dict[str, float] = {}
+        for column, value in row.items():
+            key, _ = parse_label_unit(str(column))
+            try:
+                record[key] = float(value)
+            except Exception as exc:  # noqa: BLE001
+                raise TypeError(f"{self.__class__.__name__} 标量列无法转换为 float: {column}") from exc
+        return record
+
+    def to_series_frame(self) -> pd.DataFrame:
+        """导出用于序列组合表的标准 DataFrame。"""
+
+        if not hasattr(self, "to_pandas"):
+            raise TypeError(f"{self.__class__.__name__} 不支持序列表格导出 to_pandas()")
+        frame = cast(Any, self).to_pandas()
+        if not isinstance(frame, pd.DataFrame):
+            raise TypeError(f"{self.__class__.__name__}.to_pandas() 必须返回 DataFrame")
+
+        normalized = frame.copy()
+        normalized.columns = [parse_label_unit(str(column))[0] for column in normalized.columns]
+        if normalized.index.name is not None:
+            normalized.index = pd.Index(
+                normalized.index.to_numpy(),
+                name=parse_label_unit(str(normalized.index.name))[0],
+            )
+        return normalized
 
     def to_file(self, path: PathLike, *, fmt: str = "h5", **options: Any) -> None:
         """将模型保存到文件。

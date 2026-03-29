@@ -1,16 +1,19 @@
-# Sample / SampleSet 运行流程
+# DefaultSample / DefaultSampleSet 运行流程
 
 稳定性：`Internal API`
+
+说明：本文中的“样本 / 样本集”如果没有单独指向扩展类型，默认都对应内置正式对象
+`DefaultSample / DefaultSampleSet`。公开导入路径应优先使用顶层 `dyntool` 或 `dyntool.storage`。
 
 ## 主流程总览
 
 ```mermaid
 flowchart TD
-    A["Metadata 更新"] --> B["Sample 重新计算 uid"]
+    A["Metadata 更新"] --> B["DefaultSample 重新计算 uid"]
     B --> C{"alias 是否手工覆盖"}
-    C -- "否" --> D["Sample alias 跟随 metadata.alias"]
+    C -- "否" --> D["DefaultSample alias 跟随 metadata.alias"]
     C -- "是" --> E["保持手工 alias"]
-    D --> F["SampleSet 重写 key / 校验冲突"]
+    D --> F["DefaultSampleSet 重写 key / 校验冲突"]
     E --> F
     F --> G["标记 storage_dirty"]
     G --> H["save / save_all 显式落盘"]
@@ -35,10 +38,10 @@ flowchart TD
 - 负责把 metadata 变化转成：
   - 新 `uid`
   - 新 alias
-  - 向 `SampleSet` 回调 identity 变化
+  - 向 `DefaultSampleSet` 回调 identity 变化
 - 负责样本级懒加载：
-  - `SampleLoadMode.LAZY`
-  - `SampleLoadMode.METADATA_ONLY`
+  - 正式公共导入路径使用 `dyntool.storage.SampleLoadMode.LAZY`
+  - 正式公共导入路径使用 `dyntool.storage.SampleLoadMode.METADATA_ONLY`
   - `ensure_loaded(...)`
   - `unload(...)`
 
@@ -83,7 +86,7 @@ flowchart TD
 
 ### `METADATA_ONLY`
 
-- `SampleSet.from_storage(..., load_mode=METADATA_ONLY)` 只构造样本壳对象
+- `DefaultSampleSet.from_storage(..., load_mode=METADATA_ONLY)` 只构造样本壳对象
 - 访问未加载槽位会抛错
 - 适合只做查询、投影和 metadata 修补
 

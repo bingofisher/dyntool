@@ -2,8 +2,8 @@
 任务目标：完成 `from_accel -> calc_freqspec/calc_respspec -> save/load -> plot` 的最小闭环，并确认派生谱结果会随样本集一起持久化。
 
 ## 这条场景覆盖什么
-- `SampleSet.save()` / `save_all()`
-- `SampleSet.from_storage(...)`
+- `DefaultSampleSet.save()` / `save_all()`
+- `DefaultSampleSet.from_storage(...)`
 - `StorageScheme.SET_H5`
 - `freqspec` / `respspec` 的持久化与回读
 - 回读后继续进入 plotting 主链
@@ -20,10 +20,10 @@ python examples/10_scenarios/04_store_and_reload/main.py
 - 由该样本计算得到的 `freqspec` 与 `respspec`
 
 ## 关键 API
-- `Sample.calc_freqspec()`
-- `Sample.calc_respspec()`
-- `SampleSet.save()`
-- `SampleSet.from_storage()`
+- `DefaultSample.calc_freqspec(source=...)`
+- `DefaultSample.calc_respspec()`
+- `DefaultSampleSet.save()`
+- `DefaultSampleSet.from_storage()`
 - `FramePlotter.add(...)`
 - `FramePlotter.plot()`
 

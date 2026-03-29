@@ -69,7 +69,7 @@ def _seed_minimal_codex_assets(root: Path) -> None:
     _write_text(root / ".editorconfig", "root = true\n[*]\ncharset = utf-8\nend_of_line = lf\n")
     _write_text(root / ".gitattributes", "* text=auto eol=lf\n*.py text eol=lf\n*.md text eol=lf\n")
     _write_text(root / ".codex" / "project-context.md", "# 项目上下文\n当前公开入口是 `dyntool`。\n")
-    _write_text(root / ".codex" / "library-contract.md", "# 库约定\n主入口是 `from dyntool import Sample`。\n")
+    _write_text(root / ".codex" / "library-contract.md", "# 库约定\n主入口是 `from dyntool import DefaultSample`。\n")
     _write_text(root / ".codex" / "prompts" / "task-template.md", "# 任务模板\n请先检查 `AGENTS.md`。\n")
     _write_text(root / "docs" / "developer" / "codex_workflow.md", "# Codex 工作流\n")
     _write_text(

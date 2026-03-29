@@ -1,7 +1,7 @@
 """导入真实文件并完成标准化。
 
-本示例展示 `AccelSeries.from_csv(...)`、`Sample.from_models(...)`
-和 `SampleSet.from_storage(...)` 的类优先闭环入口。
+本示例展示 `AccelSeries.from_csv(...)`、`DefaultSample.from_models(...)`
+和 `DefaultSampleSet.from_storage(...)` 的类优先闭环入口。
 """
 
 from __future__ import annotations

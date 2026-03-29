@@ -120,11 +120,11 @@ featured = false
 covers = ["custom_model", "custom_metadata", "custom_sample_set"]
 snippet_ids = []
 inputs = ["custom_domain_classes"]
-outputs = ["custom_model_csv", "custom_sample_set_dir"]
+outputs = ["custom_model_csv", "external_sample_h5", "external_sample_plot"]
 script = "examples/10_scenarios/08_custom_extension/main.py"
 readme = "examples/10_scenarios/08_custom_extension/README.md"
 doc = "docs/developer/custom_extension.md"
-test = "tests/test_examples_systems.py::test_scenario_custom_extension"
+test = "tests/test_examples_workflows.py::test_internal_custom_extension_compare_with_vibtest"
 
 [[example]]
 id = "units_and_unit_views"
@@ -173,6 +173,86 @@ script = "examples/90_recipes/sample_set_filter_parallel_io/main.py"
 readme = "examples/90_recipes/sample_set_filter_parallel_io/README.md"
 doc = "docs/usage/04_storage_rules.md"
 test = "tests/test_examples_workflows.py::test_recipe_sample_set_filter_parallel_io"
+
+[[example]]
+id = "compute_flow"
+kind = "recipe"
+title = "ComputeFlow 处理流"
+primary_task = "演示单样本处理流的检查点、分支、恢复与提交"
+topic = "docs/usage/03_processing_and_results.md"
+featured = false
+covers = ["compute_flow", "checkpoint", "branch", "restore", "commit"]
+snippet_ids = []
+inputs = ["generated_accel_data"]
+outputs = ["processed_accel", "freqspec"]
+script = "examples/90_recipes/compute_flow/main.py"
+readme = "examples/90_recipes/compute_flow/README.md"
+doc = "docs/usage/03_processing_and_results.md"
+test = "tests/test_examples_workflows.py::test_recipe_compute_flow"
+
+[[example]]
+id = "compute_plan"
+kind = "recipe"
+title = "ComputePlan 复用"
+primary_task = "演示处理计划的构建、序列化、恢复与复用"
+topic = "docs/usage/03_processing_and_results.md"
+featured = false
+covers = ["compute_plan", "serialization", "reuse"]
+snippet_ids = []
+inputs = ["generated_accel_data"]
+outputs = ["compute_plan_payload", "freqspec"]
+script = "examples/90_recipes/compute_plan/main.py"
+readme = "examples/90_recipes/compute_plan/README.md"
+doc = "docs/usage/03_processing_and_results.md"
+test = "tests/test_examples_workflows.py::test_recipe_compute_plan"
+
+[[example]]
+id = "scalar_frame_features"
+kind = "recipe"
+title = "标量特征表"
+primary_task = "演示 scalar_frame 的主体指标、严格模式和 NaN 补齐"
+topic = "docs/usage/03_processing_and_results.md"
+featured = false
+covers = ["scalar_frame", "pga", "rms", "strict"]
+snippet_ids = []
+inputs = ["sample_set_h5"]
+outputs = ["scalar_frame"]
+script = "examples/90_recipes/scalar_frame_features/main.py"
+readme = "examples/90_recipes/scalar_frame_features/README.md"
+doc = "docs/usage/03_processing_and_results.md"
+test = "tests/test_examples_workflows.py::test_recipe_scalar_frame_features"
+
+[[example]]
+id = "series_frame_alignment"
+kind = "recipe"
+title = "序列表对齐"
+primary_task = "演示 series_frame 的外连接索引、NaN 补齐和多重索引列"
+topic = "docs/usage/03_processing_and_results.md"
+featured = false
+covers = ["series_frame", "alignment", "strict"]
+snippet_ids = []
+inputs = ["sample_set"]
+outputs = ["series_frame"]
+script = "examples/90_recipes/series_frame_alignment/main.py"
+readme = "examples/90_recipes/series_frame_alignment/README.md"
+doc = "docs/usage/03_processing_and_results.md"
+test = "tests/test_examples_workflows.py::test_recipe_series_frame_alignment"
+
+[[example]]
+id = "peaks_frame"
+kind = "recipe"
+title = "多峰聚合表"
+primary_task = "演示 peaks_frame 的多峰对齐、参数透传和 NaN 补齐"
+topic = "docs/usage/03_processing_and_results.md"
+featured = false
+covers = ["peaks_frame", "find_peaks", "prominence", "distance"]
+snippet_ids = []
+inputs = ["sample_set"]
+outputs = ["peaks_frame"]
+script = "examples/90_recipes/peaks_frame/main.py"
+readme = "examples/90_recipes/peaks_frame/README.md"
+doc = "docs/usage/03_processing_and_results.md"
+test = "tests/test_examples_workflows.py::test_recipe_peaks_frame"
 
 [[example]]
 id = "plot_dataset_and_plotters"

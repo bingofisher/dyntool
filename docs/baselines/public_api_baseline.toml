@@ -73,6 +73,29 @@ top_level_exports_removed = [
   "VibEvalCommand",
 ]
 
+storage_module_exports_allowed = [
+  "DataCategory",
+  "SampleDomain",
+  "SampleLoadMode",
+  "SampleSetViewOptions",
+  "StorageAccessMode",
+  "AttrDataFormat",
+  "ContainerFormat",
+  "NameResolver",
+  "StorageMode",
+  "StorageScheme",
+  "connect_sample_set",
+  "inspect_model_units",
+  "load_metadata",
+  "load_model",
+  "load_sample",
+  "load_sample_set",
+  "save_metadata",
+  "save_model",
+  "save_sample",
+  "save_sample_set",
+]
+
 forbidden_tokens = [
   "DynTool(",
   "DynTool().resource",
@@ -81,6 +104,7 @@ forbidden_tokens = [
   "DynTool.options",
   "from dyntool import DynTool",
   "`dyntool.resource`",
+  "dyntool.resource.",
   "import dyntool.resource as",
   "from dyntool.resource import",
   "from dyntool import resource",
@@ -96,6 +120,7 @@ forbidden_tokens = [
   "import dyntool.domain",
   "from dyntool.application",
   "import dyntool.application",
+  "interfaces -> application",
   "docs/conf.py",
   "docs/api/public_api.rst",
   "docs/api/internal_api.rst",

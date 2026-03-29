@@ -12,7 +12,7 @@ import pytest
 
 import dyntool.logging as dt_logging
 import dyntool.storage as dt_storage
-from dyntool import Sample, SampleDomain, SampleSet, VibrationTestMetadata
+from dyntool import DefaultSample, DefaultSampleSet, SampleDomain, VibrationTestMetadata
 from dyntool.storage.runtime import StorageRuntime
 
 logging_provider = importlib.import_module("dyntool.logging.provider")
@@ -556,18 +556,18 @@ def test_storage_runtime_connects_sample_set(
     workspace_tmp_dir: Path,
 ) -> None:
     runtime = StorageRuntime()
-    sample = Sample.from_accel_data(
+    sample = DefaultSample.from_accel_data(
         [0.0, 0.1, -0.02],
         dt=0.01,
         sample_domain=SampleDomain.VIBRATION_TEST,
         metadata_cls=VibrationTestMetadata,
         **_make_vibration_kwargs(),
     )
-    sample_set = SampleSet.from_samples([sample], sample_domain=SampleDomain.VIBRATION_TEST)
+    sample_set = DefaultSampleSet.from_samples([sample], sample_domain=SampleDomain.VIBRATION_TEST)
     calls: list[tuple[str, object]] = []
 
     class _DummySampleSetStorage:
-        def __init__(self, *, sampleset: SampleSet) -> None:
+        def __init__(self, *, sampleset: DefaultSampleSet) -> None:
             self.sampleset = sampleset
 
         def connect(self, *_args, **kwargs) -> None:

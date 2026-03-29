@@ -1,81 +1,56 @@
-"""领域对象运行时绑定核心。"""
+"""领域对象 runtime 绑定核心。"""
 
 from __future__ import annotations
 
 import weakref
-from typing import Any, Protocol, TypeVar, runtime_checkable
+from typing import Any, Callable, Protocol, TypeVar, runtime_checkable
 
 from .errors import RuntimeBindingError, build_missing_runtime_error
 
-ModelT = TypeVar("ModelT")
-SampleT = TypeVar("SampleT")
-SampleSetT = TypeVar("SampleSetT")
 RuntimeT = TypeVar("RuntimeT")
 
 
 @runtime_checkable
 class ModelRuntimePort(Protocol):
-    """数据模型运行时协议。
-
-    该协议定义模型保存、加载与单位探测三类能力。调用方应在应用层将具体
-    运行时实现绑定到模型类型或模型实例上，再通过 `resolve_model_runtime()`
-    解析。
+    """模型 runtime 协议。
 
     Notes:
-        本协议属于主线运行时边界。实现类如果保留开放参数，必须在实现侧文档中
-        列出实际支持键，不能只写“透传给底层”。
+        该协议定义模型对象在保存、加载和单位探查时的最小运行时能力。
     """
 
-    def save_model(
-        self,
-        model: Any,
-        path: str,
-        *,
-        fmt: str = "h5",
-        **options: Any,
-    ) -> None:
-        """保存数据模型。
+    def save_model(self, model: Any, path: str, *, fmt: str = "h5", **options: Any) -> None:
+        """保存模型对象。
 
         Args:
-            model: 待保存的数据模型实例。
-            path: 目标文件路径。
-            fmt: 存储格式。当前主线通常使用 `csv` 或 `h5`。
-            **options: 具名扩展参数。当前正式支持键包括 `units`、
-                `csv_read_options`、`provider_options` 与 `extras`；具体支持集由
-                底层存储实现决定，但必须在实现侧文档中列清实际含义。
+            model: 待保存的模型对象。
+            path: 输出路径。
+            fmt: 目标存储格式。
+            **options: 底层存储实现需要的附加参数。
 
         Raises:
-            RuntimeBindingError: 当前模型未绑定支持保存动作的运行时实现。
+            OSError: 当输出路径不可写时由具体实现抛出。
 
         Notes:
-            `options` 只允许承载受控扩展参数；新增键时必须同步更新实现文档与示例。
+            具体实现可以根据 `fmt` 和 `options` 决定实际写出策略。
         """
 
-    def load_model(
-        self,
-        model_type: type[Any],
-        path: str,
-        *,
-        fmt: str = "h5",
-        **options: Any,
-    ) -> Any:
-        """加载数据模型。
+    def load_model(self, model_type: type[Any], path: str, *, fmt: str = "h5", **options: Any) -> Any:
+        """加载模型对象。
 
         Args:
-            model_type: 期望恢复的模型类型。
-            path: 待读取的文件路径。
-            fmt: 存储格式。当前主线通常使用 `csv` 或 `h5`。
-            **options: 具名扩展参数。当前正式支持键包括 `units`、
-                `csv_read_options`、`provider_options` 与 `extras`。
+            model_type: 目标模型类型。
+            path: 输入路径。
+            fmt: 目标存储格式。
+            **options: 底层存储实现需要的附加参数。
 
         Returns:
-            加载后的模型实例。
+            加载后的模型对象。
 
         Raises:
-            RuntimeBindingError: 当前模型未绑定支持加载动作的运行时实现。
+            OSError: 当输入路径不可读时由具体实现抛出。
 
         Notes:
-            调用方应优先通过显式参数控制行为，而不是继续扩张未文档化开放键。
+            返回对象的具体类型由 `model_type` 决定。
         """
 
     def inspect_model_units(
@@ -86,224 +61,179 @@ class ModelRuntimePort(Protocol):
         fmt: str = "h5",
         **options: Any,
     ) -> dict[str, str]:
-        """探测模型文件中的单位信息。
+        """检查模型文件中的单位信息。
 
         Args:
-            model_type: 用于解释字段语义的模型类型。
-            path: 待探测的文件路径。
-            fmt: 存储格式。当前主线通常使用 `csv` 或 `h5`。
-            **options: 具名扩展参数。当前正式支持键包括 `units`、
-                `csv_read_options` 与 `extras`。
+            model_type: 目标模型类型。
+            path: 输入路径。
+            fmt: 目标存储格式。
+            **options: 底层存储实现需要的附加参数。
 
         Returns:
-            字段到单位字符串的映射，至少应覆盖轴字段和值字段。
+            字段名到单位字符串的映射。
 
         Raises:
-            RuntimeBindingError: 当前模型未绑定支持单位探测动作的运行时实现。
+            OSError: 当输入路径不可读时由具体实现抛出。
 
         Notes:
-            该动作应尽量避免完整构造模型实例，只返回单位探测结果。
+            该方法只探查单位，不负责完整加载模型数据。
         """
 
 
 @runtime_checkable
 class SampleRuntimePort(Protocol):
-    """样本运行时协议。
+    """样本 runtime 协议。
 
     Notes:
-        该协议负责样本对象与底层存储上下文的协作。公开层应优先使用显式参数，
-        仅在底层边界保留受控扩展参数。
+        该协议定义单个样本的存储绑定、保存、加载和重载行为。
     """
 
-    def connect_sample_storage(
-        self,
-        sample: Any,
-        base_dir: str,
-        **options: Any,
-    ) -> Any:
+    def connect_sample_storage(self, sample: Any, base_dir: str, **options: Any) -> Any:
         """为样本连接存储上下文。
 
         Args:
             sample: 待连接的样本对象。
-            base_dir: 样本根目录或容器所在路径。
-            **options: 具名扩展参数。当前正式支持键包括 `mode`、
-                `storage_scheme`、`data_options`、`name_resolver`、
-                `set_filename`、`strict` 与 `extras`。
+            base_dir: 样本存储根目录。
+            **options: 底层存储实现需要的附加参数。
 
         Returns:
-            已连接存储上下文的样本对象，通常为原对象本身。
+            已完成绑定的样本对象。
 
         Notes:
-            连接动作不等于保存或加载；它只负责建立样本与存储上下文的绑定关系。
+            绑定后可使用无路径重载等依赖上下文的方法。
         """
 
-    def save_sample(
-        self,
-        sample: Any,
-        path: str | None = None,
-        **options: Any,
-    ) -> Any:
+    def save_sample(self, sample: Any, path: str | None = None, **options: Any) -> Any:
         """保存样本对象。
 
         Args:
             sample: 待保存的样本对象。
-            path: 可选显式目标路径；为 `None` 时通常使用已连接上下文。
-            **options: 具名扩展参数。当前正式支持键包括 `mode`、
-                `storage_scheme`、`data_options`、`strict`、`categories` 与
-                `extras`。
+            path: 可选输出路径。
+            **options: 底层存储实现需要的附加参数。
 
         Returns:
-            保存后的样本对象，通常为原对象本身。
+            保存后的样本对象，通常为原对象或其更新后的引用。
 
         Notes:
-            `categories` 由公开 `DataCategory` 选择器映射而来，底层实现不应再暴露
-            第二套并行选择语义。
+            具体实现可在 `path` 缺失时回退到已绑定的存储上下文。
         """
 
-    def load_sample(
-        self,
-        sample: Any,
-        path: str | None = None,
-        **options: Any,
-    ) -> Any:
+    def load_sample(self, sample: Any, path: str | None = None, **options: Any) -> Any:
         """加载样本对象。
 
         Args:
-            sample: 待加载的样本对象或样本壳对象。
-            path: 可选显式路径；为 `None` 时通常从已连接上下文读取。
-            **options: 具名扩展参数。当前正式支持键包括 `mode`、
-                `storage_scheme`、`data_options`、`strict`、`categories`、
-                `load_mode` 与 `extras`。
+            sample: 待加载的样本对象。
+            path: 可选输入路径。
+            **options: 底层存储实现需要的附加参数。
 
         Returns:
-            加载后的样本对象，通常为原对象本身。
+            加载后的样本对象。
 
         Notes:
-            `load_mode` 会影响是否立即读取样本数据；实现类需要与懒加载语义保持一致。
+            具体实现可在 `path` 缺失时回退到已绑定的存储上下文。
         """
 
     def reload_sample(self, sample: Any) -> Any:
-        """按当前存储连接重新加载样本。"""
+        """按已绑定上下文重新加载样本。"""
 
 
 @runtime_checkable
 class SampleSetRuntimePort(Protocol):
-    """样本集运行时协议。
+    """样本集 runtime 协议。
 
     Notes:
-        该协议覆盖样本集级别的连接、保存、加载与批量 I/O。批量行为必须通过正式
-        报告模型向上层暴露，而不是仅返回裸异常映射。
+        该协议定义样本集的存储绑定、整集 I/O、批量加载和批量保存行为。
     """
 
-    def connect_sample_set_storage(
-        self,
-        sample_set: Any,
-        base_dir: str,
-        **options: Any,
-    ) -> Any:
+    def connect_sample_set_storage(self, sample_set: Any, base_dir: str, **options: Any) -> Any:
         """为样本集连接存储上下文。
 
         Args:
             sample_set: 待连接的样本集对象。
-            base_dir: 样本集根目录或容器所在路径。
-            **options: 具名扩展参数。当前正式支持键包括 `mode`、
-                `storage_scheme`、`data_options`、`name_resolver`、
-                `set_filename`、`strict` 与 `extras`。
+            base_dir: 样本集存储根目录。
+            **options: 底层存储实现需要的附加参数。
 
         Returns:
-            已连接存储上下文的样本集对象，通常为原对象本身。
+            已完成绑定的样本集对象。
 
         Notes:
-            连接样本集上下文后，后续 `save_all` 与 `load_all` 才能共享相同的存储根。
+            绑定后可使用批量加载、批量保存等依赖上下文的方法。
         """
 
-    def save_sample_set(
-        self,
-        sample_set: Any,
-        path: str | None = None,
-        **options: Any,
-    ) -> Any:
+    def save_sample_set(self, sample_set: Any, path: str | None = None, **options: Any) -> Any:
         """保存样本集对象。
 
         Args:
             sample_set: 待保存的样本集对象。
-            path: 可选显式路径；为 `None` 时通常使用已连接上下文。
-            **options: 具名扩展参数。当前正式支持键包括 `mode`、
-                `storage_scheme`、`data_options`、`strict` 与 `extras`。
+            path: 可选输出路径。
+            **options: 底层存储实现需要的附加参数。
 
         Returns:
-            保存后的样本集对象，通常为原对象本身。
+            保存后的样本集对象。
 
         Notes:
-            样本集级保存通常同时涉及集合元信息与单样本数据；实现类应明确两者的顺序。
+            具体实现可在 `path` 缺失时回退到已绑定的存储上下文。
         """
 
-    def load_sample_set(
-        self,
-        sample_set: Any,
-        path: str | None = None,
-        **options: Any,
-    ) -> Any:
+    def load_sample_set(self, sample_set: Any, path: str | None = None, **options: Any) -> Any:
         """加载样本集对象。
 
         Args:
-            sample_set: 待加载的样本集对象或样本集壳对象。
-            path: 可选显式路径；为 `None` 时通常使用已连接上下文。
-            **options: 具名扩展参数。当前正式支持键包括 `mode`、
-                `storage_scheme`、`data_options`、`strict`、`load_mode` 与
-                `extras`。
+            sample_set: 待加载的样本集对象。
+            path: 可选输入路径。
+            **options: 底层存储实现需要的附加参数。
 
         Returns:
-            加载后的样本集对象，通常为原对象本身。
+            加载后的样本集对象。
 
         Notes:
-            样本集级加载并不等同于把全部样本数据一次性读入内存，仍需尊重 `load_mode`。
+            具体实现可在 `path` 缺失时回退到已绑定的存储上下文。
         """
 
-    def save_all_samples(
-        self,
-        sample_set: Any,
-        **options: Any,
-    ) -> dict[str, Exception]:
-        """批量保存样本集中的全部样本。
+    def save_all_samples(self, sample_set: Any, **options: Any) -> dict[str, Exception]:
+        """批量保存样本集中的样本。
 
         Args:
-            sample_set: 待批量保存的样本集对象。
-            **options: 具名扩展参数。当前正式支持键包括 `categories`、
-                `strict`、`filter`、`workers`、`chunk_size`、`progress_callback`
-                与 `extras`。
+            sample_set: 目标样本集对象。
+            **options: 底层存储实现需要的附加参数。
 
         Returns:
-            以样本 UID 为键、异常对象为值的失败映射。空字典表示全部成功。
+            样本标识到异常对象的映射；成功项通常不会出现在映射中。
 
         Notes:
-            `workers`、`chunk_size` 与 `progress_callback` 只影响批量执行策略，不改变保存语义。
+            该方法用于批量写出，允许部分失败并返回汇总结果。
         """
 
-    def load_all_samples(
-        self,
-        sample_set: Any,
-        **options: Any,
-    ) -> dict[str, Exception]:
-        """批量加载样本集中的全部样本。
+    def load_all_samples(self, sample_set: Any, **options: Any) -> dict[str, Exception]:
+        """批量加载样本集中的样本。
 
         Args:
-            sample_set: 待批量加载的样本集对象。
-            **options: 具名扩展参数。当前正式支持键包括 `categories`、
-                `strict`、`filter`、`workers`、`chunk_size`、`load_mode`、
-                `progress_callback` 与 `extras`。
+            sample_set: 目标样本集对象。
+            **options: 底层存储实现需要的附加参数。
 
         Returns:
-            以样本 UID 为键、异常对象为值的失败映射。空字典表示全部成功。
+            样本标识到异常对象的映射；成功项通常不会出现在映射中。
 
         Notes:
-            `categories` 与 `load_mode` 共同决定是否真正读取数据项，不能把同源 stub 误判为重复 UID。
+            该方法用于批量加载，允许部分失败并返回汇总结果。
         """
 
     def organize_sample_set_storage(self, sample_set: Any) -> Any:
-        """整理样本集的底层存储布局。"""
+        """整理样本集的存储目录。
+
+        Args:
+            sample_set: 目标样本集对象。
+
+        Returns:
+            完成整理后的样本集对象。
+
+        Notes:
+            具体实现可根据当前存储方案重建目录或文件布局。
+        """
 
 
+_default_runtime_initializer: Callable[[], None] | None = None
+_initializer_running = False
 _model_type_runtimes: dict[type[Any], ModelRuntimePort] = {}
 _model_instance_runtimes: dict[int, tuple[weakref.ReferenceType[Any], ModelRuntimePort]] = {}
 _sample_type_runtimes: dict[type[Any], SampleRuntimePort] = {}
@@ -317,7 +247,7 @@ def _bind_instance_runtime(
     target: Any,
     runtime: RuntimeT,
 ) -> None:
-    """绑定对象级运行时。"""
+    """绑定对象级 runtime。"""
 
     runtime_map[id(target)] = (weakref.ref(target), runtime)
 
@@ -326,7 +256,7 @@ def _resolve_instance_runtime(
     runtime_map: dict[int, tuple[weakref.ReferenceType[Any], RuntimeT]],
     target: Any,
 ) -> RuntimeT | None:
-    """解析对象级运行时。"""
+    """解析对象级 runtime。"""
 
     key = id(target)
     entry = runtime_map.get(key)
@@ -344,7 +274,7 @@ def _clear_instance_runtime(
     runtime_map: dict[int, tuple[weakref.ReferenceType[Any], RuntimeT]],
     target: Any,
 ) -> None:
-    """清理对象级运行时绑定。"""
+    """清理对象级 runtime。"""
 
     key = id(target)
     entry = runtime_map.get(key)
@@ -357,7 +287,7 @@ def _clear_instance_runtime(
 
 
 def bind_model_runtime(target: type[Any] | Any, runtime: ModelRuntimePort) -> None:
-    """绑定数据模型运行时实现。"""
+    """绑定模型 runtime。"""
 
     if isinstance(target, type):
         _model_type_runtimes[target] = runtime
@@ -366,7 +296,7 @@ def bind_model_runtime(target: type[Any] | Any, runtime: ModelRuntimePort) -> No
 
 
 def bind_sample_runtime(target: type[Any] | Any, runtime: SampleRuntimePort) -> None:
-    """绑定样本运行时实现。"""
+    """绑定样本 runtime。"""
 
     if isinstance(target, type):
         _sample_type_runtimes[target] = runtime
@@ -375,7 +305,7 @@ def bind_sample_runtime(target: type[Any] | Any, runtime: SampleRuntimePort) -> 
 
 
 def bind_sample_set_runtime(target: type[Any] | Any, runtime: SampleSetRuntimePort) -> None:
-    """绑定样本集运行时实现。"""
+    """绑定样本集 runtime。"""
 
     if isinstance(target, type):
         _sample_set_type_runtimes[target] = runtime
@@ -383,8 +313,29 @@ def bind_sample_set_runtime(target: type[Any] | Any, runtime: SampleSetRuntimePo
     _bind_instance_runtime(_sample_set_instance_runtimes, target, runtime)
 
 
+def register_default_runtime_initializer(initializer: Callable[[], None] | None) -> None:
+    """注册惰性默认 runtime 初始化器。"""
+
+    global _default_runtime_initializer
+    _default_runtime_initializer = initializer
+
+
+def _ensure_default_runtime_initialized() -> None:
+    """按需触发默认 runtime 绑定。"""
+
+    global _initializer_running
+    if _initializer_running or _default_runtime_initializer is None:
+        return
+
+    _initializer_running = True
+    try:
+        _default_runtime_initializer()
+    finally:
+        _initializer_running = False
+
+
 def clear_default_runtimes() -> None:
-    """清空按类型注册的默认运行时。"""
+    """清空按类型注册的默认 runtime。"""
 
     _model_type_runtimes.clear()
     _sample_type_runtimes.clear()
@@ -392,11 +343,7 @@ def clear_default_runtimes() -> None:
 
 
 def clear_instance_runtimes(target: Any | None = None) -> None:
-    """清空对象级运行时绑定。
-
-    Args:
-        target: 指定时仅清理该对象的实例级绑定；为 `None` 时清理全部实例级绑定。
-    """
+    """清空对象级 runtime。"""
 
     if target is None:
         _model_instance_runtimes.clear()
@@ -409,7 +356,7 @@ def clear_instance_runtimes(target: Any | None = None) -> None:
 
 
 def _resolve_by_type(runtime_map: dict[type[Any], RuntimeT], target_type: type[Any]) -> RuntimeT | None:
-    """按 MRO 解析类型级运行时。"""
+    """按 MRO 解析类型级 runtime。"""
 
     for candidate in target_type.__mro__:
         runtime = runtime_map.get(candidate)
@@ -419,18 +366,7 @@ def _resolve_by_type(runtime_map: dict[type[Any], RuntimeT], target_type: type[A
 
 
 def resolve_model_runtime(target: type[Any] | Any, *, action: str) -> ModelRuntimePort:
-    """解析数据模型运行时绑定。
-
-    Args:
-        target: 模型类型或模型实例。
-        action: 当前动作名称，例如 `save`、`load` 或 `inspect_units`。
-
-    Returns:
-        匹配到的模型运行时实现。
-
-    Raises:
-        RuntimeBindingError: 未找到满足动作要求的模型运行时实现。
-    """
+    """解析模型 runtime。"""
 
     if not isinstance(target, type):
         runtime = _resolve_instance_runtime(_model_instance_runtimes, target)
@@ -439,25 +375,18 @@ def resolve_model_runtime(target: type[Any] | Any, *, action: str) -> ModelRunti
         target_type = type(target)
     else:
         target_type = target
+
     runtime = _resolve_by_type(_model_type_runtimes, target_type)
+    if runtime is None:
+        _ensure_default_runtime_initialized()
+        runtime = _resolve_by_type(_model_type_runtimes, target_type)
     if runtime is None:
         raise build_missing_runtime_error(family="model", action=action)
     return runtime
 
 
 def resolve_sample_runtime(target: type[Any] | Any, *, action: str) -> SampleRuntimePort:
-    """解析样本运行时绑定。
-
-    Args:
-        target: 样本类型或样本实例。
-        action: 当前动作名称，例如 `connect`、`save`、`load` 或 `reload`。
-
-    Returns:
-        匹配到的样本运行时实现。
-
-    Raises:
-        RuntimeBindingError: 未找到满足动作要求的样本运行时实现。
-    """
+    """解析样本 runtime。"""
 
     if not isinstance(target, type):
         runtime = _resolve_instance_runtime(_sample_instance_runtimes, target)
@@ -466,26 +395,18 @@ def resolve_sample_runtime(target: type[Any] | Any, *, action: str) -> SampleRun
         target_type = type(target)
     else:
         target_type = target
+
     runtime = _resolve_by_type(_sample_type_runtimes, target_type)
+    if runtime is None:
+        _ensure_default_runtime_initialized()
+        runtime = _resolve_by_type(_sample_type_runtimes, target_type)
     if runtime is None:
         raise build_missing_runtime_error(family="sample", action=action)
     return runtime
 
 
 def resolve_sample_set_runtime(target: type[Any] | Any, *, action: str) -> SampleSetRuntimePort:
-    """解析样本集运行时绑定。
-
-    Args:
-        target: 样本集类型或样本集实例。
-        action: 当前动作名称，例如 `connect`、`save`、`load`、`save_all` 或
-            `load_all`。
-
-    Returns:
-        匹配到的样本集运行时实现。
-
-    Raises:
-        RuntimeBindingError: 未找到满足动作要求的样本集运行时实现。
-    """
+    """解析样本集 runtime。"""
 
     if not isinstance(target, type):
         runtime = _resolve_instance_runtime(_sample_set_instance_runtimes, target)
@@ -494,7 +415,11 @@ def resolve_sample_set_runtime(target: type[Any] | Any, *, action: str) -> Sampl
         target_type = type(target)
     else:
         target_type = target
+
     runtime = _resolve_by_type(_sample_set_type_runtimes, target_type)
+    if runtime is None:
+        _ensure_default_runtime_initialized()
+        runtime = _resolve_by_type(_sample_set_type_runtimes, target_type)
     if runtime is None:
         raise build_missing_runtime_error(family="sample_set", action=action)
     return runtime
@@ -510,6 +435,7 @@ __all__ = [
     "bind_sample_set_runtime",
     "clear_default_runtimes",
     "clear_instance_runtimes",
+    "register_default_runtime_initializer",
     "resolve_model_runtime",
     "resolve_sample_runtime",
     "resolve_sample_set_runtime",

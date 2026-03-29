@@ -6,6 +6,8 @@
 
 - 单位与元数据
 - 样本集筛选与并行 I/O
+- ComputeFlow / ComputePlan
+- `scalar_frame` / `series_frame` / `peaks_frame`
 - 存储方案选择
 - 绘图数据集与 plotter
 - 日志 provider 与模式

@@ -1,4 +1,4 @@
-"""`SET_SQLITE_H5` 鏍锋湰闆嗗瓨鍌ㄧ瓥鐣ャ€?"""
+"""`SET_SQLITE_H5` ????????"""
 
 from __future__ import annotations
 
@@ -42,7 +42,7 @@ class _SqlitePresenceRow:
 
 
 class _SetSqliteH5Strategy(_StorageStrategy):
-    """浣跨敤 SQLite 绱㈠紩鍜?H5 payload 鐨勬牱鏈泦瀛樺偍绛栫暐銆?"""
+    """?? SQLite ??? H5 payload ?????????"""
 
     def __init__(self, ctx: Any) -> None:
         super().__init__(ctx)
@@ -99,7 +99,7 @@ class _SetSqliteH5Strategy(_StorageStrategy):
         del name
         row = self._sample_row(uid)
         if row is None:
-            raise FileNotFoundError(f"鏈壘鍒板瓨鍌ㄤ腑鐨勬牱鏈? {uid}")
+            raise FileNotFoundError(f"??? UID ?????: {uid}")
 
         sample = self.ctx.sampleset.sample_type(
             metadata=self.ctx.metadata_from_dict(json.loads(row.metadata_json)),
@@ -119,10 +119,10 @@ class _SetSqliteH5Strategy(_StorageStrategy):
                 if row_info is None or not row_info.exists_flag:
                     continue
                 if row_info.h5_path not in h5_file:
-                    raise FileNotFoundError(f"H5 payload 涓己灏戞Ы浣? {category}: {row_info.h5_path}")
+                    raise FileNotFoundError(f"H5 payload ????? {category}: {row_info.h5_path}")
                 category_group = h5_file[row_info.h5_path]
                 if not isinstance(category_group, h5py.Group):
-                    raise TypeError(f"H5 payload 妲戒綅涓嶆槸 Group: {row_info.h5_path}")
+                    raise TypeError(f"H5 payload ???? Group: {row_info.h5_path}")
                 sample.update(
                     **{category: self.ctx.deserialize_container(category, self._read_group_payload(category_group))}
                 )
@@ -152,7 +152,7 @@ class _SetSqliteH5Strategy(_StorageStrategy):
         return removed
 
     def metadata_frame(self, *, uids: list[str] | None = None) -> pd.DataFrame:
-        """杩斿洖褰撳墠鏍锋湰闆嗙殑 metadata 鎵佸钩琛ㄣ€?"""
+        """???????? metadata ????"""
 
         target_uids = list(uids or self.uid_name_index().keys())
         if not target_uids:
@@ -425,7 +425,7 @@ class _SetSqliteH5Strategy(_StorageStrategy):
                 continue
             array = np.asarray(value)
             if array.dtype == object:
-                raise TypeError(f"H5 瀛樺偍鏆備笉鏀寔瀵硅薄鏁扮粍瀛楁: {key}")
+                raise TypeError(f"H5 ???????????????: {key}")
             effective_dataset_options = {} if array.shape == () else dataset_options
             dataset = group.create_dataset(key, data=array, **effective_dataset_options)
             unit = units.get(key, "")

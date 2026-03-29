@@ -12,7 +12,7 @@ from dyntool.domain.metadata import (
     VibrationTestMetadata,
 )
 from dyntool.domain.models import AccelSeries, FreqSpec
-from dyntool.domain.samples import Sample, SampleSet
+from dyntool.domain.samples import DefaultSample, DefaultSampleSet
 from dyntool.domain.serialization import StructuredPayload
 
 
@@ -78,12 +78,12 @@ def test_metadata_structured_payload_roundtrip() -> None:
 
 
 def test_sample_structured_payload_roundtrip() -> None:
-    sample = Sample(
+    sample = DefaultSample(
         metadata=Metadata(extra={"source": "sensor-a"}),
         accel=AccelSeries.from_data([0.0, 0.2, -0.1], dt=0.01),
     )
     payload = sample.to_structured_payload()
-    restored = Sample.from_structured_payload(payload)
+    restored = DefaultSample.from_structured_payload(payload)
     assert restored.uid == sample.uid
     assert restored.accel is not None
     assert sample.accel is not None
@@ -91,13 +91,13 @@ def test_sample_structured_payload_roundtrip() -> None:
 
 
 def test_sample_set_structured_payload_roundtrip() -> None:
-    sample = Sample(
+    sample = DefaultSample(
         metadata=Metadata(extra={"batch": "b1"}),
         accel=AccelSeries.from_data([0.0, 0.1, 0.0, -0.1], dt=0.005),
     )
-    sample_set = SampleSet({sample.uid: sample})
+    sample_set = DefaultSampleSet({sample.uid: sample})
     payload = sample_set.to_structured_payload()
-    restored = SampleSet.from_structured_payload(payload)
+    restored = DefaultSampleSet.from_structured_payload(payload)
     assert len(restored) == 1
     assert sample.uid in restored
     assert restored[sample.uid].accel is not None

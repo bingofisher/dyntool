@@ -522,6 +522,32 @@ class TimeSeries(DataModelBase):
             output_phase_unit=output_units.phase,
         )
 
+    def calc_freqspec(
+        self,
+        *,
+        output_unit_system: UnitSystem | None = None,
+    ) -> "FreqSpec":
+        """计算组合频谱对象。"""
+
+        from .frequency_spectrum import FreqSpec
+
+        units = output_unit_system or get_default_unit_system()
+        freqs, mag, phase = self.calc_fft_with_phase(output_unit_system=units)
+        return FreqSpec.from_compute_result(
+            {
+                "freq": freqs,
+                "amp": mag,
+                "pha": phase,
+                "units": {
+                    "freq": units.frequency,
+                    "amp": self.value_unit,
+                    "phase": units.phase,
+                },
+                "unit_system": units,
+            },
+            unit_system=units,
+        )
+
     def to_pandas(self) -> pd.DataFrame:
         """转换为带当前单位表头的 DataFrame。"""
 
@@ -731,6 +757,11 @@ class AccelSeries(TimeSeries):
             unit_system=units,
         )
 
+    def pga(self) -> float:
+        """返回加速度时程的绝对峰值。"""
+
+        return float(self.absmax)
+
     def calc_freqspec(
         self,
         *,
@@ -764,9 +795,11 @@ class AccelSeries(TimeSeries):
     ) -> "RespSpec":
         """按显式单位规则由加速度计算响应谱。"""
 
+        from .response_spectrum import RespSpec
+
         calc_units = calc_unit_system or get_default_unit_system()
         out_units = output_unit_system or get_default_unit_system()
-        return respspec_from_accel(
+        result = respspec_from_accel(
             self.get_value(unit=calc_units.acceleration),
             self.dt,
             periods=periods,
@@ -775,6 +808,7 @@ class AccelSeries(TimeSeries):
             calc_unit_system=calc_units,
             output_unit_system=out_units,
         )
+        return RespSpec.from_compute_result(result, unit_system=out_units)
 
     def calc_respspec_bundle(
         self,
@@ -786,19 +820,11 @@ class AccelSeries(TimeSeries):
     ) -> "RespSpec":
         """计算组合响应谱对象。"""
 
-        from .response_spectrum import RespSpec
-
-        out = self.calc_respspec(
+        return self.calc_respspec(
             method=method,
             calc_unit_system=calc_unit_system,
             output_unit_system=output_unit_system,
             periods=periods,
-        )
-        if not isinstance(out, pd.DataFrame):
-            raise TypeError("calc_respspec did not return a pandas DataFrame")
-        return RespSpec.from_pandas(
-            out,
-            unit_system=output_unit_system,
         )
 
     def _calc_respspec_component(
@@ -935,12 +961,7 @@ class AccelSeries(TimeSeries):
         )
         from .vibration_evaluation import ZVLEval
 
-        return ZVLEval.from_data(
-            zvl=result.zvl,
-            aw=result.aw,
-            units=result.units,
-            unit_system=result.unit_system,
-        )
+        return ZVLEval.from_compute_result(result)
 
     def eval_otovl(
         self,
@@ -964,13 +985,7 @@ class AccelSeries(TimeSeries):
         )
         from .vibration_evaluation import OTOVLEval
 
-        return OTOVLEval.from_data(
-            freq=result.freq,
-            comps=result.comps,
-            env=result.env,
-            units=result.units,
-            unit_system=result.unit_system,
-        )
+        return OTOVLEval.from_compute_result(result)
 
     def eval_fpvdv(
         self,
@@ -994,13 +1009,7 @@ class AccelSeries(TimeSeries):
         )
         from .vibration_evaluation import FPVDVEval
 
-        return FPVDVEval.from_data(
-            fpvdv=result.fpvdv,
-            aw_time=result.aw_time,
-            aw_value=result.aw_value,
-            units=result.units,
-            unit_system=result.unit_system,
-        )
+        return FPVDVEval.from_compute_result(result)
 
     def eval_fdmvl(
         self,
@@ -1022,13 +1031,7 @@ class AccelSeries(TimeSeries):
         )
         from .vibration_evaluation import FDMVLEval
 
-        return FDMVLEval.from_data(
-            fdmvl=result.fdmvl,
-            freq=result.freq,
-            fdvls=result.fdvls,
-            units=result.units,
-            unit_system=result.unit_system,
-        )
+        return FDMVLEval.from_compute_result(result)
 
 
 class VelSeries(TimeSeries):
@@ -1104,6 +1107,11 @@ class VelSeries(TimeSeries):
             units=units,
             unit_system=out_units,
         )
+
+    def pgv(self) -> float:
+        """返回速度时程的绝对峰值。"""
+
+        return float(self.absmax)
 
 
 class ForceSeries(TimeSeries):
@@ -1188,3 +1196,8 @@ class DispSeries(TimeSeries):
             output_unit_system=output_unit_system,
             **options,
         )
+
+    def pgd(self) -> float:
+        """返回位移时程的绝对峰值。"""
+
+        return float(self.absmax)

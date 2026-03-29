@@ -5,13 +5,25 @@ import tempfile
 
 import numpy as np
 
+from dyntool.compute.features import (
+    absmax_feature,
+    band_rms_feature,
+    crest_factor_feature,
+    envelope_feature,
+    mean_feature,
+    peak_feature,
+    peaks_feature,
+    rms_feature,
+    std_feature,
+    zero_crossings_feature,
+)
+from dyntool.compute.metrics import otovl_from_accel, respspec_from_accel, zvl_from_accel
 from dyntool.compute.pipelines import freq_eval_template
 from dyntool.compute.signals import fft_with_phase
-from dyntool.compute.metrics import otovl_from_accel, zvl_from_accel
 from dyntool.domain.constants import resolve_unit_system
 from dyntool.domain.metadata import Metadata
-from dyntool.domain.models import AccelSeries, DispSeries, SpecAccelSeries, ZVLEval
-from dyntool.domain.samples import Sample, SampleSet
+from dyntool.domain.models import AccelSeries, DispSeries, RespSpec, SpecAccelSeries, ZVLEval
+from dyntool.domain.samples import DefaultSample, DefaultSampleSet
 from dyntool import UnitSystem
 
 INPUT_DATA_DIR = Path(__file__).resolve().parent / "input_data"
@@ -364,7 +376,7 @@ class TestTimeSeries:
         assert result.zvl is not None or result.aw is not None
 
     def test_to_array_places_axis_before_single_value_column(self) -> None:
-        """`to_array()` 搴旇繑鍥炶酱鍒楀湪鍓嶃€佸€煎垪鍦ㄥ悗鐨勪簩缁存暟缁勩€?"""
+        """`to_array()` 应返回轴列在前、值列在后的二维数组。"""
 
         accel = AccelSeries.from_data([0.0, 1.0, -1.0], dt=0.5)
 
@@ -382,7 +394,7 @@ class TestTimeSeries:
         )
 
     def test_to_array_stacks_axis_before_multi_channel_values(self) -> None:
-        """`to_array()` 搴旀敮鎸佸皢澶氬垪鍊煎煙鍜岃酱鏁版嵁鎸夊垪鍚堝苟銆?"""
+        """`to_array()` 应支持将多列值域和轴数据按列合并。"""
 
         accel = AccelSeries.from_data(
             np.array(
@@ -409,7 +421,7 @@ class TestTimeSeries:
         )
 
     def test_to_array_returns_value_array_for_scalar_model_without_axis(self) -> None:
-        """娌℃湁涓昏酱瀛楁鏃讹紝`to_array()` 搴旂洿鎺ヨ繑鍥炰富鍊兼暟缁勩€?"""
+        """没有主轴字段时，`to_array()` 应直接返回主值数组。"""
 
         result = ZVLEval.from_data(zvl=65.0, aw=0.001)
 
@@ -420,7 +432,7 @@ class TestTimeSeries:
     def test_sample_and_sampleset_convert_units_apply_per_instance(self) -> None:
         """sample 与 sampleset 应能级联转换容器内部单位。"""
 
-        sample = Sample(
+        sample = DefaultSample(
             metadata=Metadata(extra={"source": "sensor-a"}),
             accel=AccelSeries.from_data(
                 [0.0, 1.0, 0.0],
@@ -429,7 +441,7 @@ class TestTimeSeries:
                 data_unit="g_force",
             ),
         )
-        sample_set = SampleSet({sample.uid: sample})
+        sample_set = DefaultSampleSet({sample.uid: sample})
 
         converted_sample = sample.convert_units(
             {"accel": {"time": "second", "value": "meter/second**2"}},
@@ -458,7 +470,7 @@ class TestTimeSeries:
     def test_sample_convert_units_mutates_in_place_by_default(self) -> None:
         """sample 默认应原地级联修改其容器单位。"""
 
-        sample = Sample(
+        sample = DefaultSample(
             metadata=Metadata(extra={"source": "sensor-a"}),
             accel=AccelSeries.from_data(
                 [0.0, 1.0, 0.0],
@@ -495,17 +507,67 @@ class TestTimeSeries:
 class TestEvaluation:
     """验证评价包装函数。"""
 
-    def test_zvl_from_accel_return_type(self) -> None:
-        """`zvl_from_accel` 返回带单位结果对象。"""
+    def test_zvl_from_accel_returns_named_result_dict(self) -> None:
+        """`zvl_from_accel` 应返回带稳定键名的结果字典。"""
 
         out = zvl_from_accel(np.random.randn(2000) * 0.01, 0.002, freq_range=(2.0, 60.0))
-        assert hasattr(out, "zvl")
-        assert hasattr(out, "aw")
+        assert isinstance(out, dict)
+        assert set(out) >= {"zvl", "aw", "units", "unit_system"}
+        assert isinstance(out["zvl"], float)
+        assert isinstance(out["aw"], float)
 
-    def test_otovl_from_accel_return_type(self) -> None:
-        """`otovl_from_accel` 返回 OTOVL 结果字段。"""
+    def test_otovl_from_accel_returns_named_result_dict(self) -> None:
+        """`otovl_from_accel` 应返回带稳定键名的结果字典。"""
 
         out = otovl_from_accel(np.random.randn(2000) * 0.01, 0.002, freq_range=(2.0, 60.0))
-        assert hasattr(out, "freq")
-        assert hasattr(out, "env")
-        assert hasattr(out, "comps")
+        assert isinstance(out, dict)
+        assert set(out) >= {"freq", "comps", "env", "units", "unit_system"}
+        assert isinstance(out["freq"], np.ndarray)
+        assert isinstance(out["env"], np.ndarray)
+        assert isinstance(out["comps"], np.ndarray)
+
+    def test_respspec_from_accel_returns_named_result_dict(self) -> None:
+        """`respspec_from_accel` 应返回带稳定键名的结果字典。"""
+
+        out = respspec_from_accel(np.random.randn(2000) * 0.01, 0.002)
+
+        assert isinstance(out, dict)
+        assert set(out) >= {"period", "sa", "sv", "sd", "psa", "psv", "units", "unit_system"}
+        assert out["period"].ndim == 1
+        assert out["sa"].shape == out["period"].shape
+
+    def test_calc_respspec_returns_resp_spec_after_domain_assembly(self) -> None:
+        """对象层应把底层响应谱结果字典装配回 RespSpec。"""
+
+        accel = AccelSeries.from_data(np.random.randn(2000) * 0.01, dt=0.002)
+
+        result = accel.calc_respspec()
+
+        assert isinstance(result, RespSpec)
+
+    def test_array_feature_functions_return_named_dicts(self) -> None:
+        """通用 feature 函数应原生支持数组输入并返回命名字典。"""
+
+        value = np.array([0.0, 1.0, -2.0, 1.5, 0.0, -1.0, 0.0], dtype=float)
+
+        absmax = absmax_feature(value)
+        rms = rms_feature(value)
+        mean = mean_feature(value)
+        std = std_feature(value)
+        crest = crest_factor_feature(value)
+        peak = peak_feature(value)
+        peaks = peaks_feature(value, height=0.5)
+        zero_crossings = zero_crossings_feature(value)
+        envelope = envelope_feature(value)
+        band_rms = band_rms_feature(value, fs=100.0, center_freq=5.0)
+
+        assert absmax == {"absmax": 2.0}
+        assert set(rms) == {"rms"}
+        assert set(mean) == {"mean"}
+        assert set(std) == {"std"}
+        assert set(crest) == {"crest_factor"}
+        assert set(peak) >= {"peak", "peak_index"}
+        assert set(peaks) >= {"peak_indices", "peak_values"}
+        assert set(zero_crossings) == {"zero_crossings"}
+        assert set(envelope) >= {"index", "envelope"}
+        assert set(band_rms) == {"band_rms", "center_freq"}

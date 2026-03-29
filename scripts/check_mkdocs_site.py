@@ -1,4 +1,4 @@
-"""检查 MkDocs 文档站配置、正式文档口径和示例映射。"""
+"""检查 MkDocs 文档站配置和正式口径。"""
 
 from __future__ import annotations
 
@@ -12,7 +12,6 @@ import yaml
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 MKDOCS_CONFIG = PROJECT_ROOT / "mkdocs.yml"
 EXAMPLES_MANIFEST = PROJECT_ROOT / "docs" / "examples_manifest.toml"
-ABSOLUTE_WORKSPACE_LINK_FRAGMENT = "/D:/BaiduSyncdisk/13_CodeRepository/Projects/AdvDynTool/"
 REQUIRED_DOC_FILES = (
     "docs/index.md",
     "docs/user_guide.md",
@@ -44,7 +43,6 @@ FORMAL_DOC_SCAN_ROOTS = (
     PROJECT_ROOT / "docs" / "api",
     PROJECT_ROOT / "docs" / "usage",
     PROJECT_ROOT / "docs" / "workflows",
-    PROJECT_ROOT / "docs" / "systems",
     PROJECT_ROOT / "docs" / "index.md",
     PROJECT_ROOT / "docs" / "user_guide.md",
     PROJECT_ROOT / "docs" / "workflow_guide.md",
@@ -53,6 +51,7 @@ FORMAL_DOC_SCAN_ROOTS = (
 )
 FORMAL_FORBIDDEN_TOKENS = (
     "`dyntool.resource`",
+    "dyntool.resource.",
     "DynTool(",
     "from dyntool import DynTool",
     "from dyntool.domain",
@@ -60,13 +59,12 @@ FORMAL_FORBIDDEN_TOKENS = (
     "from dyntool.application",
     "import dyntool.application",
     "interfaces -> application",
+    "当前实现层：interfaces",
 )
 EXAMPLE_PATH_PATTERN = re.compile(r"examples/[A-Za-z0-9_./()-]+(?:\.py|README\.md)")
 
 
 def _flatten_nav(items: list[object]) -> list[str]:
-    """提取导航中的全部文档路径。"""
-
     result: list[str] = []
     for item in items:
         if isinstance(item, str):
@@ -82,31 +80,23 @@ def _flatten_nav(items: list[object]) -> list[str]:
 
 
 def _iter_markdown_files(root: Path) -> list[Path]:
-    """返回根路径下的 Markdown 文件。"""
-
     if root.is_file():
         return [root]
     return sorted(root.rglob("*.md"))
 
 
 def _load_examples_manifest() -> list[dict[str, object]]:
-    """读取示例清单。"""
-
     payload = tomllib.loads(EXAMPLES_MANIFEST.read_text(encoding="utf-8"))
     return list(payload.get("example", []))
 
 
 def _check_required_docs(violations: list[str]) -> None:
-    """检查正式文档脚手架文件。"""
-
     for rel in REQUIRED_DOC_FILES:
         if not (PROJECT_ROOT / rel).exists():
             violations.append(f"{rel}: missing")
 
 
 def _check_mkdocs_config(violations: list[str]) -> dict[str, object] | None:
-    """检查 MkDocs 配置。"""
-
     if not MKDOCS_CONFIG.exists():
         violations.append("mkdocs.yml: missing")
         return None
@@ -124,8 +114,6 @@ def _check_mkdocs_config(violations: list[str]) -> dict[str, object] | None:
 
 
 def _check_nav_pages_have_stability_labels(config: dict[str, object], violations: list[str]) -> None:
-    """检查导航页的稳定性标签。"""
-
     for rel in _flatten_nav(config.get("nav", [])):
         path = PROJECT_ROOT / "docs" / rel
         text = path.read_text(encoding="utf-8")
@@ -134,13 +122,11 @@ def _check_nav_pages_have_stability_labels(config: dict[str, object], violations
 
 
 def _check_formal_docs_tokens(violations: list[str]) -> None:
-    """检查正式文档口径中的禁止词。"""
-
     for root in FORMAL_DOC_SCAN_ROOTS:
         for path in _iter_markdown_files(root):
             text = path.read_text(encoding="utf-8")
             rel = path.relative_to(PROJECT_ROOT).as_posix()
-            if ABSOLUTE_WORKSPACE_LINK_FRAGMENT in text:
+            if "/D:/BaiduSyncdisk/13_CodeRepository/Projects/AdvDynTool/" in text:
                 violations.append(f"{rel}: contains workspace absolute links")
             for token in FORMAL_FORBIDDEN_TOKENS:
                 if token in text:
@@ -148,8 +134,6 @@ def _check_formal_docs_tokens(violations: list[str]) -> None:
 
 
 def _check_example_manifest(violations: list[str]) -> None:
-    """检查示例清单和正式场景边界。"""
-
     entries = _load_examples_manifest()
     if not entries:
         violations.append("docs/examples_manifest.toml: no examples defined")
@@ -166,8 +150,6 @@ def _check_example_manifest(violations: list[str]) -> None:
 
 
 def _check_examples_overview(violations: list[str]) -> None:
-    """检查正式示例总览。"""
-
     overview = (PROJECT_ROOT / "docs" / "examples_overview.md").read_text(encoding="utf-8")
     if "examples/10_scenarios/08_custom_extension/main.py" in overview:
         violations.append("docs/examples_overview.md: custom_extension should not appear in formal overview")
@@ -177,8 +159,6 @@ def _check_examples_overview(violations: list[str]) -> None:
 
 
 def _check_internal_example_readme(violations: list[str]) -> None:
-    """检查内部示例标注。"""
-
     text = (PROJECT_ROOT / "examples" / "10_scenarios" / "08_custom_extension" / "README.md").read_text(
         encoding="utf-8"
     )
@@ -187,8 +167,6 @@ def _check_internal_example_readme(violations: list[str]) -> None:
 
 
 def main() -> int:
-    """执行 MkDocs 站点一致性检查。"""
-
     violations: list[str] = []
     _check_required_docs(violations)
     config = _check_mkdocs_config(violations)

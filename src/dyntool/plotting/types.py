@@ -16,9 +16,34 @@ from ..domain.plot_types import PlotKind
 class PlotterKind(StrEnum):
     """绘图器类型。"""
 
+    BOX = "box"
     FRAME = "frame"
     ONE_THIRD_OCTAVE = "one_third_octave"
     STORY_VALUE = "story_value"
+
+
+class PlotStatMetric(StrEnum):
+    """正式公开的统计指标枚举。"""
+
+    MEAN = "mean"
+    MEDIAN = "median"
+    MIN = "min"
+    MAX = "max"
+    Q1 = "q1"
+    Q3 = "q3"
+
+    @property
+    def label(self) -> str:
+        """返回默认中文显示文案。"""
+
+        return {
+            self.MEAN: "均值",
+            self.MEDIAN: "中位数",
+            self.MIN: "最小值",
+            self.MAX: "最大值",
+            self.Q1: "下四分位数",
+            self.Q3: "上四分位数",
+        }[self]
 
 
 @dataclass(slots=True)
@@ -32,7 +57,7 @@ class PlotResult:
 
     @classmethod
     def from_raw(cls, raw: Figure | Axes | tuple[Axes, ...] | list[Axes]) -> "PlotResult":
-        """从底层绘图返回值构造标准结果。"""
+        """从底层返回值构造标准绘图结果。"""
 
         if isinstance(raw, cls):
             return raw
@@ -51,10 +76,10 @@ class PlotResult:
         return cls(raw=raw, figure=figure, axes=axes)
 
     def __getattr__(self, name: str) -> Any:
-        """将未知属性委托给底层 figure 或 raw 对象。"""
+        """将未定义属性委托给底层 figure 或 raw 对象。"""
 
         target = self.figure if self.figure is not None else self.raw
         return getattr(target, name)
 
 
-__all__ = ["PlotKind", "PlotResult", "PlotterKind"]
+__all__ = ["PlotKind", "PlotResult", "PlotStatMetric", "PlotterKind"]

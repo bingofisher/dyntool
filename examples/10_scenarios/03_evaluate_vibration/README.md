@@ -10,12 +10,14 @@
 - 样本集批量 `freqspec` 计算结果
 - 样本集批量 `respspec` 计算结果
 - 单样本 `zvl` 评价结果
+- 样本集 `scalar_frame(features=["pga", "rms", "crest_factor"])` 特征表
 - `TransferFunctionAnalyzer` 生成的 `FreqSpec`
 - `FramePlotter` 渲染后的图对象
 
 关键 API：
-- `SampleSet.calc_freqspec()`
-- `sample_set.processing.calc_respspec()`
+- `DefaultSampleSet.calc_freqspec()`
+- `sample_set.compute.response.respspec()`
+- `sample_set.scalar_frame(features=[...])`
 - `TransferFunctionAnalyzer.from_samples(...).solve()`
 - `FramePlotter().add(...) + plot()`
 

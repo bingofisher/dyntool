@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import dyntool.resources as dt_resource
-from dyntool import Sample, SampleDomain, SampleSet, StorageScheme
+from dyntool import DefaultSample, DefaultSampleSet, SampleDomain, StorageScheme
 
 
 def test_resource_module_replaces_facade_resource_entry() -> None:
@@ -16,7 +16,7 @@ def test_resource_module_replaces_facade_resource_entry() -> None:
 
 
 def test_sample_class_can_build_vibration_sample_from_accel_data() -> None:
-    sample = Sample.from_accel_data(
+    sample = DefaultSample.from_accel_data(
         [0.0, 0.08, -0.02, 0.03, 0.0],
         dt=0.01,
         sample_domain=SampleDomain.VIBRATION_TEST,
@@ -33,7 +33,7 @@ def test_sample_class_can_build_vibration_sample_from_accel_data() -> None:
 
 
 def test_sample_class_can_build_from_models_and_eval_zvl() -> None:
-    source = Sample.from_accel_data(
+    source = DefaultSample.from_accel_data(
         [0.0, 0.08, -0.02, 0.03, 0.0],
         dt=0.01,
         sample_domain=SampleDomain.VIBRATION_TEST,
@@ -45,7 +45,7 @@ def test_sample_class_can_build_from_models_and_eval_zvl() -> None:
         timestamp="2026-03-08 12:00:00",
     )
 
-    sample = Sample.from_models(
+    sample = DefaultSample.from_models(
         sample_domain=SampleDomain.VIBRATION_TEST,
         metadata=source.metadata,
         accel=source.accel,
@@ -58,7 +58,7 @@ def test_sample_class_can_build_from_models_and_eval_zvl() -> None:
 
 
 def test_sample_set_class_supports_from_samples_eval_and_h5_roundtrip(tmp_path: Path) -> None:
-    sample = Sample.from_accel_data(
+    sample = DefaultSample.from_accel_data(
         [0.0, 0.08, -0.02, 0.03, 0.0],
         dt=0.01,
         sample_domain=SampleDomain.VIBRATION_TEST,
@@ -69,13 +69,13 @@ def test_sample_set_class_supports_from_samples_eval_and_h5_roundtrip(tmp_path: 
         record="R1",
         timestamp="2026-03-08 12:00:00",
     )
-    sample_set = SampleSet.from_samples([sample], sample_domain=SampleDomain.VIBRATION_TEST)
+    sample_set = DefaultSampleSet.from_samples([sample], sample_domain=SampleDomain.VIBRATION_TEST)
 
     result = sample_set.eval_zvl(overwrite=True, freq_range=(2.0, 60.0))
     store_path = tmp_path / "samples.h5"
 
     sample_set.save(store_path, storage_scheme=StorageScheme.SET_H5)
-    loaded = SampleSet.from_storage(
+    loaded = DefaultSampleSet.from_storage(
         store_path,
         sample_domain=SampleDomain.VIBRATION_TEST,
         storage_scheme=StorageScheme.SET_H5,

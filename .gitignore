@@ -19,13 +19,13 @@ build/
 dist/
 .eggs/
 site/
+docs/_build/
 
 # Local environments
 .venv/
 .vscode/
 .worktrees/
 .agents/
-.codex/
 
 # Example/generated artifacts
 /examples/output/
@@ -40,3 +40,5 @@ task_plan.md
 progress.md
 findings.md
 TODO.md
+# CocoIndex Code (ccc)
+/.cocoindex_code/

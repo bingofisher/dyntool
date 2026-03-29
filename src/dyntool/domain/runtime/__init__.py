@@ -1,4 +1,4 @@
-"""领域对象运行时绑定导出。"""
+"""领域对象 runtime 导出。"""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from .core import (
     bind_sample_set_runtime,
     clear_default_runtimes,
     clear_instance_runtimes,
+    register_default_runtime_initializer,
     resolve_model_runtime,
     resolve_sample_runtime,
     resolve_sample_set_runtime,
@@ -28,6 +29,7 @@ __all__ = [
     "bind_sample_set_runtime",
     "clear_default_runtimes",
     "clear_instance_runtimes",
+    "register_default_runtime_initializer",
     "resolve_model_runtime",
     "resolve_sample_runtime",
     "resolve_sample_set_runtime",

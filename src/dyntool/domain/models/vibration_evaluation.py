@@ -245,6 +245,22 @@ class ZVLEval(DataModelBase):
             units=default_current,
         )
 
+    @classmethod
+    def from_compute_result(
+        cls,
+        result: Mapping[str, Any],
+        *,
+        unit_system: UnitSystem | None = None,
+    ) -> Self:
+        """从底层 compute 命名字典装配 ZVL 评价模型。"""
+
+        return cls.from_data(
+            zvl=float(result["zvl"]),
+            aw=float(result["aw"]),
+            units=result.get("units"),
+            unit_system=unit_system or result.get("unit_system"),
+        )
+
 
 class OTOVLEval(DataModelBase):
     """三分之一倍频程振级评价结果。"""
@@ -509,6 +525,23 @@ class OTOVLEval(DataModelBase):
             units=default_current,
         )
 
+    @classmethod
+    def from_compute_result(
+        cls,
+        result: Mapping[str, Any],
+        *,
+        unit_system: UnitSystem | None = None,
+    ) -> Self:
+        """从底层 compute 命名字典装配 OTOVL 评价模型。"""
+
+        return cls.from_data(
+            freq=np.asarray(result["freq"]),
+            comps=np.asarray(result["comps"]),
+            env=np.asarray(result["env"]) if "env" in result else None,
+            units=result.get("units"),
+            unit_system=unit_system or result.get("unit_system"),
+        )
+
 
 class FPVDVEval(DataModelBase):
     """四次方振动剂量值评价结果。"""
@@ -702,6 +735,23 @@ class FPVDVEval(DataModelBase):
             aw_time=np.asarray(data.get("aw_time", [])),
             aw_value=np.asarray(data.get("aw_value", [])),
             units=default_current,
+        )
+
+    @classmethod
+    def from_compute_result(
+        cls,
+        result: Mapping[str, Any],
+        *,
+        unit_system: UnitSystem | None = None,
+    ) -> Self:
+        """从底层 compute 命名字典装配 FPVDV 评价模型。"""
+
+        return cls.from_data(
+            fpvdv=float(result["fpvdv"]),
+            aw_time=np.asarray(result["aw_time"]),
+            aw_value=np.asarray(result["aw_value"]),
+            units=result.get("units"),
+            unit_system=unit_system or result.get("unit_system"),
         )
 
     @classmethod
@@ -936,6 +986,23 @@ class FDMVLEval(DataModelBase):
             freq=np.asarray(data.get("freq", [])),
             fdvls=np.asarray(data.get("fdvls", [])),
             units=default_current,
+        )
+
+    @classmethod
+    def from_compute_result(
+        cls,
+        result: Mapping[str, Any],
+        *,
+        unit_system: UnitSystem | None = None,
+    ) -> Self:
+        """从底层 compute 命名字典装配 FDMVL 评价模型。"""
+
+        return cls.from_data(
+            fdmvl=float(result["fdmvl"]),
+            freq=np.asarray(result["freq"]),
+            fdvls=np.asarray(result["fdvls"]),
+            units=result.get("units"),
+            unit_system=unit_system or result.get("unit_system"),
         )
 
     @classmethod

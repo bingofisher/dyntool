@@ -6,5 +6,5 @@
 输出：标准化 CSV、样本集 H5。
 
 运行命令：`python examples/10_scenarios/01_import_and_normalize/main.py`  
-关键 API：`AccelSeries.from_csv()`、`SampleSet.save()`、`SampleSet.from_storage()`  
+关键 API：`AccelSeries.from_csv()`、`DefaultSampleSet.save()`、`DefaultSampleSet.from_storage()`  
 对应测试：`tests/test_examples_systems.py::test_scenario_import_and_normalize`

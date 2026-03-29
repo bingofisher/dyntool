@@ -9,6 +9,8 @@ from typing import TYPE_CHECKING, assert_type
 import pandas as pd
 
 import dyntool.config as dt_config
+import dyntool.compute as dt_compute
+import dyntool.domain as dt_domain
 import dyntool.logging as dt_logging
 import dyntool.plotting as dt_plotting
 import dyntool.resources as dt_resource
@@ -20,19 +22,20 @@ from dyntool import (
     AccelSeries,
     BatchOperationReport,
     ContainerFormat,
+    DefaultSample,
+    DefaultSampleSet,
     LoggingMode,
     Metadata,
     OperationResult,
     PlotKind,
-    Sample,
     SampleDomain,
-    SampleSet,
     StorageMode,
     StorageScheme,
     UnitSystem,
     VibrationTestMetadata,
     VibrationTestSample,
     VibrationTestSampleSet,
+    ZVLLimit,
 )
 
 if TYPE_CHECKING:
@@ -45,10 +48,20 @@ if TYPE_CHECKING:
     assert_type(accel, AccelSeries)
     assert_type(UnitSystem.si(), UnitSystem)
     assert_type(StorageScheme.SET_H5, StorageScheme)
-    assert_type(StorageScheme.SET_SQLITE_H5, StorageScheme)
     assert_type(StorageMode.OPEN, StorageMode)
     assert_type(ContainerFormat.H5, ContainerFormat)
     assert_type(PlotKind.TIME, PlotKind)
+    assert_type(dt_storage.DataCategory.TS_ACCEL, dt_storage.DataCategory)
+    assert_type(dt_storage.SampleLoadMode.LAZY, dt_storage.SampleLoadMode)
+    assert_type(dt_storage.SampleDomain.VIBRATION_TEST, dt_storage.SampleDomain)
+    assert_type(dt_storage.StorageAccessMode.READ_ONLY, dt_storage.StorageAccessMode)
+    assert_type(
+        dt_storage.SampleSetViewOptions(
+            load_mode=dt_storage.SampleLoadMode.LAZY,
+            access_mode=dt_storage.StorageAccessMode.READ_ONLY,
+        ),
+        dt_storage.SampleSetViewOptions,
+    )
 
     metadata = Metadata(attributes={"line": "A"})
     assert_type(metadata, Metadata)
@@ -63,7 +76,7 @@ if TYPE_CHECKING:
     )
     assert_type(vibration_meta, VibrationTestMetadata)
 
-    vib_sample = Sample.from_accel_data(
+    vib_sample = DefaultSample.from_accel_data(
         [0.0, 0.1, -0.02],
         dt=0.01,
         sample_domain=SampleDomain.VIBRATION_TEST,
@@ -78,16 +91,39 @@ if TYPE_CHECKING:
     assert_type(vib_sample, VibrationTestSample)
     assert_type(vib_sample.eval_zvl(freq_range=(2.0, 60.0)), OperationResult[VibrationTestSample])
 
-    vib_sample_set = SampleSet.from_samples([vib_sample], sample_domain=SampleDomain.VIBRATION_TEST)
+    vib_sample_set = DefaultSampleSet.from_samples([vib_sample], sample_domain=SampleDomain.VIBRATION_TEST)
     assert_type(vib_sample_set, VibrationTestSampleSet)
     assert_type(
         vib_sample_set.eval_zvl(freq_range=(2.0, 60.0)),
         BatchOperationReport[VibrationTestSampleSet],
     )
+    assert_type(vib_sample.replace_metadata(vibration_meta), VibrationTestSample)
+    assert_type(vib_sample.patch_metadata(extra={"source": "typing"}), VibrationTestSample)
+    assert_type(vib_sample.reset_alias(), VibrationTestSample)
+    assert_type(vib_sample.compute.available(), tuple[object, ...])
+    assert_type(vib_sample.compute.feature.rms(), float)
+    assert_type(vib_sample.compute.feature.crest_factor(), float)
+    assert_type(vib_sample.pga(), float)
+    assert_type(vib_sample_set.metadata_frame(), pd.DataFrame)
+    assert_type(vib_sample_set.data_map("accel"), dict[str, object])
+    assert_type(vib_sample_set.find_many(), VibrationTestSampleSet)
+    assert_type(vib_sample_set.find_one(), VibrationTestSample | None)
+    assert_type(vib_sample_set.distinct_metadata("case"), tuple[object, ...])
     assert_type(
-        vib_sample_set.convert_storage("out/converted.h5", storage_scheme=StorageScheme.SET_H5),
-        VibrationTestSampleSet,
+        vib_sample_set.scalar_frame(
+            metadata_fields=["case"],
+            data_vars=["zvl"],
+            features=["pga", "rms", "crest_factor"],
+        ),
+        pd.DataFrame,
     )
+    assert_type(vib_sample_set.series_frame("accel", metadata_fields=["case"]), pd.DataFrame)
+    assert_type(vib_sample_set.peaks_frame(source="accel"), pd.DataFrame)
+    assert_type(dt_compute.metrics.zvl_from_accel([0.0, 0.1, -0.1], 0.01), dict[str, object])
+    assert_type(dt_compute.features.rms_feature([0.0, 0.1, -0.1]), dict[str, float])
+    assert_type(dt_domain.models.AccelSeries, type[AccelSeries])
+    assert_type(dt_domain.limits.ZVLLimit, type[ZVLLimit])
+    assert_type(dt_domain.SampleDomain.VIBRATION_TEST, SampleDomain)
 
     saved_model_path = dt_storage.save_model(accel, "out/accel.csv")
     assert_type(saved_model_path, Path)
@@ -123,6 +159,29 @@ if TYPE_CHECKING:
     assert_type(result.figure, Figure | None)
     assert_type(result.axes, tuple[Axes, ...])
     assert_type(result.artists, tuple[Artist, ...])
+    axis_helper = dt_plotting.AxisHelper(ax=Axes(Figure(), [0.0, 0.0, 1.0, 1.0]))
+    assert_type(axis_helper, dt_plotting.AxisHelper)
+    axis_helper.format_axis(
+        side="left",
+        mode="continuous",
+        data=[0.0, 0.1, -0.05],
+        baseline=0.0,
+        num_segments=4,
+    )
+
+    box_dataset = dt_plotting.PlotDataset.from_axis_value(
+        axis=[0.0, 1.0, 2.0],
+        value=[64.0, 66.0, 65.0],
+        name="point-1",
+        category=dt_plotting.PlotCategory.SAMPLE,
+    )
+    assert_type(dt_plotting.PlotStatMetric.MEAN, dt_plotting.PlotStatMetric)
+    box_result = dt_plotting.BoxPlotter().plot_dataset(
+        box_dataset,
+        stats=[dt_plotting.PlotStatMetric.MEAN],
+        style_defaults={"box.facecolor": "#dddddd"},
+    )
+    assert_type(box_result, dt_plotting.PlotResult)
 
     config_loader = dt_config.load_config("config/demo.toml")
     assert_type(config_loader, dt_config.Config)

@@ -17,9 +17,9 @@ from dyntool import (
     OTOVLEval,
     OTOVLLimit,
     OTOVLLimitStandard,
-    Sample,
+    DefaultSample,
     SampleDomain,
-    SampleSet,
+    DefaultSampleSet,
     VibrationTestMetadata,
     ZVLLimit,
     ZVLLimitStandard,
@@ -28,6 +28,7 @@ from dyntool.plotting import (
     AxisFrame,
     AxisHelper,
     AxisNumberFormatter,
+    BoxPlotter,
     DiscreteAxisFormatter,
     FramePlotter,
     GridFrame,
@@ -37,6 +38,7 @@ from dyntool.plotting import (
     PlotCategory,
     PlotDataset,
     PlotResult,
+    PlotStatMetric,
     StoryValuePlotter,
     ZhPlotConfig,
     configure_zh,
@@ -134,6 +136,19 @@ def test_plot_dataset_add_limit_broadcasts_scalar_limit_to_given_axis() -> None:
     limit_values = frame[(PlotCategory.LIMIT.value, "city-limit")].to_numpy()
     assert np.unique(limit_values).size == 1
     assert float(limit_values[0]) == 65.0
+
+
+def test_plot_category_exposes_single_limit_only() -> None:
+    values = {member.value for member in PlotCategory}
+
+    assert values == {
+        PlotCategory.SAMPLE.value,
+        PlotCategory.ENVELOPE.value,
+        PlotCategory.LIMIT.value,
+        PlotCategory.STAT.value,
+    }
+    assert not hasattr(PlotCategory, "LIMIT_UPPER")
+    assert not hasattr(PlotCategory, "LIMIT_LOWER")
 
 
 def test_plot_dataset_supports_minimal_meta_updates() -> None:
@@ -276,6 +291,274 @@ def test_story_value_plotter_consumes_plot_dataset_and_limit_columns() -> None:
     assert len(result.axes[0].lines) >= 2
 
 
+def _legacy_test_box_plotter_consumes_plot_dataset_sample_and_limit_columns() -> None:
+    axis = [0.0, 1.0, 2.0, 3.0]
+    dataset = PlotDataset.from_axis_value(
+        axis=axis,
+        value=[64.0, 66.0, 65.0, np.nan],
+        name="point-b1",
+        category=PlotCategory.SAMPLE,
+        value_unit="decibel",
+        label="B1\n地下车库\n中心",
+    )
+    dataset.add_axis_value(
+        axis=axis,
+        value=[68.0, 69.0, 70.0, 71.0],
+        name="point-b2",
+        category=PlotCategory.SAMPLE,
+        value_unit="decibel",
+        label="B2\n隔振层\n中心",
+    )
+    dataset.add_axis_value(
+        axis=axis,
+        value=[73.0, 73.0, 73.0, 73.0],
+        name="limit-primary",
+        category=PlotCategory.LIMIT,
+        value_unit="decibel",
+        label="卧室一级限值",
+        style={"color": "orange", "linestyle": "--"},
+    )
+    dataset.add_axis_value(
+        axis=axis,
+        value=[78.0, 78.0, 78.0, 78.0],
+        name="limit-secondary",
+        category=PlotCategory.LIMIT,
+        value_unit="decibel",
+        label="卧室二级限值",
+        style={"color": "red", "linestyle": "--"},
+    )
+
+    result = BoxPlotter().plot_dataset(dataset, legend_options={"loc": "upper right"})
+
+    assert isinstance(result, PlotResult)
+    assert result.figure is not None
+    assert len(result.axes[0].patches) >= 2
+    assert len(result.axes[0].lines) >= 4
+    assert [tick.get_text() for tick in result.axes[0].get_xticklabels()] == [
+        "B1\n地下车库\n中心",
+        "B2\n隔振层\n中心",
+    ]
+    legend = result.axes[0].get_legend()
+    assert legend is not None
+    legend_labels = [text.get_text() for text in legend.get_texts()]
+    assert "均值" in legend_labels
+    assert "异常值" in legend_labels
+    assert "卧室一级限值" in legend_labels
+    assert "卧室二级限值" in legend_labels
+
+
+def _legacy_test_box_plotter_rejects_non_constant_limit_column() -> None:
+    dataset = PlotDataset.from_axis_value(
+        axis=[0.0, 1.0, 2.0],
+        value=[64.0, 66.0, 65.0],
+        name="point-b1",
+        category=PlotCategory.SAMPLE,
+    )
+    dataset.add_axis_value(
+        axis=[0.0, 1.0, 2.0],
+        value=[73.0, 74.0, 73.0],
+        name="limit-invalid",
+        category=PlotCategory.LIMIT,
+    )
+
+    with pytest.raises(ValueError, match="限值线必须是单一数值水平线"):
+        BoxPlotter().plot_dataset(dataset)
+
+
+def test_frame_plotter_supports_auto_stat_metrics() -> None:
+    dataset = PlotDataset.from_axis_value(
+        axis=[0.0, 1.0, 2.0],
+        value=[1.0, 3.0, 5.0],
+        name="sample-a",
+        category=PlotCategory.SAMPLE,
+    )
+    dataset.add_axis_value(
+        axis=[0.0, 1.0, 2.0],
+        value=[3.0, 5.0, 7.0],
+        name="sample-b",
+        category=PlotCategory.SAMPLE,
+    )
+
+    result = FramePlotter().plot_dataset(
+        dataset,
+        stats=[PlotStatMetric.MEAN],
+        legend_options={"loc": "upper right"},
+    )
+
+    stat_lines = [line for line in result.axes[0].lines if line.get_label() == "均值"]
+    assert len(stat_lines) == 1
+    np.testing.assert_allclose(stat_lines[0].get_ydata(), np.array([2.0, 4.0, 6.0], dtype=float))
+
+
+def test_story_value_plotter_supports_auto_stat_metrics() -> None:
+    dataset = PlotDataset.from_axis_value(
+        axis=[-1.0, 0.0, 1.0],
+        value=[1.0, 3.0, 5.0],
+        name="sample-a",
+        category=PlotCategory.SAMPLE,
+    )
+    dataset.add_axis_value(
+        axis=[-1.0, 0.0, 1.0],
+        value=[3.0, 5.0, 7.0],
+        name="sample-b",
+        category=PlotCategory.SAMPLE,
+    )
+
+    result = StoryValuePlotter().plot_dataset(
+        dataset,
+        stats=[PlotStatMetric.MEAN],
+        legend_options={"loc": "upper right"},
+    )
+
+    stat_lines = [line for line in result.axes[0].lines if line.get_label() == "均值"]
+    assert len(stat_lines) == 1
+    np.testing.assert_allclose(stat_lines[0].get_xdata(), np.array([2.0, 4.0, 6.0], dtype=float))
+    np.testing.assert_allclose(stat_lines[0].get_ydata(), np.array([-1.0, 0.0, 1.0], dtype=float))
+
+
+def test_box_plotter_consumes_plot_dataset_sample_columns_and_namespaced_styles() -> None:
+    axis = [0.0, 1.0, 2.0, 3.0]
+    dataset = PlotDataset.from_axis_value(
+        axis=axis,
+        value=[64.0, 66.0, 65.0, np.nan],
+        name="point-b1",
+        category=PlotCategory.SAMPLE,
+        value_unit="decibel",
+        label="B1\n地下车库\n中心",
+        style={"box.facecolor": "#dddddd", "median.color": "purple"},
+    )
+    dataset.add_axis_value(
+        axis=axis,
+        value=[68.0, 69.0, 70.0, 71.0],
+        name="point-b2",
+        category=PlotCategory.SAMPLE,
+        value_unit="decibel",
+        label="B2\n隔振层\n中心",
+        style={"box.facecolor": "#cccccc", "unknown.value": "ignored"},
+    )
+
+    result = BoxPlotter().plot_dataset(
+        dataset,
+        stats=[PlotStatMetric.MEAN, PlotStatMetric.MEDIAN],
+        style_defaults={
+            "box.facecolor": "#bbbbbb",
+            "mean.color": "blue",
+            "mean.linewidth": 1.5,
+            "flier.markerfacecolor": "red",
+            "whisker.linestyle": "--",
+        },
+        legend_options={"loc": "upper right"},
+    )
+
+    assert isinstance(result, PlotResult)
+    assert result.figure is not None
+    assert len(result.axes[0].patches) >= 2
+    assert len(result.axes[0].lines) >= 4
+    assert [tick.get_text() for tick in result.axes[0].get_xticklabels()] == [
+        "B1\n地下车库\n中心",
+        "B2\n隔振层\n中心",
+    ]
+    facecolors = [patch.get_facecolor()[:3] for patch in result.axes[0].patches[:2]]
+    assert facecolors[0] == pytest.approx(matplotlib.colors.to_rgb("#dddddd"))
+    assert facecolors[1] == pytest.approx(matplotlib.colors.to_rgb("#cccccc"))
+    legend = result.axes[0].get_legend()
+    assert legend is not None
+    legend_labels = [text.get_text() for text in legend.get_texts()]
+    assert "均值" in legend_labels
+    assert "中位数" in legend_labels
+
+
+def test_box_plotter_style_defaults_can_be_overridden_by_dataset_style() -> None:
+    dataset = PlotDataset.from_axis_value(
+        axis=[0.0, 1.0, 2.0],
+        value=[64.0, 66.0, 65.0],
+        name="point-b1",
+        category=PlotCategory.SAMPLE,
+        style={"mean.color": "green"},
+    )
+
+    result = BoxPlotter().plot_dataset(
+        dataset,
+        stats=[PlotStatMetric.MEAN],
+        style_defaults={"mean.color": "blue"},
+    )
+
+    mean_lines = [line for line in result.axes[0].lines if line.get_color() == "green"]
+    assert mean_lines
+
+
+def test_box_plotter_and_frame_plotter_can_build_mixed_legend() -> None:
+    box_dataset = PlotDataset.from_axis_value(
+        axis=[0.0, 1.0, 2.0],
+        value=[64.0, 66.0, 65.0],
+        name="point-b1",
+        category=PlotCategory.SAMPLE,
+        label="B1",
+    )
+    box_dataset.add_axis_value(
+        axis=[0.0, 1.0, 2.0],
+        value=[68.0, 69.0, 70.0],
+        name="point-b2",
+        category=PlotCategory.SAMPLE,
+        label="B2",
+    )
+    limit_dataset = PlotDataset.from_axis_value(
+        axis=[1.0, 2.0],
+        value=[73.0, 73.0],
+        name="limit-primary",
+        category=PlotCategory.LIMIT,
+        label="一级限值",
+        style={"color": "darkorange", "linestyle": "--"},
+    )
+
+    fig, ax = plt.subplots()
+    BoxPlotter(ax=ax).plot_dataset(box_dataset, stats=[PlotStatMetric.MEAN], legend_options=None)
+    FramePlotter(ax=ax).plot_dataset(limit_dataset, legend_options=None)
+
+    legend = LegendHelper(ax).apply(
+        legend_options={"loc": "upper right"},
+        include_labels=["均值", "一级限值"],
+    )
+
+    assert legend is not None
+    assert [text.get_text() for text in legend.get_texts()] == ["均值", "一级限值"]
+
+
+def test_story_value_plotter_auto_stats_do_not_warn_on_all_nan_story_rows() -> None:
+    dataset = PlotDataset.from_axis_value(
+        axis=[-1.0, 0.0, 1.0, 2.0],
+        value=[60.0, np.nan, 66.0, 68.0],
+        name="center-a",
+        category=PlotCategory.SAMPLE,
+    )
+    dataset.add_axis_value(
+        axis=[-1.0, 0.0, 1.0, 2.0],
+        value=[61.0, np.nan, 67.0, 69.0],
+        name="center-b",
+        category=PlotCategory.SAMPLE,
+    )
+
+    with warnings.catch_warnings(record=True) as captured:
+        warnings.simplefilter("always")
+        result = StoryValuePlotter().plot_dataset(dataset, stats=[PlotStatMetric.MEAN])
+
+    assert isinstance(result, PlotResult)
+    runtime_messages = [str(item.message) for item in captured if issubclass(item.category, RuntimeWarning)]
+    assert "Mean of empty slice" not in runtime_messages
+
+
+def test_box_plotter_rejects_dataset_without_valid_sample_values() -> None:
+    dataset = PlotDataset.from_axis_value(
+        axis=[0.0, 1.0, 2.0],
+        value=[np.nan, np.nan, np.nan],
+        name="point-b1",
+        category=PlotCategory.SAMPLE,
+    )
+
+    with pytest.raises(ValueError, match="箱型图至少需要一组非空样本"):
+        BoxPlotter().plot_dataset(dataset)
+
+
 def test_frame_plotter_adds_model_directly_without_payload_bridge() -> None:
     accel = AccelSeries.from_data(np.random.randn(200) * 0.01, dt=0.002)
     plotter = FramePlotter()
@@ -315,6 +598,8 @@ def test_one_third_octave_plotter_adds_otovl_eval_as_comps_and_env() -> None:
     result = plotter.plot()
     assert isinstance(result, PlotResult)
     assert result.figure is not None
+    assert result.axes[0].get_legend() is None
+    result = plotter.plot(legend_options={"loc": "upper right"})
     legend = result.axes[0].get_legend()
     assert legend is not None
     legend_labels = [text.get_text() for text in legend.get_texts()]
@@ -411,6 +696,7 @@ def test_axis_frame_and_octave_band_spec_are_exposed() -> None:
 
 
 def test_new_plotter_types_are_exposed_from_plotting_module() -> None:
+    assert BoxPlotter.__module__ == "dyntool.plotting.plotters"
     assert FramePlotter.__module__ == "dyntool.plotting.plotters"
     assert OneThirdOctavePlotter.__module__ == "dyntool.plotting.plotters"
     assert StoryValuePlotter.__module__ == "dyntool.plotting.plotters"
@@ -628,7 +914,7 @@ def test_axis_helper_continuous_side_supports_waveform_style_padding() -> None:
     original_y = np.asarray(line.get_ydata(orig=True), dtype=float).copy()
 
     helper = AxisHelper(ax)
-    helper.format_side(
+    helper.format_axis(
         side="left",
         mode="continuous",
         data=y,
@@ -651,7 +937,7 @@ def test_axis_helper_continuous_side_height_ratio_changes_padding_extent() -> No
     fig, ax = plt.subplots()
 
     helper = AxisHelper(ax)
-    helper.format_side(
+    helper.format_axis(
         side="left",
         mode="continuous",
         data=y,
@@ -662,7 +948,7 @@ def test_axis_helper_continuous_side_height_ratio_changes_padding_extent() -> No
     )
     wide_extent = max(abs(bound) for bound in ax.get_ylim())
 
-    helper.format_side(
+    helper.format_axis(
         side="left",
         mode="continuous",
         data=y,
@@ -676,11 +962,13 @@ def test_axis_helper_continuous_side_height_ratio_changes_padding_extent() -> No
     assert wide_extent > narrow_extent
 
 
-def test_axis_helper_no_longer_exposes_format_waveform() -> None:
+def test_axis_helper_exposes_format_axis_instead_of_format_side() -> None:
     fig, ax = plt.subplots()
 
     helper = AxisHelper(ax)
 
+    assert hasattr(helper, "format_axis")
+    assert not hasattr(helper, "format_side")
     assert not hasattr(helper, "format_waveform")
 
 
@@ -744,13 +1032,38 @@ def test_plotter_preserves_existing_legend_unless_explicitly_overridden() -> Non
     assert "sample-a" in labels
 
 
+def test_plotter_does_not_create_legend_by_default() -> None:
+    dataset = PlotDataset.from_axis_value(
+        axis=[0.0, 1.0, 2.0],
+        value=[1.0, 2.0, 3.0],
+        name="sample-a",
+        category=PlotCategory.SAMPLE,
+    )
+    fig, ax = plt.subplots()
+
+    result = FramePlotter().plot_dataset(dataset, ax=ax)
+
+    assert result.axes[0].get_legend() is None
+
+
+def test_one_third_octave_plotter_does_not_create_legend_by_default() -> None:
+    accel = AccelSeries.from_data(np.random.randn(1200) * 0.01, dt=0.002)
+    otovl = accel.eval_otovl(freq_range=(1.0, 80.0))
+    dataset = PlotDataset.from_model(otovl)
+    fig, ax = plt.subplots()
+
+    result = OneThirdOctavePlotter().plot_dataset(dataset, ax=ax)
+
+    assert result.axes[0].get_legend() is None
+
+
 def test_axis_helper_formats_continuous_axis_with_scientific_offset() -> None:
     values = np.array([0.001, 0.002, 0.003], dtype=float)
     fig, ax = plt.subplots()
     ax.plot([0.0, 1.0, 2.0], values, label="sample-a")
 
     helper = AxisHelper(ax)
-    helper.format_side(
+    helper.format_axis(
         side="left",
         mode="continuous",
         data=values,
@@ -772,7 +1085,7 @@ def test_axis_helper_preserves_scientific_offset_after_canvas_draw() -> None:
     ax.plot([0.0, 1.0, 2.0], values, label="sample-a")
 
     helper = AxisHelper(ax)
-    helper.format_side(
+    helper.format_axis(
         side="left",
         mode="continuous",
         data=values,
@@ -795,7 +1108,7 @@ def test_axis_helper_scientific_fontsize_defaults_to_tick_label_size() -> None:
     ax.tick_params(axis="y", labelsize=11)
 
     helper = AxisHelper(ax)
-    helper.format_side(
+    helper.format_axis(
         side="left",
         mode="continuous",
         data=values,
@@ -813,7 +1126,7 @@ def test_axis_helper_scientific_fontsize_can_be_overridden() -> None:
     ax.tick_params(axis="y", labelsize=11)
 
     helper = AxisHelper(ax)
-    helper.format_side(
+    helper.format_axis(
         side="left",
         mode="continuous",
         data=values,
@@ -831,7 +1144,7 @@ def test_axis_helper_can_force_scientific_exponent() -> None:
     ax.plot([0.0, 1.0, 2.0], values)
 
     helper = AxisHelper(ax)
-    helper.format_side(
+    helper.format_axis(
         side="left",
         mode="continuous",
         data=values,
@@ -854,7 +1167,7 @@ def test_axis_helper_formats_continuous_axis_with_num_segments_and_tick_bounds()
     ax.plot([0.0, 1.0, 2.0], values)
 
     helper = AxisHelper(ax)
-    helper.format_side(
+    helper.format_axis(
         side="left",
         mode="continuous",
         data=values,
@@ -881,7 +1194,7 @@ def test_axis_helper_uses_tick_range_for_ticks_and_height_ratio_for_display_boun
     ax.plot([0.0, 1.0, 2.0], values)
 
     helper = AxisHelper(ax)
-    helper.format_side(
+    helper.format_axis(
         side="left",
         mode="continuous",
         data=values,
@@ -904,7 +1217,7 @@ def test_axis_helper_uses_baseline_to_symmetrize_tick_range_when_bounds_not_give
     ax.plot([0.0, 1.0, 2.0, 3.0], values)
 
     helper = AxisHelper(ax)
-    helper.format_side(
+    helper.format_axis(
         side="left",
         mode="continuous",
         data=values,
@@ -923,7 +1236,7 @@ def test_axis_helper_auto_ticks_choose_readable_step() -> None:
     ax.plot([0.0, 1.0], values)
 
     helper = AxisHelper(ax)
-    helper.format_side(
+    helper.format_axis(
         side="left",
         mode="continuous",
         data=values,
@@ -939,7 +1252,7 @@ def test_axis_helper_auto_ticks_can_include_zero_with_cross_zero_data() -> None:
     ax.plot([0.0, 1.0], values)
 
     helper = AxisHelper(ax)
-    helper.format_side(
+    helper.format_axis(
         side="left",
         mode="continuous",
         data=values,
@@ -958,7 +1271,7 @@ def test_axis_helper_auto_ticks_handles_degenerate_interval() -> None:
     ax.plot([0.0, 1.0, 2.0], values)
 
     helper = AxisHelper(ax)
-    helper.format_side(
+    helper.format_axis(
         side="left",
         mode="continuous",
         data=values,
@@ -976,7 +1289,7 @@ def test_axis_helper_formats_discrete_bottom_axis() -> None:
     labels = ["1", "1.25", "1.6", "2", "2.5"]
 
     helper = AxisHelper(ax)
-    helper.format_side(
+    helper.format_axis(
         side="bottom",
         mode="discrete",
         positions=positions,
@@ -995,7 +1308,7 @@ def test_axis_helper_formats_discrete_top_axis_with_rotation_and_fontsize() -> N
     labels = ["10", "12.5", "16"]
 
     helper = AxisHelper(ax)
-    helper.format_side(
+    helper.format_axis(
         side="top",
         mode="discrete",
         positions=positions,
@@ -1026,14 +1339,14 @@ def test_axis_helper_can_style_existing_legend() -> None:
 
 def test_object_level_plotting_api_is_removed() -> None:
     accel = AccelSeries.from_data([0.0, 0.1, -0.05], dt=0.01)
-    sample = Sample.from_accel_data(
+    sample = DefaultSample.from_accel_data(
         [0.0, 0.1, -0.02],
         dt=0.01,
         sample_domain=SampleDomain.VIBRATION_TEST,
         metadata_cls=VibrationTestMetadata,
         **_make_vibration_kwargs(),
     )
-    sample_set = SampleSet.from_samples([sample], sample_domain=SampleDomain.VIBRATION_TEST)
+    sample_set = DefaultSampleSet.from_samples([sample], sample_domain=SampleDomain.VIBRATION_TEST)
 
     assert not hasattr(dt_plotting, "plot_model")
     assert not hasattr(dt_plotting, "plot_sample")

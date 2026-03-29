@@ -1,16 +1,11 @@
-"""振动评价指标计算入口。"""
+"""振动评价与响应谱底层计算入口。"""
 
 from __future__ import annotations
 
-import numpy as np
-import pandas as pd
+from typing import Any
 
-from .results import (
-    FDMVLComputeResult,
-    FPVDVComputeResult,
-    OTOVLComputeResult,
-    ZVLComputeResult,
-)
+import numpy as np
+
 from .solvers import (
     FreqDivMaxVibLevelSolver,
     FourPowVibDoseValueSolver,
@@ -34,7 +29,7 @@ def zvl_from_accel(
     accel_unit: str | None = None,
     calc_unit_system: UnitSystem | None = None,
     output_unit_system: UnitSystem | None = None,
-) -> ZVLComputeResult:
+) -> dict[str, Any]:
     """根据加速度时程计算 Z 振级。"""
 
     calc_units = calc_unit_system or get_default_unit_system()
@@ -52,24 +47,24 @@ def zvl_from_accel(
         time_windows=time_windows,
     )
     zvl, aw = solver.solve()
-    return ZVLComputeResult(
-        zvl=float(
+    return {
+        "zvl": float(
             convert_array(
                 np.asarray([zvl]),
                 from_unit=calc_units.level,
                 to_unit=out_units.level,
             ).flat[0]
         ),
-        aw=float(
+        "aw": float(
             convert_array(
                 np.asarray([aw]),
                 from_unit=calc_units.weighted_acceleration,
                 to_unit=out_units.weighted_acceleration,
             ).flat[0]
         ),
-        units={"zvl": out_units.level, "aw": out_units.weighted_acceleration},
-        unit_system=out_units,
-    )
+        "units": {"zvl": out_units.level, "aw": out_units.weighted_acceleration},
+        "unit_system": out_units,
+    }
 
 
 def otovl_from_accel(
@@ -81,7 +76,7 @@ def otovl_from_accel(
     accel_unit: str | None = None,
     calc_unit_system: UnitSystem | None = None,
     output_unit_system: UnitSystem | None = None,
-) -> OTOVLComputeResult:
+) -> dict[str, Any]:
     """根据加速度时程计算 1/3 倍频程分频振级。"""
 
     calc_units = calc_unit_system or get_default_unit_system()
@@ -98,29 +93,29 @@ def otovl_from_accel(
         time_windows=time_windows,
     )
     otovl_env, otovl_data = solver.solve()
-    return OTOVLComputeResult(
-        freq=convert_array(
+    return {
+        "freq": convert_array(
             solver.center_freqs,
             from_unit=calc_units.frequency,
             to_unit=out_units.frequency,
         ),
-        comps=convert_array(
+        "comps": convert_array(
             otovl_data,
             from_unit=calc_units.level,
             to_unit=out_units.level,
         ),
-        env=convert_array(
+        "env": convert_array(
             otovl_env,
             from_unit=calc_units.level,
             to_unit=out_units.level,
         ),
-        units={
+        "units": {
             "freq": out_units.frequency,
             "comps": out_units.level,
             "env": out_units.level,
         },
-        unit_system=out_units,
-    )
+        "unit_system": out_units,
+    }
 
 
 def fdmvl_from_accel(
@@ -131,7 +126,7 @@ def fdmvl_from_accel(
     accel_unit: str | None = None,
     calc_unit_system: UnitSystem | None = None,
     output_unit_system: UnitSystem | None = None,
-) -> FDMVLComputeResult:
+) -> dict[str, Any]:
     """根据加速度时程计算分频最大振级。"""
 
     calc_units = calc_unit_system or get_default_unit_system()
@@ -147,31 +142,31 @@ def fdmvl_from_accel(
         freq_range=freq_range,
     )
     fdmvl, fdvls = solver.solve()
-    return FDMVLComputeResult(
-        fdmvl=float(
+    return {
+        "fdmvl": float(
             convert_array(
                 np.asarray([fdmvl]),
                 from_unit=calc_units.level,
                 to_unit=out_units.level,
             ).flat[0]
         ),
-        freq=convert_array(
+        "freq": convert_array(
             solver.center_freqs,
             from_unit=calc_units.frequency,
             to_unit=out_units.frequency,
         ),
-        fdvls=convert_array(
+        "fdvls": convert_array(
             fdvls,
             from_unit=calc_units.level,
             to_unit=out_units.level,
         ),
-        units={
+        "units": {
             "fdmvl": out_units.level,
             "freq": out_units.frequency,
             "fdvls": out_units.level,
         },
-        unit_system=out_units,
-    )
+        "unit_system": out_units,
+    }
 
 
 def fpvdv_from_accel(
@@ -183,7 +178,7 @@ def fpvdv_from_accel(
     accel_unit: str | None = None,
     calc_unit_system: UnitSystem | None = None,
     output_unit_system: UnitSystem | None = None,
-) -> FPVDVComputeResult:
+) -> dict[str, Any]:
     """根据加速度时程计算四次方振动剂量值。"""
 
     calc_units = calc_unit_system or get_default_unit_system()
@@ -201,31 +196,31 @@ def fpvdv_from_accel(
     )
     fpvdv, aw = solver.solve()
     aw_time = LinearSequence.generate_time(num=aw.shape[0], dt=dt)
-    return FPVDVComputeResult(
-        fpvdv=float(
+    return {
+        "fpvdv": float(
             convert_array(
                 np.asarray([fpvdv]),
                 from_unit=calc_units.vibration_dose_value,
                 to_unit=out_units.vibration_dose_value,
             ).flat[0]
         ),
-        aw_time=convert_array(
+        "aw_time": convert_array(
             aw_time,
             from_unit="second",
             to_unit=out_units.time,
         ),
-        aw_value=convert_array(
+        "aw_value": convert_array(
             aw,
             from_unit=calc_units.weighted_acceleration,
             to_unit=out_units.weighted_acceleration,
         ),
-        units={
+        "units": {
             "fpvdv": out_units.vibration_dose_value,
             "aw_time": out_units.time,
             "aw_value": out_units.weighted_acceleration,
         },
-        unit_system=out_units,
-    )
+        "unit_system": out_units,
+    }
 
 
 def respspec_from_accel(
@@ -237,8 +232,8 @@ def respspec_from_accel(
     accel_unit: str | None = None,
     calc_unit_system: UnitSystem | None = None,
     output_unit_system: UnitSystem | None = None,
-) -> pd.DataFrame:
-    """根据加速度时程计算反应谱。"""
+) -> dict[str, Any]:
+    """根据加速度时程计算响应谱。"""
 
     calc_units = calc_unit_system or get_default_unit_system()
     out_units = output_unit_system or get_default_unit_system()
@@ -249,55 +244,59 @@ def respspec_from_accel(
         from_unit=accel_unit or calc_units.acceleration,
         to_unit=calc_units.acceleration,
     )
-    df = SDOFSolver.solve_from_accel(
+    frame = SDOFSolver.solve_from_accel(
         periods=periods,
         accel=accel_si,
         accel_dt=dt,
         method=method,
     )
-    return pd.DataFrame(
-        {
-            f"sa [{out_units.acceleration}]": convert_array(
-                df["sa (m/s^2)"].to_numpy(),
-                from_unit=calc_units.acceleration,
-                to_unit=out_units.acceleration,
-            ),
-            f"sv [{out_units.velocity}]": convert_array(
-                df["sv (m/s)"].to_numpy(),
-                from_unit=calc_units.velocity,
-                to_unit=out_units.velocity,
-            ),
-            f"sd [{out_units.displacement}]": convert_array(
-                df["sd (m)"].to_numpy(),
-                from_unit=calc_units.displacement,
-                to_unit=out_units.displacement,
-            ),
-            f"psa [{out_units.acceleration}]": convert_array(
-                df["psa (m/s^2)"].to_numpy(),
-                from_unit=calc_units.acceleration,
-                to_unit=out_units.acceleration,
-            ),
-            f"psv [{out_units.velocity}]": convert_array(
-                df["psv (m/s)"].to_numpy(),
-                from_unit=calc_units.velocity,
-                to_unit=out_units.velocity,
-            ),
-        },
-        index=pd.Index(
-            convert_array(
-                df["periods (s)"].to_numpy(),
-                from_unit="second",
-                to_unit=out_units.period,
-            ),
-            name=f"period [{out_units.period}]",
+    return {
+        "period": convert_array(
+            frame["periods (s)"].to_numpy(),
+            from_unit="second",
+            to_unit=out_units.period,
         ),
-    )
+        "sa": convert_array(
+            frame["sa (m/s^2)"].to_numpy(),
+            from_unit=calc_units.acceleration,
+            to_unit=out_units.acceleration,
+        ),
+        "sv": convert_array(
+            frame["sv (m/s)"].to_numpy(),
+            from_unit=calc_units.velocity,
+            to_unit=out_units.velocity,
+        ),
+        "sd": convert_array(
+            frame["sd (m)"].to_numpy(),
+            from_unit=calc_units.displacement,
+            to_unit=out_units.displacement,
+        ),
+        "psa": convert_array(
+            frame["psa (m/s^2)"].to_numpy(),
+            from_unit=calc_units.acceleration,
+            to_unit=out_units.acceleration,
+        ),
+        "psv": convert_array(
+            frame["psv (m/s)"].to_numpy(),
+            from_unit=calc_units.velocity,
+            to_unit=out_units.velocity,
+        ),
+        "units": {
+            "period": out_units.period,
+            "sa": out_units.acceleration,
+            "sv": out_units.velocity,
+            "sd": out_units.displacement,
+            "psa": out_units.acceleration,
+            "psv": out_units.velocity,
+        },
+        "unit_system": out_units,
+    }
 
 
 __all__ = [
-    "zvl_from_accel",
-    "otovl_from_accel",
     "fdmvl_from_accel",
     "fpvdv_from_accel",
+    "otovl_from_accel",
     "respspec_from_accel",
+    "zvl_from_accel",
 ]

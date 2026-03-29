@@ -5,10 +5,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable, TypeAlias, TypeVar
 
+from ..domain.constants import DataCategory
 from ..domain.enums import SampleDomain
 from ..domain.metadata import MetadataBase
 from ..domain.models import DataModelBase
 from ..domain.samples import SampleBaseModel, SampleSetBase
+from ..domain.samples.types import SampleLoadMode, SampleSetViewOptions, StorageAccessMode
 from .runtime import StorageRuntime
 from .types import AttrDataFormat, ContainerFormat, NameResolver, StorageMode, StorageScheme
 
@@ -207,8 +209,14 @@ def load_sample_set(
 
 
 __all__ = [
+    "DataCategory",
+    "SampleDomain",
+    "SampleLoadMode",
+    "SampleSetViewOptions",
+    "StorageAccessMode",
     "AttrDataFormat",
     "ContainerFormat",
+    "NameResolver",
     "StorageMode",
     "StorageScheme",
     "connect_sample_set",

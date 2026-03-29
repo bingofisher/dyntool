@@ -79,6 +79,14 @@ class SampleBase(BaseModel):
 
         return self.sample_schema.version
 
+    @property
+    def compute(self) -> Any:
+        """返回样本的统一计算入口。"""
+
+        from ..compute_api import SampleComputeNamespace
+
+        return SampleComputeNamespace(self)
+
     @model_validator(mode="before")
     @classmethod
     def _prevent_direct_instantiation(cls, data: Any) -> Any:
@@ -578,6 +586,12 @@ class SampleBase(BaseModel):
         self.metadata.update(**kwargs)
         return self
 
+    def patch_metadata(self, **kwargs: Any) -> Self:
+        """原位补丁更新当前元数据对象。"""
+
+        self.metadata.update(**kwargs)
+        return self
+
     def replace_metadata(self, metadata: MetadataBase) -> Self:
         """替换当前元数据对象。"""
 
@@ -602,6 +616,11 @@ class SampleBase(BaseModel):
         if self._storage_set is not None:
             self._storage_set.storage_dirty = True
         return self
+
+    def reset_alias(self) -> Self:
+        """恢复使用自动 alias。"""
+
+        return self.clear_alias_override()
 
     def refresh_alias(self, *, force: bool = False) -> Self:
         """刷新当前样本 alias。
@@ -786,9 +805,40 @@ class SampleBase(BaseModel):
     def flow(self) -> Any:
         """返回以当前样本为起点的计算流。"""
 
-        from ...compute.flow import ComputeFlow
+        return self.compute.flow()
 
-        return ComputeFlow(_result=self)
+    def pga(self, *, source: str = "accel") -> float:
+        """返回样本指定槽位的 PGA。"""
+
+        model = self.get_data_var(source)
+        if model is None:
+            raise ValueError(f"槽位 '{source}' 没有已加载的数据")
+        metric = getattr(model, "pga", None)
+        if not callable(metric):
+            raise TypeError(f"槽位 '{source}' 不支持 pga()")
+        return float(metric())
+
+    def pgv(self, *, source: str = "vel") -> float:
+        """返回样本指定槽位的 PGV。"""
+
+        model = self.get_data_var(source)
+        if model is None:
+            raise ValueError(f"槽位 '{source}' 没有已加载的数据")
+        metric = getattr(model, "pgv", None)
+        if not callable(metric):
+            raise TypeError(f"槽位 '{source}' 不支持 pgv()")
+        return float(metric())
+
+    def pgd(self, *, source: str = "disp") -> float:
+        """返回样本指定槽位的 PGD。"""
+
+        model = self.get_data_var(source)
+        if model is None:
+            raise ValueError(f"槽位 '{source}' 没有已加载的数据")
+        metric = getattr(model, "pgd", None)
+        if not callable(metric):
+            raise TypeError(f"槽位 '{source}' 不支持 pgd()")
+        return float(metric())
 
     def preprocess(self, *, strict: bool | None = None, **kwargs: Any) -> OperationResult[Self]:
         """执行加速度预处理工作流。

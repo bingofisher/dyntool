@@ -11,18 +11,105 @@ import numpy as np
 import pandas as pd
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
+from matplotlib.lines import Line2D
 from numpy.typing import ArrayLike
 
 from ..domain.limits.base import LimitModelBase
 from ..domain.models.base import DataModelBase
 from .axes import AxisFrame, AxisHelper, DiscreteAxisFormatter, GridFrame, LegendHelper
 from .dataset import PlotCategory, PlotDataset
-from .types import PlotResult, PlotterKind
+from .types import PlotResult, PlotStatMetric, PlotterKind
 
 _ASSETS_DIR = Path(__file__).resolve().parent / "assets"
 PlotInput: TypeAlias = (
     PlotDataset | pd.DataFrame | np.ndarray | tuple[ArrayLike, ArrayLike] | DataModelBase | LimitModelBase
 )
+
+StatMetricInput: TypeAlias = PlotStatMetric | str
+
+_BOX_STYLE_GROUPS: dict[str, tuple[str, ...]] = {
+    "box": ("facecolor", "edgecolor", "linewidth", "linestyle"),
+    "whisker": ("color", "linewidth", "linestyle"),
+    "cap": ("color", "linewidth", "linestyle"),
+    "median": ("color", "linewidth", "linestyle"),
+    "mean": ("color", "linewidth", "linestyle"),
+    "flier": ("marker", "markerfacecolor", "markeredgecolor", "markersize"),
+}
+_BOX_STYLE_DEFAULTS: dict[str, dict[str, Any]] = {
+    "box": {"facecolor": "#dddddd", "edgecolor": "black", "linewidth": 0.8, "linestyle": "-"},
+    "whisker": {"color": "black", "linewidth": 0.8, "linestyle": "-"},
+    "cap": {"color": "black", "linewidth": 0.8, "linestyle": "-"},
+    "median": {"color": "black", "linewidth": 0.8, "linestyle": "-"},
+    "mean": {"color": "blue", "linewidth": 1.5, "linestyle": "-"},
+    "flier": {
+        "marker": "o",
+        "markerfacecolor": "red",
+        "markeredgecolor": "red",
+        "markersize": 4,
+        "linestyle": "none",
+    },
+}
+_STAT_STYLE_DEFAULTS: dict[PlotStatMetric, dict[str, Any]] = {
+    PlotStatMetric.MEAN: {"color": "blue", "linewidth": 1.5, "linestyle": "-"},
+    PlotStatMetric.MEDIAN: {"color": "black", "linewidth": 1.2, "linestyle": "-"},
+    PlotStatMetric.MIN: {"color": "gray", "linewidth": 1.0, "linestyle": "--"},
+    PlotStatMetric.MAX: {"color": "gray", "linewidth": 1.0, "linestyle": "--"},
+    PlotStatMetric.Q1: {"color": "dimgray", "linewidth": 1.0, "linestyle": "-."},
+    PlotStatMetric.Q3: {"color": "dimgray", "linewidth": 1.0, "linestyle": "-."},
+}
+
+
+def _normalize_stat_metric(metric: StatMetricInput) -> PlotStatMetric:
+    if isinstance(metric, PlotStatMetric):
+        return metric
+    return PlotStatMetric(str(metric).strip().lower())
+
+
+def _stat_label(metric: PlotStatMetric, overrides: Mapping[str, str] | None = None) -> str:
+    if overrides is None:
+        return metric.label
+    return str(overrides.get(metric.value, metric.label))
+
+
+def _compute_statistic(values: np.ndarray, metric: PlotStatMetric) -> np.ndarray:
+    all_nan_rows = ~np.isfinite(values).any(axis=1)
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message="Mean of empty slice", category=RuntimeWarning)
+        warnings.filterwarnings("ignore", message="All-NaN slice encountered", category=RuntimeWarning)
+        if metric == PlotStatMetric.MEAN:
+            result = np.nanmean(values, axis=1)
+        elif metric == PlotStatMetric.MEDIAN:
+            result = np.nanmedian(values, axis=1)
+        elif metric == PlotStatMetric.MIN:
+            result = np.nanmin(values, axis=1)
+        elif metric == PlotStatMetric.MAX:
+            result = np.nanmax(values, axis=1)
+        elif metric == PlotStatMetric.Q1:
+            result = np.nanquantile(values, 0.25, axis=1)
+        elif metric == PlotStatMetric.Q3:
+            result = np.nanquantile(values, 0.75, axis=1)
+        else:
+            raise ValueError(f"不支持的统计指标: {metric}")
+    result = np.asarray(result, dtype=float)
+    result[all_nan_rows] = np.nan
+    return result
+
+
+def normalize_boxplot_style(style: Mapping[str, Any] | None = None) -> dict[str, dict[str, Any]]:
+    """将 BoxPlotter 的扁平命名空间样式解析为 ``Axes.boxplot`` 的 ``*props``。"""
+
+    normalized = {group: dict(defaults) for group, defaults in _BOX_STYLE_DEFAULTS.items()}
+    if style is None:
+        return normalized
+    for raw_key, raw_value in style.items():
+        if "." not in raw_key:
+            continue
+        group, prop = raw_key.split(".", 1)
+        allowed = _BOX_STYLE_GROUPS.get(group)
+        if allowed is None or prop not in allowed:
+            continue
+        normalized[group][prop] = raw_value
+    return normalized
 
 
 @dataclass(slots=True)
@@ -276,6 +363,7 @@ class PlotterBase:
         names: Sequence[str] | None = None,
         ax: Axes | None = None,
         legend_options: Mapping[str, Any] | None = None,
+        **plot_options: Any,
     ) -> PlotResult:
         """绘制当前持有的数据集。"""
 
@@ -285,6 +373,7 @@ class PlotterBase:
             names=names,
             ax=ax,
             legend_options=legend_options,
+            **plot_options,
         )
 
     def plot_dataset(
@@ -295,6 +384,7 @@ class PlotterBase:
         names: Sequence[str] | None = None,
         ax: Axes | None = None,
         legend_options: Mapping[str, Any] | None = None,
+        **plot_options: Any,
     ) -> PlotResult:
         """绘制显式提供的数据集。"""
 
@@ -305,6 +395,7 @@ class PlotterBase:
             names=names,
             ax=ax,
             legend_options=legend_options,
+            **plot_options,
         )
 
     def _plot_dataset(
@@ -315,6 +406,7 @@ class PlotterBase:
         names: Sequence[str] | None = None,
         ax: Axes | None = None,
         legend_options: Mapping[str, Any] | None = None,
+        **plot_options: Any,
     ) -> PlotResult:
         raise NotImplementedError
 
@@ -454,18 +546,53 @@ class PlotterBase:
         legend_options: Mapping[str, Any] | None,
     ) -> None:
         if legend_options is None:
-            existing_legend = ax.get_legend()
-            if existing_legend is not None:
-                return
-            options = dict(self.default_legend_options or {})
-        else:
-            options = dict(legend_options)
+            return
+
+        options = dict(self.default_legend_options or {})
+        options.update(legend_options)
 
         handles, labels = self._collect_visible_legend_items(ax)
         if not handles:
             return
         helper = LegendHelper(ax)
         helper.apply(legend_options=options, handles=handles, labels=labels)
+
+    def _resolve_stat_metrics(self, stats: Sequence[StatMetricInput] | None) -> tuple[PlotStatMetric, ...]:
+        if not stats:
+            return tuple()
+        return tuple(_normalize_stat_metric(item) for item in stats)
+
+    def _sample_keys(self, keys: Sequence[tuple[str, str]]) -> list[tuple[str, str]]:
+        return [key for key in keys if key[0] == PlotCategory.SAMPLE.value]
+
+    def _sample_matrix(self, dataset: PlotDataset, sample_keys: Sequence[tuple[str, str]]) -> np.ndarray:
+        if not sample_keys:
+            raise ValueError("自动统计至少需要一列 SAMPLE 数据。")
+        return np.column_stack([dataset._column_values(key) for key in sample_keys]).astype(float)
+
+    def _register_proxy_artist(
+        self,
+        ax: Axes,
+        *,
+        label: str,
+        style: Mapping[str, Any],
+        marker_only: bool = False,
+    ) -> Line2D:
+        line_style = "none" if marker_only else str(style.get("linestyle", "-"))
+        handle = Line2D(
+            [],
+            [],
+            label=label,
+            color=style.get("color"),
+            linewidth=style.get("linewidth", 1.0),
+            linestyle=line_style,
+            marker=style.get("marker"),
+            markerfacecolor=style.get("markerfacecolor"),
+            markeredgecolor=style.get("markeredgecolor"),
+            markersize=style.get("markersize"),
+        )
+        ax.add_line(handle)
+        return handle
 
 
 class FramePlotter(PlotterBase):
@@ -479,8 +606,61 @@ class FramePlotter(PlotterBase):
         PlotCategory.ENVELOPE.value,
         PlotCategory.STAT.value,
         PlotCategory.LIMIT.value,
-        PlotCategory.LIMIT_UPPER.value,
-        PlotCategory.LIMIT_LOWER.value,
+    )
+    default_legend_options = {"loc": "best"}
+
+    def _plot_dataset(
+        self,
+        dataset: PlotDataset,
+        *,
+        categories: Sequence[PlotCategory | str] | None = None,
+        names: Sequence[str] | None = None,
+        ax: Axes | None = None,
+        legend_options: Mapping[str, Any] | None = None,
+        stats: Sequence[StatMetricInput] | None = None,
+        stat_label_overrides: Mapping[str, str] | None = None,
+    ) -> PlotResult:
+        keys = [item.as_tuple() for item in self._sorted_keys(dataset, categories=categories, names=names)]
+        if not keys:
+            raise ValueError("当前 PlotDataset 中没有匹配的曲线可供绘制。")
+        fig, target_ax = self._resolve_target_axes(ax)
+        self._apply_axis_frame(target_ax)
+        axis_values = dataset._axis_values()
+        for key in keys:
+            style = self._resolve_style(dataset, key, default_style={})
+            target_ax.plot(axis_values, dataset._column_values(key), **style)
+        sample_keys = self._sample_keys(keys)
+        stat_metrics = self._resolve_stat_metrics(stats)
+        if stat_metrics and sample_keys:
+            sample_matrix = self._sample_matrix(dataset, sample_keys)
+            for metric in stat_metrics:
+                target_ax.plot(
+                    axis_values,
+                    _compute_statistic(sample_matrix, metric),
+                    label=_stat_label(metric, stat_label_overrides),
+                    **_STAT_STYLE_DEFAULTS[metric],
+                )
+        axis_unit = self._resolve_axis_unit(dataset, keys)
+        value_unit = self._resolve_value_unit(dataset, keys)
+        self._set_axis_labels_if_missing(
+            target_ax,
+            xlabel=self.with_unit(self.default_x_label, axis_unit),
+            ylabel=self.with_unit(self.default_y_label, value_unit),
+        )
+        self._apply_legend(target_ax, legend_options=legend_options)
+        self._finalize_figure(fig)
+        return PlotResult(raw=fig, figure=fig, axes=(target_ax,))
+
+
+class _LegacyBoxPlotter(PlotterBase):
+    """基于 ``PlotDataset`` 的箱型图绘图器。"""
+
+    plotter_kind = PlotterKind.BOX
+    default_x_label = "group"
+    default_y_label = "value"
+    category_order = (
+        PlotCategory.SAMPLE.value,
+        PlotCategory.LIMIT.value,
     )
     default_legend_options = {"loc": "best"}
 
@@ -495,23 +675,383 @@ class FramePlotter(PlotterBase):
     ) -> PlotResult:
         keys = [item.as_tuple() for item in self._sorted_keys(dataset, categories=categories, names=names)]
         if not keys:
-            raise ValueError("当前 PlotDataset 中没有匹配的曲线可供绘制。")
+            raise ValueError("当前 PlotDataset 中没有匹配的箱型图数据。")
+
+        sample_keys = [key for key in keys if key[0] == PlotCategory.SAMPLE.value]
+        if not sample_keys:
+            raise ValueError("箱型图至少需要一组 SAMPLE 数据。")
+        limit_keys = [key for key in keys if key[0] == PlotCategory.LIMIT.value]
+
+        sample_values = [self._finite_sample_values(dataset, key) for key in sample_keys]
+        if not any(values.size > 0 for values in sample_values):
+            raise ValueError("箱型图至少需要一组非空样本。")
+        if any(values.size == 0 for values in sample_values):
+            raise ValueError("箱型图的每个 SAMPLE 列都必须包含至少一个有效样本。")
+
         fig, target_ax = self._resolve_target_axes(ax)
         self._apply_axis_frame(target_ax)
-        axis_values = dataset._axis_values()
-        for key in keys:
-            style = self._resolve_style(dataset, key, default_style={})
-            target_ax.plot(axis_values, dataset._column_values(key), **style)
-        axis_unit = self._resolve_axis_unit(dataset, keys)
-        value_unit = self._resolve_value_unit(dataset, keys)
+
+        positions = np.arange(1, len(sample_keys) + 1, dtype=float)
+        boxplot = target_ax.boxplot(
+            sample_values,
+            positions=positions,
+            widths=0.55,
+            patch_artist=True,
+            showmeans=True,
+            meanline=True,
+            boxprops={"facecolor": "#dddddd", "edgecolor": "black", "linewidth": 0.8},
+            whiskerprops={"color": "black", "linewidth": 0.8},
+            capprops={"color": "black", "linewidth": 0.8},
+            medianprops={"color": "black", "linewidth": 0.8},
+            meanprops={"color": "blue", "linewidth": 1.5, "linestyle": "-"},
+            flierprops={
+                "marker": "o",
+                "markerfacecolor": "red",
+                "markeredgecolor": "red",
+                "markersize": 4,
+                "linestyle": "none",
+            },
+        )
+
+        target_ax.set_xticks(positions)
+        target_ax.set_xticklabels([self._sample_label(dataset, key) for key in sample_keys])
+
+        limit_artists = tuple(self._plot_limit_lines(target_ax, dataset, limit_keys))
+        value_unit = self._resolve_value_unit(dataset, sample_keys + limit_keys)
         self._set_axis_labels_if_missing(
             target_ax,
-            xlabel=self.with_unit(self.default_x_label, axis_unit),
+            xlabel=self.default_x_label,
             ylabel=self.with_unit(self.default_y_label, value_unit),
+        )
+        self._apply_box_legend(target_ax, dataset, limit_keys, legend_options=legend_options)
+        self._finalize_figure(fig)
+
+        artists = (
+            tuple(boxplot.get("boxes", ()))
+            + tuple(boxplot.get("whiskers", ()))
+            + tuple(boxplot.get("caps", ()))
+            + tuple(boxplot.get("medians", ()))
+            + tuple(boxplot.get("means", ()))
+            + tuple(boxplot.get("fliers", ()))
+            + limit_artists
+        )
+        return PlotResult(raw=fig, figure=fig, axes=(target_ax,), artists=artists)
+
+    @staticmethod
+    def _finite_sample_values(dataset: PlotDataset, key: tuple[str, str]) -> np.ndarray:
+        values = np.asarray(dataset._column_values(key), dtype=float)
+        return values[np.isfinite(values)]
+
+    @staticmethod
+    def _sample_label(dataset: PlotDataset, key: tuple[str, str]) -> str:
+        label = dataset._column_meta(key)["label"]
+        return str(label) if label else key[1]
+
+    def _plot_limit_lines(
+        self,
+        ax: Axes,
+        dataset: PlotDataset,
+        limit_keys: Sequence[tuple[str, str]],
+    ) -> list[Line2D]:
+        artists: list[Line2D] = []
+        for key in limit_keys:
+            value = self._resolve_limit_value(dataset, key)
+            style = self._resolve_style(
+                dataset,
+                key,
+                default_style={"linewidth": 1.0, "linestyle": "--", "color": "darkorange"},
+            )
+            artists.append(ax.axhline(value, **style))
+        return artists
+
+    @staticmethod
+    def _resolve_limit_value(dataset: PlotDataset, key: tuple[str, str]) -> float:
+        raw_values = np.asarray(dataset._column_values(key), dtype=float)
+        finite_values = raw_values[np.isfinite(raw_values)]
+        if finite_values.size == 0:
+            raise ValueError("限值线必须是单一数值水平线。")
+        first = float(finite_values[0])
+        if not np.allclose(finite_values, first):
+            raise ValueError("限值线必须是单一数值水平线。")
+        return first
+
+    def _apply_box_legend(
+        self,
+        ax: Axes,
+        dataset: PlotDataset,
+        limit_keys: Sequence[tuple[str, str]],
+        *,
+        legend_options: Mapping[str, Any] | None,
+    ) -> None:
+        if legend_options is None:
+            return
+
+        options = dict(self.default_legend_options or {})
+        options.update(legend_options)
+
+        handles: list[Line2D] = [
+            Line2D([0], [0], color="blue", linewidth=1.5, linestyle="-", label="均值"),
+            Line2D(
+                [0],
+                [0],
+                color="red",
+                marker="o",
+                linestyle="none",
+                markersize=4,
+                label="异常值",
+            ),
+        ]
+        labels = ["均值", "异常值"]
+
+        for key in limit_keys:
+            meta = dataset._column_meta(key)
+            style = meta["style"] if isinstance(meta["style"], Mapping) else {}
+            label = str(meta["label"]) if meta["label"] else key[1]
+            handles.append(
+                Line2D(
+                    [0],
+                    [0],
+                    color=str(style.get("color", "darkorange")),
+                    linewidth=float(style.get("linewidth", 1.0)),
+                    linestyle=str(style.get("linestyle", "--")),
+                    label=label,
+                )
+            )
+            labels.append(label)
+
+        helper = LegendHelper(ax)
+        helper.apply(legend_options=options, handles=handles, labels=labels)
+
+
+class BoxPlotter(PlotterBase):
+    """基于 ``PlotDataset`` 的箱型图 plotter。
+
+    Public API:
+        - 输入仍为 ``PlotDataset``，每个 ``SAMPLE`` 列对应一个箱体组。
+        - 样式来源于列级 ``style`` 元数据，可通过
+          ``PlotDataset.from_axis_value(..., style=...)``、
+          ``PlotDataset.add_axis_value(..., style=...)``、
+          ``PlotDataset.set_style(...)`` 写入。
+        - ``style_defaults`` 允许在 plotter 级提供箱型图默认样式，再由列级 ``style`` 覆盖。
+
+    支持的样式键:
+        - ``box.facecolor`` / ``box.edgecolor`` / ``box.linewidth`` / ``box.linestyle``
+        - ``whisker.color`` / ``whisker.linewidth`` / ``whisker.linestyle``
+        - ``cap.color`` / ``cap.linewidth`` / ``cap.linestyle``
+        - ``median.color`` / ``median.linewidth`` / ``median.linestyle``
+        - ``mean.color`` / ``mean.linewidth`` / ``mean.linestyle``
+        - ``flier.marker`` / ``flier.markerfacecolor`` / ``flier.markeredgecolor`` / ``flier.markersize``
+
+    映射关系:
+        - ``box.*`` -> ``Axes.boxplot(..., boxprops=...)``
+        - ``whisker.*`` -> ``Axes.boxplot(..., whiskerprops=...)``
+        - ``cap.*`` -> ``Axes.boxplot(..., capprops=...)``
+        - ``median.*`` -> ``Axes.boxplot(..., medianprops=...)``
+        - ``mean.*`` -> ``Axes.boxplot(..., meanprops=...)``
+        - ``flier.*`` -> ``Axes.boxplot(..., flierprops=...)``
+    """
+
+    plotter_kind = PlotterKind.BOX
+    default_x_label = "group"
+    default_y_label = "value"
+    category_order = (PlotCategory.SAMPLE.value,)
+    default_legend_options = {"loc": "best"}
+
+    def _plot_dataset(
+        self,
+        dataset: PlotDataset,
+        *,
+        categories: Sequence[PlotCategory | str] | None = None,
+        names: Sequence[str] | None = None,
+        ax: Axes | None = None,
+        legend_options: Mapping[str, Any] | None = None,
+        stats: Sequence[StatMetricInput] | None = None,
+        style_defaults: Mapping[str, Any] | None = None,
+        stat_label_overrides: Mapping[str, str] | None = None,
+    ) -> PlotResult:
+        keys = [item.as_tuple() for item in self._sorted_keys(dataset, categories=categories, names=names)]
+        sample_keys = self._sample_keys(keys)
+        if not sample_keys:
+            raise ValueError("箱型图至少需要一列 SAMPLE 数据。")
+
+        sample_values = [self._finite_sample_values(dataset, key) for key in sample_keys]
+        if not any(values.size > 0 for values in sample_values):
+            raise ValueError("箱型图至少需要一组非空样本。")
+        if any(values.size == 0 for values in sample_values):
+            raise ValueError("箱型图的每个 SAMPLE 列都必须包含至少一个有效样本。")
+
+        fig, target_ax = self._resolve_target_axes(ax)
+        self._apply_axis_frame(target_ax)
+        positions = np.arange(1, len(sample_keys) + 1, dtype=float)
+        stat_metrics = self._resolve_stat_metrics(stats)
+        base_style = normalize_boxplot_style(style_defaults)
+        boxplot = target_ax.boxplot(
+            sample_values,
+            positions=positions,
+            widths=0.55,
+            patch_artist=True,
+            showmeans=PlotStatMetric.MEAN in stat_metrics,
+            meanline=True,
+            boxprops=base_style["box"],
+            whiskerprops=base_style["whisker"],
+            capprops=base_style["cap"],
+            medianprops=base_style["median"],
+            meanprops=base_style["mean"],
+            flierprops=base_style["flier"],
+        )
+        self._apply_per_sample_box_styles(
+            dataset,
+            sample_keys,
+            boxplot,
+            style_defaults=style_defaults,
+        )
+        target_ax.set_xticks(positions)
+        target_ax.set_xticklabels([self._sample_label(dataset, key) for key in sample_keys])
+        value_unit = self._resolve_value_unit(dataset, sample_keys)
+        self._set_axis_labels_if_missing(
+            target_ax,
+            xlabel=self.default_x_label,
+            ylabel=self.with_unit(self.default_y_label, value_unit),
+        )
+        self._register_box_stat_proxies(
+            target_ax,
+            stat_metrics=stat_metrics,
+            style_defaults=style_defaults,
+            stat_label_overrides=stat_label_overrides,
         )
         self._apply_legend(target_ax, legend_options=legend_options)
         self._finalize_figure(fig)
-        return PlotResult(raw=fig, figure=fig, axes=(target_ax,))
+        artists = (
+            tuple(boxplot.get("boxes", ()))
+            + tuple(boxplot.get("whiskers", ()))
+            + tuple(boxplot.get("caps", ()))
+            + tuple(boxplot.get("medians", ()))
+            + tuple(boxplot.get("means", ()))
+            + tuple(boxplot.get("fliers", ()))
+        )
+        return PlotResult(raw=fig, figure=fig, axes=(target_ax,), artists=artists)
+
+    @staticmethod
+    def _finite_sample_values(dataset: PlotDataset, key: tuple[str, str]) -> np.ndarray:
+        values = np.asarray(dataset._column_values(key), dtype=float)
+        return values[np.isfinite(values)]
+
+    @staticmethod
+    def _sample_label(dataset: PlotDataset, key: tuple[str, str]) -> str:
+        label = dataset._column_meta(key)["label"]
+        return str(label) if label else key[1]
+
+    def _apply_per_sample_box_styles(
+        self,
+        dataset: PlotDataset,
+        sample_keys: Sequence[tuple[str, str]],
+        boxplot: Mapping[str, Sequence[Any]],
+        *,
+        style_defaults: Mapping[str, Any] | None,
+    ) -> None:
+        boxes = tuple(boxplot.get("boxes", ()))
+        whiskers = tuple(boxplot.get("whiskers", ()))
+        caps = tuple(boxplot.get("caps", ()))
+        medians = tuple(boxplot.get("medians", ()))
+        means = tuple(boxplot.get("means", ()))
+        fliers = tuple(boxplot.get("fliers", ()))
+        for index, key in enumerate(sample_keys):
+            raw_style = dataset._column_meta(key)["style"]
+            merged = dict(style_defaults or {})
+            if isinstance(raw_style, Mapping):
+                merged.update(raw_style)
+            resolved = normalize_boxplot_style(merged)
+            if index < len(boxes):
+                self._apply_line_or_patch_style(boxes[index], resolved["box"])
+            for offset in range(2):
+                whisker_idx = index * 2 + offset
+                if whisker_idx < len(whiskers):
+                    self._apply_line_or_patch_style(whiskers[whisker_idx], resolved["whisker"])
+                if whisker_idx < len(caps):
+                    self._apply_line_or_patch_style(caps[whisker_idx], resolved["cap"])
+            if index < len(medians):
+                self._apply_line_or_patch_style(medians[index], resolved["median"])
+            if index < len(means):
+                self._apply_line_or_patch_style(means[index], resolved["mean"])
+            if index < len(fliers):
+                self._apply_line_or_patch_style(fliers[index], resolved["flier"])
+
+    @staticmethod
+    def _apply_line_or_patch_style(artist: Any, style: Mapping[str, Any]) -> None:
+        setter_map = {
+            "facecolor": "set_facecolor",
+            "edgecolor": "set_edgecolor",
+            "linewidth": "set_linewidth",
+            "linestyle": "set_linestyle",
+            "color": "set_color",
+            "marker": "set_marker",
+            "markerfacecolor": "set_markerfacecolor",
+            "markeredgecolor": "set_markeredgecolor",
+            "markersize": "set_markersize",
+        }
+        for key, value in style.items():
+            setter_name = setter_map.get(key)
+            if setter_name is None or value is None or not hasattr(artist, setter_name):
+                continue
+            getattr(artist, setter_name)(value)
+
+    def _register_box_stat_proxies(
+        self,
+        ax: Axes,
+        *,
+        stat_metrics: Sequence[PlotStatMetric],
+        style_defaults: Mapping[str, Any] | None,
+        stat_label_overrides: Mapping[str, str] | None,
+    ) -> None:
+        base_style = normalize_boxplot_style(style_defaults)
+        for metric in stat_metrics:
+            label = _stat_label(metric, stat_label_overrides)
+            if metric == PlotStatMetric.MEAN:
+                props = base_style["mean"]
+                self._register_proxy_artist(
+                    ax,
+                    label=label,
+                    style={
+                        "color": props.get("color"),
+                        "linewidth": props.get("linewidth"),
+                        "linestyle": props.get("linestyle"),
+                    },
+                )
+                continue
+            if metric == PlotStatMetric.MEDIAN:
+                props = base_style["median"]
+                self._register_proxy_artist(
+                    ax,
+                    label=label,
+                    style={
+                        "color": props.get("color"),
+                        "linewidth": props.get("linewidth"),
+                        "linestyle": props.get("linestyle"),
+                    },
+                )
+                continue
+            if metric in {PlotStatMetric.Q1, PlotStatMetric.Q3}:
+                props = base_style["box"]
+                self._register_proxy_artist(
+                    ax,
+                    label=label,
+                    style={
+                        "color": props.get("edgecolor"),
+                        "linewidth": props.get("linewidth"),
+                        "linestyle": props.get("linestyle"),
+                    },
+                )
+                continue
+            props = base_style["whisker"]
+            self._register_proxy_artist(
+                ax,
+                label=label,
+                style={
+                    "color": props.get("color"),
+                    "linewidth": props.get("linewidth"),
+                    "linestyle": props.get("linestyle"),
+                },
+            )
 
 
 class OneThirdOctavePlotter(PlotterBase):
@@ -524,8 +1064,6 @@ class OneThirdOctavePlotter(PlotterBase):
         PlotCategory.SAMPLE.value,
         PlotCategory.ENVELOPE.value,
         PlotCategory.LIMIT.value,
-        PlotCategory.LIMIT_UPPER.value,
-        PlotCategory.LIMIT_LOWER.value,
     )
     default_legend_options = {"loc": "best"}
 
@@ -548,6 +1086,8 @@ class OneThirdOctavePlotter(PlotterBase):
         names: Sequence[str] | None = None,
         ax: Axes | None = None,
         legend_options: Mapping[str, Any] | None = None,
+        stats: Sequence[StatMetricInput] | None = None,
+        stat_label_overrides: Mapping[str, str] | None = None,
     ) -> PlotResult:
         keys = [item.as_tuple() for item in self._sorted_keys(dataset, categories=categories, names=names)]
         if not keys:
@@ -561,6 +1101,17 @@ class OneThirdOctavePlotter(PlotterBase):
             default_style = self._default_style_for_category(key[0])
             style = self._resolve_style(dataset, key, default_style=default_style)
             target_ax.plot(x_positions, dataset._column_values(key), **style)
+        sample_keys = self._sample_keys(keys)
+        stat_metrics = self._resolve_stat_metrics(stats)
+        if stat_metrics and sample_keys:
+            sample_matrix = self._sample_matrix(dataset, sample_keys)
+            for metric in stat_metrics:
+                target_ax.plot(
+                    x_positions,
+                    _compute_statistic(sample_matrix, metric),
+                    label=_stat_label(metric, stat_label_overrides),
+                    **_STAT_STYLE_DEFAULTS[metric],
+                )
         axis_unit = self._resolve_axis_unit(dataset, keys)
         value_unit = self._resolve_value_unit(dataset, keys)
         self._set_axis_labels_if_missing(
@@ -570,7 +1121,7 @@ class OneThirdOctavePlotter(PlotterBase):
         )
         helper = AxisHelper(target_ax)
         formatter = DiscreteAxisFormatter.from_number_values(positions=x_positions, values=freqs)
-        helper.format_side(
+        helper.format_axis(
             side="bottom",
             mode="discrete",
             positions=formatter.positions,
@@ -586,10 +1137,6 @@ class OneThirdOctavePlotter(PlotterBase):
     def _default_style_for_category(category: str) -> Mapping[str, Any]:
         if category == PlotCategory.LIMIT.value:
             return {"color": "orange", "linewidth": 2.0, "linestyle": "--"}
-        if category == PlotCategory.LIMIT_UPPER.value:
-            return {"color": "red", "linewidth": 2.0, "linestyle": "--"}
-        if category == PlotCategory.LIMIT_LOWER.value:
-            return {"color": "goldenrod", "linewidth": 2.0, "linestyle": "--"}
         if category == PlotCategory.ENVELOPE.value:
             return {"color": "blue", "linewidth": 2.0, "marker": "o", "markersize": 6}
         return {
@@ -611,8 +1158,6 @@ class StoryValuePlotter(PlotterBase):
         PlotCategory.SAMPLE.value,
         PlotCategory.STAT.value,
         PlotCategory.LIMIT.value,
-        PlotCategory.LIMIT_UPPER.value,
-        PlotCategory.LIMIT_LOWER.value,
     )
     default_legend_options = {"loc": "best"}
 
@@ -624,6 +1169,8 @@ class StoryValuePlotter(PlotterBase):
         names: Sequence[str] | None = None,
         ax: Axes | None = None,
         legend_options: Mapping[str, Any] | None = None,
+        stats: Sequence[StatMetricInput] | None = None,
+        stat_label_overrides: Mapping[str, str] | None = None,
     ) -> PlotResult:
         keys = [item.as_tuple() for item in self._sorted_keys(dataset, categories=categories, names=names)]
         if not keys:
@@ -633,15 +1180,7 @@ class StoryValuePlotter(PlotterBase):
         axis = dataset._axis_values()
         for key in keys:
             column = dataset._column_values(key)
-            if (
-                key[0]
-                in {
-                    PlotCategory.LIMIT.value,
-                    PlotCategory.LIMIT_UPPER.value,
-                    PlotCategory.LIMIT_LOWER.value,
-                }
-                and np.unique(column).size == 1
-            ):
+            if key[0] == PlotCategory.LIMIT.value and np.unique(column).size == 1:
                 style = self._resolve_style(dataset, key, default_style={"linewidth": 1.0, "linestyle": "--"})
                 target_ax.axvline(float(column[0]), **style)
                 continue
@@ -652,6 +1191,17 @@ class StoryValuePlotter(PlotterBase):
             )
             style = self._resolve_style(dataset, key, default_style=default_style)
             target_ax.plot(column, axis, **style)
+        sample_keys = self._sample_keys(keys)
+        stat_metrics = self._resolve_stat_metrics(stats)
+        if stat_metrics and sample_keys:
+            sample_matrix = self._sample_matrix(dataset, sample_keys)
+            for metric in stat_metrics:
+                target_ax.plot(
+                    _compute_statistic(sample_matrix, metric),
+                    axis,
+                    label=_stat_label(metric, stat_label_overrides),
+                    **_STAT_STYLE_DEFAULTS[metric],
+                )
         axis_unit = self._resolve_axis_unit(dataset, keys)
         value_unit = self._resolve_value_unit(dataset, keys)
         self._set_axis_labels_if_missing(
@@ -667,6 +1217,7 @@ class StoryValuePlotter(PlotterBase):
 
 
 __all__ = [
+    "BoxPlotter",
     "FramePlotter",
     "OctaveBandSpec",
     "OneThirdOctavePlotter",

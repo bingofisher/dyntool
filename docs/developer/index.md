@@ -2,13 +2,11 @@
 
 稳定性：`Internal API`
 
-这一部分面向维护者和扩展开发者，解释内部边界、文档规则和内部示例。
+开发者文档覆盖以下主题：
 
-## 这里包含什么？
-
-- API 设计边界与稳定性说明
-- 文档规范与生成约束
-- 示例与测试映射
-- Codex 工作流与仓库级 agents / skills 资产
-- 自定义扩展路径
-- 模块职责矩阵
+- API 设计与公开面约束
+- DefaultSample / DefaultSampleSet 与 storage 主链
+- 文档规范与示例映射
+- Codex 工作流与仓库级 Agents / Skills
+- 测试策略和限值模型维护
+- 自定义扩展

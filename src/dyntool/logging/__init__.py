@@ -6,10 +6,12 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from . import api as _api
 from .config import LoggingConfig
 from .provider import LogProvider
 from .types import LogContext, LoggingMode
-from . import api as _api
+
+globals().pop("provider", None)
 
 
 def build_log_context(
@@ -44,7 +46,7 @@ def configure_logging(
     fmt: str | None = None,
     datefmt: str | None = None,
 ) -> LoggingConfig:
-    """应用日志配置。"""
+    """应用日志配置并返回生效配置。"""
 
     return _api.configure_logging(
         config=config,
@@ -79,7 +81,7 @@ def available_providers() -> tuple[str, ...]:
 
 
 def get_active_provider_name() -> str:
-    """返回当前 provider 名称。"""
+    """返回当前启用的 provider 名称。"""
 
     return _api.get_active_provider_name()
 
@@ -91,13 +93,13 @@ def get_log_provider() -> LogProvider:
 
 
 def register_log_provider(name: str, factory) -> None:
-    """注册 provider。"""
+    """注册日志 provider。"""
 
     _api.register_log_provider(name, factory)
 
 
 def use_log_provider(name: str, *, config: LoggingConfig | None = None) -> LogProvider:
-    """切换 provider。"""
+    """切换日志 provider。"""
 
     return _api.use_log_provider(name, config=config)
 
@@ -116,5 +118,3 @@ __all__ = [
     "register_log_provider",
     "use_log_provider",
 ]
-
-globals().pop("provider", None)

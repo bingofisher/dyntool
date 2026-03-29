@@ -7,10 +7,10 @@
 ## 最短可运行用法
 
 ```python
-from dyntool import Sample, SampleDomain, SampleSet, VibrationTestMetadata
+from dyntool import DefaultSample, DefaultSampleSet, SampleDomain, VibrationTestMetadata
 from dyntool.storage import StorageScheme
 
-sample = Sample.from_accel_data(
+sample = DefaultSample.from_accel_data(
     [0.0, 0.1, -0.03],
     dt=0.01,
     sample_domain=SampleDomain.VIBRATION_TEST,
@@ -22,25 +22,11 @@ sample = Sample.from_accel_data(
     record="R1",
     timestamp="2026-03-08 12:00:00",
 )
-sample_set = SampleSet.from_samples([sample], sample_domain=SampleDomain.VIBRATION_TEST)
+sample_set = DefaultSampleSet.from_samples([sample], sample_domain=SampleDomain.VIBRATION_TEST)
 sample_set.save("output/sample_set.h5", storage_scheme=StorageScheme.SET_H5)
-loaded = SampleSet.from_storage("output/sample_set.h5", storage_scheme=StorageScheme.SET_H5)
+loaded = DefaultSampleSet.from_storage("output/sample_set.h5", storage_scheme=StorageScheme.SET_H5)
 print(loaded.count())
 ```
-
-```python
-sample_set.convert_storage(
-    "output/sample_set_sqlite_h5",
-    storage_scheme=StorageScheme.SET_SQLITE_H5,
-)
-```
-
-## 大样本集推荐方案
-
-- `StorageScheme.SET_H5` 继续适合单文件归档与交换
-- `StorageScheme.SET_SQLITE_H5` 适合大样本集的快速打开、`load_mode=METADATA_ONLY/LAZY`、metadata 导出与索引驱动读取
-- `SET_SQLITE_H5` 的目录固定包含 `index.sqlite` 和 `payload.h5`
-- `SampleSet.convert_storage(...)` 用于把当前样本集复制转换到另一种正式存储方案；只有完整转换时才会自动把当前实例重绑到新存储
 
 ## H5 默认压缩
 
@@ -68,7 +54,7 @@ sample_set.convert_storage(
 - `h5_compression`
   作用：控制 H5 样本存储压缩算法
   默认值：`gzip`
- 适用范围：`SAMPLE_H5`、`SET_H5`、`SET_SQLITE_H5`
+  适用范围：`SAMPLE_H5`、`SET_H5`
   允许值：`gzip`、`lzf`、`None`
 - `h5_compression_level`
   作用：控制 `gzip` 压缩级别
@@ -78,7 +64,7 @@ sample_set.convert_storage(
 - `h5_dataset_options`
   作用：高级 H5 dataset 参数映射
   默认值：`{"compression": "gzip", "compression_opts": 4}`
- 适用范围：`SAMPLE_H5`、`SET_H5`、`SET_SQLITE_H5`
+  适用范围：`SAMPLE_H5`、`SET_H5`
   允许键：`compression`、`compression_opts`、`shuffle`、`fletcher32`、`chunks`
 
 ## 覆盖优先级
@@ -101,20 +87,33 @@ sample_set.convert_storage(
 
 ## 标准类型 / 枚举 / 参数契约
 
-- `Sample.save(...)`
-- `Sample.load(...)`
-- `SampleSet.from_storage(...)`
-- `SampleSet.save_all(...)`
-- `SampleSet.load_all(...)`
+- `DataCategory`
+- `SampleDomain`
+- `SampleLoadMode`
+- `SampleSetViewOptions`
+- `StorageAccessMode`
+- `AttrDataFormat`
+- `ContainerFormat`
+- `NameResolver`
+- `StorageMode`
 - `StorageScheme`
+- `DefaultSample.save(...)`
+- `DefaultSample.load(...)`
+- `DefaultSampleSet.from_storage(...)`
+- `DefaultSampleSet.save_all(...)`
+- `DefaultSampleSet.load_all(...)`
 - `dyntool.storage`
+
+当你需要显式声明懒加载或只读视图时，应直接从 `dyntool.storage` 导入
+`SampleLoadMode`、`StorageAccessMode` 与 `SampleSetViewOptions`，而不是依赖内部模块路径。
 
 ## 常见误区
 
 - 误以为计算派生对象会自动持久化
 - 在非 H5 样本方案上继续传 `h5_compression`
 - 把内部字段名当成正式 `categories` 入口
-- 在正式文档中直接导入 `SampleLoadMode` 或 `DataCategory`
+- 在不需要显式参数控制时，不必额外导入 `SampleLoadMode` 或 `DataCategory`
+- 不要从 `dyntool.domain.*` 或 `dyntool.infrastructure.*` 导入存储契约类型
 
 ## 相关示例
 
@@ -124,7 +123,7 @@ sample_set.convert_storage(
 
 ## 相关 API
 
-- `Sample`
-- `SampleSet`
+- `DefaultSample`
+- `DefaultSampleSet`
 - `dyntool.storage`
 - `StorageScheme`

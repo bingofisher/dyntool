@@ -14,9 +14,9 @@ import dyntool.plotting as dt_plotting
 from dyntool import (
     AccelSeries,
     LoggingMode,
-    Sample,
+    DefaultSample,
     SampleDomain,
-    SampleSet,
+    DefaultSampleSet,
     StorageScheme,
 )
 
@@ -54,7 +54,7 @@ def test_phase7_minimal_closed_loop_covers_log_storage_and_plot(
         mirror_to_console=False,
     )
 
-    sample = Sample.from_accel_data(
+    sample = DefaultSample.from_accel_data(
         [0.0, 0.08, -0.02, 0.03, 0.0],
         dt=0.01,
         sample_domain=SampleDomain.VIBRATION_TEST,
@@ -65,14 +65,14 @@ def test_phase7_minimal_closed_loop_covers_log_storage_and_plot(
         record="R1",
         timestamp="2026-03-13 12:00:00",
     )
-    sample_set = SampleSet.from_samples(
+    sample_set = DefaultSampleSet.from_samples(
         [sample],
         sample_domain=SampleDomain.VIBRATION_TEST,
     )
 
     sample_set.eval_zvl(overwrite=True, freq_range=(2.0, 60.0))
     sample_set.save(store_path, storage_scheme=StorageScheme.SET_H5)
-    loaded = SampleSet.from_storage(
+    loaded = DefaultSampleSet.from_storage(
         store_path,
         sample_domain=SampleDomain.VIBRATION_TEST,
         storage_scheme=StorageScheme.SET_H5,
@@ -121,7 +121,7 @@ def test_phase7_real_input_file_roundtrip_uses_class_first_api(
     normalized.to_csv(normalized_csv)
     inspected = AccelSeries.inspect_units(normalized_csv, fmt="csv")
 
-    sample = Sample.from_models(
+    sample = DefaultSample.from_models(
         sample_domain=SampleDomain.VIBRATION_TEST,
         accel=normalized,
         case="phase7-real-file",
@@ -132,12 +132,12 @@ def test_phase7_real_input_file_roundtrip_uses_class_first_api(
         timestamp="2026-03-13 12:00:00",
     )
     sample.eval_zvl(overwrite=True, freq_range=(2.0, 60.0))
-    sample_set = SampleSet.from_samples(
+    sample_set = DefaultSampleSet.from_samples(
         [sample],
         sample_domain=SampleDomain.VIBRATION_TEST,
     )
     sample_set.save(store_path, storage_scheme=StorageScheme.SET_H5)
-    loaded = SampleSet.from_storage(
+    loaded = DefaultSampleSet.from_storage(
         store_path,
         sample_domain=SampleDomain.VIBRATION_TEST,
         storage_scheme=StorageScheme.SET_H5,
@@ -158,5 +158,5 @@ def test_phase7_workflow_examples_use_class_first_paths() -> None:
     text = workflow_path.read_text(encoding="utf-8")
 
     assert "AccelSeries.from_csv" in text
-    assert "Sample.from_models" in text
+    assert "DefaultSample.from_models" in text
     assert "tool.models.accel.from_csv" not in text

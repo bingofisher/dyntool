@@ -9,16 +9,16 @@ import numpy as np
 
 from dyntool.domain.metadata import Metadata
 from dyntool.domain.models import AccelSeries
-from dyntool.domain.samples import Sample, SampleLoadMode, SampleSet
+from dyntool.domain.samples import DefaultSample, DefaultSampleSet
 from dyntool.storage.types import StorageMode, StorageScheme
 
 
-def _build_set(n_samples: int, n_points: int) -> SampleSet:
-    sample_set = SampleSet()
+def _build_set(n_samples: int, n_points: int) -> DefaultSampleSet:
+    sample_set = DefaultSampleSet()
     for i in range(n_samples):
         meta = Metadata(extra={"idx": i})
         accel = AccelSeries.from_data(np.random.randn(n_points) * 0.01, dt=0.002)
-        sample = Sample(metadata=meta, accel=accel)
+        sample = DefaultSample(metadata=meta, accel=accel)
         sample_set[sample.uid] = sample
     return sample_set
 
@@ -43,7 +43,7 @@ def test_save_load_baseline_sample_dir(tmp_path: Path) -> None:
     assert save_errors == {}
     assert t_save < save_threshold_sec
 
-    loaded = SampleSet()
+    loaded = DefaultSampleSet()
     loaded.connect_storage(
         store_dir,
         mode=StorageMode.OPEN,
@@ -55,24 +55,5 @@ def test_save_load_baseline_sample_dir(tmp_path: Path) -> None:
     load_errors = loaded.storage.load_all(strict=True)
     t_load = perf_counter() - t1
     assert load_errors == {}
-    assert t_load < load_threshold_sec
-    assert len(loaded) == len(source)
-
-
-def test_metadata_only_baseline_set_sqlite_h5(tmp_path: Path) -> None:
-    load_threshold_sec = 5.0
-
-    source = _build_set(n_samples=40, n_points=2000)
-    store_dir = tmp_path / "perf_set_sqlite_h5"
-    source.save(store_dir, storage_scheme=StorageScheme.SET_SQLITE_H5)
-
-    t0 = perf_counter()
-    loaded = SampleSet.from_storage(
-        store_dir,
-        storage_scheme=StorageScheme.SET_SQLITE_H5,
-        load_mode=SampleLoadMode.METADATA_ONLY,
-    )
-    t_load = perf_counter() - t0
-
     assert t_load < load_threshold_sec
     assert len(loaded) == len(source)

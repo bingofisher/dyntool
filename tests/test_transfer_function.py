@@ -6,7 +6,7 @@ import numpy as np
 
 from dyntool import AccelSeries, SampleDomain, TransferFunctionAnalyzer
 from dyntool.domain.models import FreqSpec
-from dyntool.domain.samples import Sample
+from dyntool.domain.samples import DefaultSample
 
 
 def test_transfer_function_analyzer_supports_arrays_models_and_samples() -> None:
@@ -27,7 +27,7 @@ def test_transfer_function_analyzer_supports_arrays_models_and_samples() -> None
     assert isinstance(model_result.freqspec, FreqSpec)
     np.testing.assert_allclose(model_result.frequencies, result.frequencies)
 
-    input_sample = Sample.from_accel_data(
+    input_sample = DefaultSample.from_accel_data(
         input_accel,
         dt=dt,
         sample_domain=SampleDomain.VIBRATION_TEST,
@@ -38,7 +38,7 @@ def test_transfer_function_analyzer_supports_arrays_models_and_samples() -> None
         record="R1",
         timestamp="2026-03-17 09:00:00",
     )
-    output_sample = Sample.from_accel_data(
+    output_sample = DefaultSample.from_accel_data(
         output_accel,
         dt=dt,
         sample_domain=SampleDomain.VIBRATION_TEST,

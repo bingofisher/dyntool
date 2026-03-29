@@ -1,4 +1,4 @@
-"""Domain layer: models, metadata, constants, and payload contracts."""
+"""领域层公开入口。"""
 
 from __future__ import annotations
 

@@ -1,17 +1,13 @@
-"""样本加载与内部字段相关类型。"""
+"""样本加载、字段与视图配置类型。"""
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from enum import StrEnum
 
 
 class SampleField(StrEnum):
-    """样本内部数据项主键。
-
-    该枚举作为样本 schema、懒加载状态、脏标记和 storage 读写的内部
-    canonical key。公开层仍以 ``DataCategory`` 作为选择器；样本属性
-    名仅作为访问别名。
-    """
+    """样本内部数据槽位键。"""
 
     ACCEL = "accel"
     VEL = "vel"
@@ -33,4 +29,25 @@ class SampleLoadMode(StrEnum):
     EAGER = "eager"
 
 
-__all__ = ["SampleField", "SampleLoadMode"]
+class StorageAccessMode(StrEnum):
+    """样本集视图的存储访问权限模式。"""
+
+    READ_ONLY = "read_only"
+    READ_WRITE = "read_write"
+
+
+@dataclass(slots=True)
+class SampleSetViewOptions:
+    """样本集查询结果视图的加载与访问配置。"""
+
+    storage_mode: object | None = None
+    load_mode: SampleLoadMode | None = None
+    access_mode: StorageAccessMode = StorageAccessMode.READ_ONLY
+
+
+__all__ = [
+    "SampleField",
+    "SampleLoadMode",
+    "SampleSetViewOptions",
+    "StorageAccessMode",
+]

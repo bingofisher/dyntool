@@ -98,4 +98,7 @@ class SampleSet(SampleSetBase[Sample]):
 
 Sample._sample_set_type = SampleSet
 
-__all__ = ["Sample", "SampleSet"]
+DefaultSample = Sample
+DefaultSampleSet = SampleSet
+
+__all__ = ["Sample", "SampleSet", "DefaultSample", "DefaultSampleSet"]

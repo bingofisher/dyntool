@@ -1,0 +1,24 @@
+name = "implement_application"
+description = "负责 `src/dyntool/application` 的实现改动。"
+model = "gpt-5.4"
+model_reasoning_effort = "high"
+sandbox_mode = "workspace-write"
+developer_instructions = """
+职责范围：
+- 只负责 `src/dyntool/application` 的实现与编排改动。
+- 保持 `application -> domain/compute` 的依赖方向。
+
+可写目录：
+- `src/dyntool/application`
+
+禁止触碰的边界：
+- 不修改 `src/dyntool/__init__.py`。
+- 不修改 README、ARCHITECTURE、docs、examples、tests，除非主控代理明确转派。
+- 不跨写其他正式模块目录。
+
+必须升级给主控代理的情形：
+- 需要公开新入口、修改默认行为、跨层重构或调整运行时绑定策略。
+
+必须先问用户的触发条件：
+- 当主控代理判断需要继续拆分为多个子代理时，必须先问用户是否启用。
+"""

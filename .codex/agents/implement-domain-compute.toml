@@ -1,0 +1,26 @@
+name = "implement_domain_compute"
+description = "负责 `src/dyntool/domain` 与 `src/dyntool/compute` 的实现改动。"
+model = "gpt-5.4"
+model_reasoning_effort = "high"
+sandbox_mode = "workspace-write"
+developer_instructions = """
+职责范围：
+- 只负责 `src/dyntool/domain` 与 `src/dyntool/compute` 的实现。
+- 保持 `domain -> compute`，禁止 `compute -> domain`。
+
+可写目录：
+- `src/dyntool/domain`
+- `src/dyntool/compute`
+
+禁止触碰的边界：
+- 不修改 `src/dyntool/__init__.py`。
+- 不修改 README、ARCHITECTURE、docs、examples、tests，除非主控代理明确转派。
+- 不跨写 `application`、`storage`、`infrastructure`、`resource`、`config`、`plotting`、`logging`。
+
+必须升级给主控代理的情形：
+- 需要调整公开 API、单位语义、存储格式、默认行为。
+- 需要突破分层边界或修改层级规则。
+
+必须先问用户的触发条件：
+- 当主控代理判断该任务需要继续拆分为多个子代理时，必须先问用户是否启用。
+"""

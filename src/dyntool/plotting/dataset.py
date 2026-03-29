@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Iterable, Mapping, Sequence, TypeAlias
+from typing import Iterable, Mapping, Sequence, TypeAlias, Self
 
 import numpy as np
 import pandas as pd
@@ -25,8 +25,6 @@ class PlotCategory(StrEnum):
     SAMPLE = "sample"
     ENVELOPE = "envelope"
     LIMIT = "limit"
-    LIMIT_UPPER = "limit_upper"
-    LIMIT_LOWER = "limit_lower"
     STAT = "stat"
 
 
@@ -106,7 +104,7 @@ class PlotDataset:
         allowed_categories: Sequence[PlotCategory | str] | None = None,
         source_type: str = "array",
         style: PlotStyle | None = None,
-    ) -> "PlotDataset":
+    ) -> Self:
         """从显式 ``axis/value`` 构建数据集。"""
 
         dataset = cls(allowed_categories=allowed_categories)

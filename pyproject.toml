@@ -7,7 +7,7 @@ name = "dyntool"
 dynamic = ["version"]
 description = "Dynamics computation and vibration evaluation toolkit"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.12.12"
 dependencies = [
     "numpy>=1.24",
     "pandas>=2.0",

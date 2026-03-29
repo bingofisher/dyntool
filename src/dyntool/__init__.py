@@ -1,10 +1,11 @@
-"""AdvDynTool 顶层公开入口。"""
+"""AdvDynTool 顶层正式公开入口。"""
 
 from __future__ import annotations
 
+import importlib
+
 from . import config, logging, plotting, resources, storage
 from ._version import __version__
-from .application.runtime_binding import _initialize_default_bindings
 from .domain.constants import UnitSystem
 from .domain.enums import SampleDomain
 from .domain.limits import (
@@ -23,10 +24,10 @@ from .domain.models import (
     DispSeries,
     FDMVLEval,
     FPVDVEval,
+    ForceSeries,
     FreqAmpSeries,
     FreqPhaSeries,
     FreqSpec,
-    ForceSeries,
     MagnitudeConversion,
     OTOVLEval,
     PSpecAccelSeries,
@@ -42,8 +43,11 @@ from .domain.models import (
     VelSeries,
     ZVLEval,
 )
+from .domain.runtime import register_default_runtime_initializer
 from .domain.samples import (
     BatchOperationReport,
+    DefaultSample as _DefaultSample,
+    DefaultSampleSet as _DefaultSampleSet,
     OperationResult,
     Sample,
     SampleSet,
@@ -54,7 +58,19 @@ from .logging import LoggingMode
 from .plotting.types import PlotKind
 from .storage.types import AttrDataFormat, ContainerFormat, StorageMode, StorageScheme
 
-_initialize_default_bindings()
+
+def _initialize_default_bindings() -> None:
+    """按需导入并执行默认 runtime 绑定。"""
+
+    runtime_binding = importlib.import_module(".application.runtime_binding", __name__)
+    runtime_binding._initialize_default_bindings()
+
+
+# 顶层导入只注册默认 runtime 初始化器，不直接触发默认 runtime 绑定。
+register_default_runtime_initializer(_initialize_default_bindings)
+
+DefaultSample = _DefaultSample
+DefaultSampleSet = _DefaultSampleSet
 
 __all__ = [
     "__version__",

@@ -16,8 +16,9 @@
 - `configure_zh(path)` 只消费统一 plotting 配置文件中的 `[zh]`，负责中文字体和 rcParams。
 - `AxisFrame` 是轴外观层；`GridFrame` 是网格样式层；两者可共用同一配置文件，但不是同一个对象。
 - `AxisHelper` 是公开轴行为层，负责连续轴格式化、离散轴标签与刻度规划。
-- 波形图不再使用单独的 helper；统一走 `format_side(..., mode="continuous")`，其中 `height_ratio` 表示上下留白比例，`num_segments` 表示纵向分段数。
+- 波形图不再使用单独的 helper；统一走 `format_axis(..., mode="continuous")`，其中 `height_ratio` 表示上下留白比例，`num_segments` 表示纵向分段数。
 - `LegendHelper` 是公开图例后处理层，负责收集、筛选、重命名和多 legend。
 - `AxisHelper` 内部进一步分为连续轴刻度规划、连续轴文本格式化与离散轴标签应用几部分；其中 `TickPlanner` 只属于内部实现细节。
 - `OneThirdOctavePlotter` 使用等距频段轴：真实频率值保存在 `PlotDataset` 中，绘图时映射到等距位置，刻度文本显示真实频率。
-- legend 默认由 plotter 按类型生成，但用户手工 legend 或显式 `legend_options` 拥有更高优先级。
+- `BoxPlotter` 复用同一套 `PlotDataset` 输入结构，但正式只消费 `SAMPLE` 列作为箱体组；箱体统计由 plotter 内部计算，限值推荐通过同轴叠加线型 plotter 实现。
+- plotter 默认不生成 legend；只有用户手工 `ax.legend(...)`、显式 `legend_options` 或 `LegendHelper` 才会创建或更新 legend。

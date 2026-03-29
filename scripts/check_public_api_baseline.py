@@ -98,7 +98,16 @@ def _check_package_exports(allowed: list[str], removed: list[str]) -> list[str]:
     return violations
 
 
-def _check_public_api_docs() -> list[str]:
+def _check_storage_module_exports(allowed: list[str]) -> list[str]:
+    import dyntool.storage as dt_storage
+
+    exported = list(getattr(dt_storage, "__all__", []))
+    if sorted(exported) == sorted(allowed):
+        return []
+    return ["src/dyntool/storage/__init__.py: __all__ does not match storage_module_exports_allowed"]
+
+
+def _check_public_api_docs(storage_module_exports_allowed: list[str]) -> list[str]:
     path = PROJECT_ROOT / "docs" / "api" / "public_api.md"
     text = path.read_text(encoding="utf-8")
     required_tokens = (
@@ -112,6 +121,13 @@ def _check_public_api_docs() -> list[str]:
     for token in required_tokens:
         if token not in text:
             violations.append(f"docs/api/public_api.md: missing public API token {token!r}")
+
+    storage_contract_tokens = [
+        token for token in storage_module_exports_allowed if token[:1].isupper()
+    ]
+    for token in storage_contract_tokens:
+        if token not in text:
+            violations.append(f"docs/api/public_api.md: missing storage contract token {token!r}")
     return violations
 
 
@@ -120,10 +136,13 @@ def main() -> int:
     forbidden_tokens = list(baseline["forbidden_tokens"])
     top_level_exports_allowed = list(baseline["top_level_exports_allowed"])
     top_level_exports_removed = list(baseline["top_level_exports_removed"])
+    storage_module_exports_allowed = list(baseline.get("storage_module_exports_allowed", []))
 
     violations = _scan_forbidden_tokens(forbidden_tokens)
     violations.extend(_check_package_exports(top_level_exports_allowed, top_level_exports_removed))
-    violations.extend(_check_public_api_docs())
+    if storage_module_exports_allowed:
+        violations.extend(_check_storage_module_exports(storage_module_exports_allowed))
+    violations.extend(_check_public_api_docs(storage_module_exports_allowed))
 
     if violations:
         print("Public API baseline check failed:")

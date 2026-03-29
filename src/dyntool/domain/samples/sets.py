@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from collections import UserDict
 from pathlib import Path
-from typing import Any, Callable, ClassVar, Generic, Iterable, Mapping, Self, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Callable, ClassVar, Generic, Iterable, Mapping, Self, TypeVar, cast
 
+import numpy as np
 import pandas as pd
 from pydantic import ValidationError
 
@@ -30,6 +31,9 @@ from .batch import (
 from .commands import VibEvalCommand
 from .namespaces import SampleSetEvaluationNamespace, SampleSetProcessingNamespace
 from .types import SampleField, SampleLoadMode
+
+if TYPE_CHECKING:
+    from .types import SampleSetViewOptions
 
 SampleType = TypeVar("SampleType", bound=SampleBase)
 logger = get_logger("samples")
@@ -77,6 +81,8 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
         self.strict: bool = True
         self.storage_dirty: bool = False
         self._last_operation_report: BatchOperationReport[Any] | None = None
+        self._storage_access_mode: str = "read_write"
+        self._view_origin_base_dir: Path | None = None
 
         if samples:
             if isinstance(samples, list):
@@ -105,6 +111,80 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
 
     def __repr__(self) -> str:
         return f"<{self.__class__.__name__}[{self.sample_type.__name__}] ({len(self)} samples)>"
+
+    @property
+    def compute(self) -> Any:
+        """返回样本集的统一计算入口。"""
+
+        from ..compute_api import SampleSetComputeNamespace
+
+        return SampleSetComputeNamespace(self)
+
+    def _resolve_view_options(self, view_options: "SampleSetViewOptions" | None = None) -> "SampleSetViewOptions":
+        """返回样本集视图配置。"""
+
+        from .types import SampleSetViewOptions, StorageAccessMode
+
+        if view_options is not None:
+            return view_options
+        return SampleSetViewOptions(access_mode=StorageAccessMode.READ_ONLY)
+
+    def _with_load_mode(
+        self,
+        view_options: "SampleSetViewOptions" | None,
+        *,
+        load_mode: SampleLoadMode,
+    ) -> "SampleSetViewOptions":
+        """基于现有视图配置返回新的加载模式配置。"""
+
+        from .types import SampleSetViewOptions
+
+        options = self._resolve_view_options(view_options)
+        return SampleSetViewOptions(
+            storage_mode=options.storage_mode,
+            load_mode=load_mode,
+            access_mode=options.access_mode,
+        )
+
+    def _clone_sample_for_view(self, sample: SampleType) -> SampleType:
+        """为视图创建独立样本副本。"""
+
+        return cast(SampleType, sample.model_copy(deep=True))
+
+    def _configure_subset_storage_view(
+        self,
+        subset: Self,
+        *,
+        view_options: "SampleSetViewOptions",
+    ) -> None:
+        """为查询结果子集配置存储视图状态。"""
+
+        subset.storage = self.storage
+        subset.strict = self.strict
+        subset.storage_dirty = False
+        subset._storage_access_mode = str(view_options.access_mode)
+        subset._view_origin_base_dir = getattr(self.storage, "base_dir", None) if self.storage is not None else None
+        for sample in subset.values():
+            sample._storage_set = subset
+            if view_options.load_mode is SampleLoadMode.METADATA_ONLY:
+                sample.unload()
+                sample._set_load_mode_internal(SampleLoadMode.METADATA_ONLY)
+            elif view_options.load_mode is not None:
+                sample._set_load_mode_internal(view_options.load_mode)
+
+    def _postprocess_subset_view(
+        self,
+        subset: Self,
+        *,
+        view_options: "SampleSetViewOptions",
+        categories: Iterable[DataCategory | str] | None = None,
+    ) -> Self:
+        """按视图配置收尾样本子集。"""
+
+        self._configure_subset_storage_view(subset, view_options=view_options)
+        if view_options.load_mode is SampleLoadMode.EAGER:
+            subset.load_many(uids=list(subset.keys()), categories=categories)
+        return subset
 
     def _bind_sample_internal(self, sample: SampleType) -> str:
         """内部绑定样本并返回规范化 UID。"""
@@ -410,6 +490,11 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
         metadata_list = [meta.to_flatten_dict(sep=flatten_sep) for meta in self.get_metadata()]
         return pd.DataFrame(metadata_list)
 
+    def metadata_frame(self, flatten_sep: str = "@") -> pd.DataFrame:
+        """返回样本集的 metadata 表格。"""
+
+        return self.get_metadatadf(flatten_sep=flatten_sep)
+
     def _normalize_requested_categories(
         self,
         categories: Iterable[DataCategory | str] | None = None,
@@ -498,6 +583,223 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
                 data_dict[uid] = data
         return data_dict
 
+    def data_map(self, category: str | DataCategory) -> dict[str, DataModelBase]:
+        """返回指定槽位的样本到数据对象映射。"""
+
+        return self.get_data_dict(category)
+
+    def _metadata_value(self, sample: SampleType, field: str) -> str:
+        flattened = sample.metadata.to_flatten_dict(sep="@")
+        value = flattened.get(field)
+        return "" if value is None else str(value)
+
+    def _scalar_feature_value(self, sample: SampleType, feature: str) -> float:
+        normalized = str(feature).strip().lower()
+        if normalized == "pga":
+            return float(sample.pga())
+        if normalized == "pgv":
+            return float(sample.pgv())
+        if normalized == "pgd":
+            return float(sample.pgd())
+        if normalized == "absmax":
+            return float(sample.compute.feature.absmax())
+        if normalized == "rms":
+            return float(sample.compute.feature.rms())
+        if normalized == "mean":
+            return float(sample.compute.feature.mean())
+        if normalized == "std":
+            return float(sample.compute.feature.std())
+        if normalized == "crest_factor":
+            return float(sample.compute.feature.crest_factor())
+        raise KeyError(f"不支持的标量特征: {feature}")
+
+    def scalar_frame(
+        self,
+        *,
+        metadata_fields: Iterable[str] | None = None,
+        data_vars: Iterable[str] | None = None,
+        features: Iterable[str] | None = None,
+        uids: Iterable[str] | None = None,
+        criteria: Mapping[str, Any] | None = None,
+        filter: Callable[[SampleType], bool] | None = None,
+        sort_by: str | None = None,
+        dropna: bool = False,
+        strict: bool = True,
+        view_options: "SampleSetViewOptions" | None = None,
+    ) -> pd.DataFrame:
+        """组合 metadata、标量 data_var 与派生特征为表格。"""
+
+        rows: list[dict[str, Any]] = []
+        selected = self.find_many(
+            uids=uids,
+            criteria=criteria,
+            filter=filter,
+            sort_by=sort_by,
+            view_options=self._with_load_mode(view_options, load_mode=SampleLoadMode.EAGER),
+        )
+        requested_metadata = [str(field) for field in metadata_fields or ()]
+        requested_data_vars = [str(name) for name in data_vars or ()]
+        requested_features = [str(name) for name in features or ()]
+
+        for sample in selected.values():
+            row: dict[str, Any] = {"uid": sample.uid, "alias": sample.alias}
+            for field in requested_metadata:
+                row[field] = self._metadata_value(sample, field)
+            for data_var in requested_data_vars:
+                model = sample.get_data_var(data_var)
+                if model is None:
+                    if strict:
+                        raise ValueError(f"样本 '{sample.uid}' 缺少 data_var '{data_var}'")
+                    row[str(data_var)] = np.nan
+                    continue
+                for key, value in model.to_scalar_record().items():
+                    row[f"{data_var}.{key}"] = value
+            for feature in requested_features:
+                try:
+                    row[feature] = self._scalar_feature_value(sample, feature)
+                except Exception:
+                    if strict:
+                        raise
+                    row[feature] = np.nan
+            rows.append(row)
+
+        frame = pd.DataFrame(rows)
+        if dropna and not frame.empty:
+            reserved_columns = {"uid", "alias", *requested_metadata}
+            value_columns = [column for column in frame.columns if column not in reserved_columns]
+            if value_columns:
+                frame = frame.dropna(axis=0, how="all", subset=value_columns)
+        return frame.reset_index(drop=True)
+
+    def series_frame(
+        self,
+        data_var: str | DataCategory,
+        *,
+        metadata_fields: Iterable[str] | None = None,
+        uids: Iterable[str] | None = None,
+        criteria: Mapping[str, Any] | None = None,
+        filter: Callable[[SampleType], bool] | None = None,
+        sort_by: str | None = None,
+        strict: bool = True,
+        view_options: "SampleSetViewOptions" | None = None,
+    ) -> pd.DataFrame:
+        """按公共索引外连接同一 data_var 的多样本序列表。"""
+
+        from ..compute_api import ensure_multiindex_metadata, normalize_series_frame
+
+        field = self.sample_schema.resolve_field(data_var)
+        selected = self.find_many(
+            uids=uids,
+            criteria=criteria,
+            filter=filter,
+            sort_by=sort_by,
+            view_options=self._with_load_mode(view_options, load_mode=SampleLoadMode.EAGER),
+        )
+        exported: list[tuple[SampleType, pd.DataFrame]] = []
+        model_type: type[DataModelBase] | None = None
+        for sample in selected.values():
+            model = sample.get_data_var(field)
+            if model is None:
+                if strict:
+                    raise ValueError(f"样本 '{sample.uid}' 缺少 data_var '{field.value}'")
+                continue
+            if model_type is None:
+                model_type = type(model)
+            elif type(model) is not model_type:
+                raise TypeError("series_frame() 要求所有样本的 data_var 类型一致")
+            exported.append((sample, normalize_series_frame(model)))
+
+        if not exported:
+            return pd.DataFrame()
+
+        template_columns = list(exported[0][1].columns)
+        union_index = exported[0][1].index
+        index_name = exported[0][1].index.name
+        for _, frame in exported[1:]:
+            if frame.index.name != index_name:
+                raise TypeError("series_frame() 要求所有序列表具有相同的索引名称")
+            union_index = union_index.union(frame.index)
+
+        output = pd.DataFrame(index=union_index)
+        output.index.name = index_name
+        requested_metadata = [str(field_name) for field_name in metadata_fields or ()]
+        for sample in selected.values():
+            model = sample.get_data_var(field)
+            if model is None:
+                sample_frame = pd.DataFrame(index=union_index, columns=template_columns, dtype=float)
+            else:
+                sample_frame = normalize_series_frame(model).reindex(union_index)
+            prefix = ensure_multiindex_metadata(sample, metadata_fields=requested_metadata)
+            sample_frame = sample_frame.rename(
+                columns={column: (*prefix, str(column)) for column in sample_frame.columns}
+            )
+            output = output.join(sample_frame, how="outer")
+
+        if output.columns.empty:
+            output.columns = pd.MultiIndex.from_arrays([[]])
+        else:
+            output.columns = pd.MultiIndex.from_tuples(list(output.columns))
+        return output
+
+    def peaks_frame(
+        self,
+        *,
+        source: str = "accel",
+        metadata_fields: Iterable[str] | None = None,
+        uids: Iterable[str] | None = None,
+        criteria: Mapping[str, Any] | None = None,
+        filter: Callable[[SampleType], bool] | None = None,
+        sort_by: str | None = None,
+        strict: bool = True,
+        view_options: "SampleSetViewOptions" | None = None,
+        **kwargs: Any,
+    ) -> pd.DataFrame:
+        """将多峰检测结果按峰序号展开为表。"""
+
+        from ..compute_api import ensure_multiindex_metadata
+
+        selected = self.find_many(
+            uids=uids,
+            criteria=criteria,
+            filter=filter,
+            sort_by=sort_by,
+            view_options=self._with_load_mode(view_options, load_mode=SampleLoadMode.EAGER),
+        )
+        requested_metadata = [str(field_name) for field_name in metadata_fields or ()]
+        payloads: list[tuple[SampleType, dict[str, Any]]] = []
+        max_peaks = 0
+        for sample in selected.values():
+            try:
+                payload = sample.compute.feature.peaks(source=source, **kwargs)
+            except Exception:
+                if strict:
+                    raise
+                payload = {"peak_indices": np.asarray([], dtype=float), "peak_values": np.asarray([], dtype=float)}
+            payloads.append((sample, payload))
+            max_peaks = max(max_peaks, int(len(np.asarray(payload.get("peak_indices", [])))))
+
+        if max_peaks == 0:
+            raise ValueError("没有可导出的峰值结果")
+
+        output = pd.DataFrame(index=pd.Index(range(max_peaks), name="peak_rank"))
+        for sample, payload in payloads:
+            peak_indices = np.asarray(payload.get("peak_indices", []), dtype=float)
+            peak_values = np.asarray(payload.get("peak_values", []), dtype=float)
+            sample_frame = pd.DataFrame(
+                {
+                    "peak_index": pd.Series(peak_indices, dtype=float),
+                    "peak_value": pd.Series(peak_values, dtype=float),
+                }
+            ).reindex(output.index)
+            prefix = ensure_multiindex_metadata(sample, metadata_fields=requested_metadata)
+            sample_frame = sample_frame.rename(
+                columns={column: (*prefix, str(column)) for column in sample_frame.columns}
+            )
+            output = output.join(sample_frame, how="outer")
+
+        output.columns = pd.MultiIndex.from_tuples(list(output.columns))
+        return output
+
     def current_units(self) -> dict[str, dict[str, dict[str, str]]]:
         """返回样本集内所有样本的当前单位。"""
 
@@ -572,6 +874,35 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
             items = items[:limit]
         return self.__class__(dict(items))
 
+    def find_many(
+        self,
+        *,
+        uids: Iterable[str] | None = None,
+        criteria: Mapping[str, Any] | None = None,
+        filter: Callable[[SampleType], bool] | None = None,
+        sort_by: str | None = None,
+        limit: int | None = None,
+        offset: int = 0,
+        view_options: "SampleSetViewOptions" | None = None,
+        categories: Iterable[DataCategory | str] | None = None,
+    ) -> Self:
+        """按 UID、metadata 条件和过滤函数查询样本。"""
+
+        matched = self.find(
+            uids=uids,
+            criteria=criteria,
+            filter=filter,
+            sort_by=sort_by,
+            limit=limit,
+            offset=offset,
+        )
+        subset = self.__class__({uid: self._clone_sample_for_view(sample) for uid, sample in matched.items()})
+        return self._postprocess_subset_view(
+            subset,
+            view_options=self._resolve_view_options(view_options),
+            categories=categories,
+        )
+
     def find_one(
         self,
         *,
@@ -579,10 +910,20 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
         criteria: Mapping[str, Any] | None = None,
         filter: Callable[[SampleType], bool] | None = None,
         sort_by: str | None = None,
+        view_options: "SampleSetViewOptions" | None = None,
+        categories: Iterable[DataCategory | str] | None = None,
     ) -> SampleType | None:
         """返回按查询条件命中的首个样本。"""
 
-        matched = self.find(uids=uids, criteria=criteria, filter=filter, sort_by=sort_by, limit=1)
+        matched = self.find_many(
+            uids=uids,
+            criteria=criteria,
+            filter=filter,
+            sort_by=sort_by,
+            limit=1,
+            view_options=view_options,
+            categories=categories,
+        )
         return next(iter(matched.values()), None)
 
     def count(
@@ -623,6 +964,18 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
             if value not in values:
                 values.append(value)
         return tuple(values)
+
+    def distinct_metadata(
+        self,
+        field: str,
+        *,
+        uids: Iterable[str] | None = None,
+        criteria: Mapping[str, Any] | None = None,
+        filter: Callable[[SampleType], bool] | None = None,
+    ) -> tuple[Any, ...]:
+        """返回指定 metadata 字段的去重值。"""
+
+        return self.distinct(field, uids=uids, criteria=criteria, filter=filter)
 
     def project_metadata(
         self,

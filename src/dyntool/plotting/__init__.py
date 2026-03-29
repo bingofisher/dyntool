@@ -13,18 +13,20 @@ from .axes import (
 from .config import ZhPlotConfig, configure_zh
 from .dataset import PlotCategory, PlotDataset
 from .plotters import (
+    BoxPlotter,
     FramePlotter,
     OctaveBandSpec,
     OneThirdOctavePlotter,
     PlotterBase,
     StoryValuePlotter,
 )
-from .types import PlotKind, PlotResult, PlotterKind
+from .types import PlotKind, PlotResult, PlotStatMetric, PlotterKind
 
 __all__ = [
     "AxisFrame",
     "AxisHelper",
     "AxisNumberFormatter",
+    "BoxPlotter",
     "DiscreteAxisFormatter",
     "GridFrame",
     "LegendHelper",
@@ -36,6 +38,7 @@ __all__ = [
     "PlotterBase",
     "PlotKind",
     "PlotResult",
+    "PlotStatMetric",
     "PlotterKind",
     "StoryValuePlotter",
     "ZhPlotConfig",

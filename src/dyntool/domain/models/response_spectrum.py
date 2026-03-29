@@ -641,6 +641,26 @@ class RespSpec(DataModelBase):
         )
 
     @classmethod
+    def from_compute_result(
+        cls,
+        result: Mapping[str, Any],
+        *,
+        unit_system: UnitSystem | None = None,
+    ) -> Self:
+        """从底层 compute 命名字典装配组合响应谱。"""
+
+        return cls.from_data(
+            result["period"],
+            sa=result.get("sa"),
+            sv=result.get("sv"),
+            sd=result.get("sd"),
+            psa=result.get("psa"),
+            psv=result.get("psv"),
+            units=result.get("units"),
+            unit_system=unit_system or result.get("unit_system"),
+        )
+
+    @classmethod
     def from_arrays(
         cls,
         axis: np.ndarray,

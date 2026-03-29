@@ -779,6 +779,23 @@ class FreqSpec(DataModelBase):
         return cls(amp=amp_series, pha=pha_series)
 
     @classmethod
+    def from_compute_result(
+        cls,
+        result: Mapping[str, Any],
+        *,
+        unit_system: UnitSystem | None = None,
+    ) -> Self:
+        """从底层 compute 命名字典装配组合频谱。"""
+
+        return cls.from_data(
+            result["freq"],
+            amp=result.get("amp"),
+            pha=result.get("pha"),
+            units=result.get("units"),
+            unit_system=unit_system or result.get("unit_system"),
+        )
+
+    @classmethod
     def from_arrays(
         cls,
         axis: np.ndarray,

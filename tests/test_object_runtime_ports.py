@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from dyntool.application.runtime_binding import bind_default_runtimes
+from dyntool.application.runtime_binding import _initialize_default_bindings, bind_default_runtimes
 from dyntool.domain.metadata import Metadata
 from dyntool.domain.models import AccelSeries
 from dyntool.domain.runtime import (
@@ -15,8 +15,9 @@ from dyntool.domain.runtime import (
     bind_sample_runtime,
     bind_sample_set_runtime,
     clear_default_runtimes,
+    register_default_runtime_initializer,
 )
-from dyntool.domain.samples import Sample, SampleSet
+from dyntool.domain.samples import DefaultSample, DefaultSampleSet
 from dyntool.domain.samples.batch import BatchOperationReport
 
 
@@ -63,32 +64,32 @@ class _DummySampleRuntime:
 
     def connect_sample_storage(
         self,
-        sample: Sample,
+        sample: DefaultSample,
         base_dir: str | Path,
         **kwargs: object,
-    ) -> Sample:
+    ) -> DefaultSample:
         self.calls.append(("connect_sample_storage", base_dir))
         return sample
 
     def save_sample(
         self,
-        sample: Sample,
+        sample: DefaultSample,
         path: str | Path | None = None,
         **kwargs: object,
-    ) -> Sample:
+    ) -> DefaultSample:
         self.calls.append(("save_sample", path))
         return sample
 
     def load_sample(
         self,
-        sample: Sample,
+        sample: DefaultSample,
         path: str | Path | None = None,
         **kwargs: object,
-    ) -> Sample:
+    ) -> DefaultSample:
         self.calls.append(("load_sample", path))
         return sample
 
-    def reload_sample(self, sample: Sample) -> Sample:
+    def reload_sample(self, sample: DefaultSample) -> DefaultSample:
         self.calls.append(("reload_sample", sample.uid))
         return sample
 
@@ -99,34 +100,34 @@ class _DummySampleSetRuntime:
 
     def connect_sample_set_storage(
         self,
-        sample_set: SampleSet,
+        sample_set: DefaultSampleSet,
         base_dir: str | Path,
         **kwargs: object,
-    ) -> SampleSet:
+    ) -> DefaultSampleSet:
         self.calls.append(("connect_sample_set_storage", base_dir))
         return sample_set
 
     def save_sample_set(
         self,
-        sample_set: SampleSet,
+        sample_set: DefaultSampleSet,
         path: str | Path | None = None,
         **kwargs: object,
-    ) -> SampleSet:
+    ) -> DefaultSampleSet:
         self.calls.append(("save_sample_set", path))
         return sample_set
 
     def load_sample_set(
         self,
-        sample_set: SampleSet,
+        sample_set: DefaultSampleSet,
         path: str | Path | None = None,
         **kwargs: object,
-    ) -> SampleSet:
+    ) -> DefaultSampleSet:
         self.calls.append(("load_sample_set", path))
         return sample_set
 
     def save_all_samples(
         self,
-        sample_set: SampleSet,
+        sample_set: DefaultSampleSet,
         **kwargs: object,
     ) -> dict[str, Exception]:
         self.calls.append(("save_all_samples", len(sample_set)))
@@ -134,19 +135,19 @@ class _DummySampleSetRuntime:
 
     def load_all_samples(
         self,
-        sample_set: SampleSet,
+        sample_set: DefaultSampleSet,
         **kwargs: object,
     ) -> dict[str, Exception]:
         self.calls.append(("load_all_samples", len(sample_set)))
         return {}
 
-    def organize_sample_set_storage(self, sample_set: SampleSet) -> SampleSet:
+    def organize_sample_set_storage(self, sample_set: DefaultSampleSet) -> DefaultSampleSet:
         self.calls.append(("organize_sample_set_storage", len(sample_set)))
         return sample_set
 
 
-def _make_sample() -> Sample:
-    return Sample(
+def _make_sample() -> DefaultSample:
+    return DefaultSample(
         metadata=Metadata(extra={"source": "runtime-test"}),
         accel=AccelSeries.from_data([0.0, 1.0, -0.5], dt=0.1),
     )
@@ -169,7 +170,7 @@ def test_instance_bound_model_runtime_delegates_object_workflow() -> None:
         "inspect_model_units",
     ]
     clear_default_runtimes()
-    bind_default_runtimes()
+    bind_default_runtimes(force_recreate=True)
 
 
 def test_instance_bound_sample_runtime_delegates_object_workflow() -> None:
@@ -191,7 +192,7 @@ def test_instance_bound_sample_runtime_delegates_object_workflow() -> None:
 
 def test_instance_bound_sample_set_runtime_delegates_object_workflow() -> None:
     sample = _make_sample()
-    sample_set = SampleSet({sample.uid: sample})
+    sample_set = DefaultSampleSet({sample.uid: sample})
     runtime = _DummySampleSetRuntime()
     bind_sample_set_runtime(sample_set, runtime)
 
@@ -213,18 +214,20 @@ def test_instance_bound_sample_set_runtime_delegates_object_workflow() -> None:
 
 
 def test_unbound_sample_runtime_raises_clear_error() -> None:
+    register_default_runtime_initializer(None)
     clear_default_runtimes()
     sample = _make_sample()
     with pytest.raises(RuntimeBindingError, match="未绑定 sample runtime"):
         sample.save("store")
-    bind_default_runtimes()
+    register_default_runtime_initializer(_initialize_default_bindings)
+    bind_default_runtimes(force_recreate=True)
 
 
 def test_default_model_runtime_delegates_to_application_services(monkeypatch) -> None:
     import dyntool.application.runtime_binding as runtime_binding
 
     clear_default_runtimes()
-    bind_default_runtimes()
+    bind_default_runtimes(force_recreate=True)
     assert runtime_binding._default_object_runtime is not None
     model = AccelSeries.from_data([0.0, 1.0], dt=0.1)
     calls: list[tuple[str, object]] = []
@@ -260,17 +263,17 @@ def test_default_model_runtime_delegates_to_application_services(monkeypatch) ->
         "inspect_model_units_runtime",
     ]
     clear_default_runtimes()
-    bind_default_runtimes()
+    bind_default_runtimes(force_recreate=True)
 
 
 def test_default_sample_runtimes_delegate_to_application_services(monkeypatch) -> None:
     import dyntool.application.runtime_binding as runtime_binding
 
     clear_default_runtimes()
-    bind_default_runtimes()
+    bind_default_runtimes(force_recreate=True)
     assert runtime_binding._default_object_runtime is not None
     sample = _make_sample()
-    sample_set = SampleSet({sample.uid: sample})
+    sample_set = DefaultSampleSet({sample.uid: sample})
     calls: list[tuple[str, object]] = []
 
     monkeypatch.setattr(
@@ -323,11 +326,11 @@ def test_default_sample_runtimes_delegate_to_application_services(monkeypatch) -
         "organize_sample_set_storage_runtime",
         lambda sample_set: calls.append(("organize_sample_set_storage_runtime", len(sample_set))) or sample_set,
     )
+
     sample.connect_storage("store")
     sample.save("store")
     sample.load("store")
     sample.reload()
-
     sample_set.connect_storage("set-store")
     sample_set.save("set-store")
     sample_set.load("set-store")
@@ -348,13 +351,13 @@ def test_default_sample_runtimes_delegate_to_application_services(monkeypatch) -
         "organize_sample_set_storage_runtime",
     ]
     clear_default_runtimes()
-    bind_default_runtimes()
+    bind_default_runtimes(force_recreate=True)
 
 
 def test_object_level_plotting_methods_are_removed_from_runtime_bound_objects() -> None:
     model = AccelSeries.from_data([0.0, 1.0], dt=0.1)
     sample = _make_sample()
-    sample_set = SampleSet({sample.uid: sample})
+    sample_set = DefaultSampleSet({sample.uid: sample})
 
     assert not hasattr(model, "plot")
     assert not hasattr(model, "plot_static")

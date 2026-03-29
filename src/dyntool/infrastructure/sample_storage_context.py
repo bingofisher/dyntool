@@ -1,4 +1,4 @@
-"""样本存储策略共享的上下文辅助工具。"""
+"""?????????????????"""
 
 from __future__ import annotations
 
@@ -80,7 +80,7 @@ class StorageContext:
         self.data_storage = data_storage or DataStorage()
 
     def category_fields(self) -> list[str]:
-        """返回样本模式中允许进入存储流程的槽位名称列表。"""
+        """???????????????????????"""
 
         return list(self.sampleset.sample_schema.slot_names(include_storage_only=True))
 
@@ -120,33 +120,33 @@ class StorageContext:
         return resolved
 
     def attr_data_format(self) -> AttrDataFormat:
-        """解析属性数据载荷格式配置。
+        """返回当前生效的属性数据导出格式。
 
         Returns:
             AttrDataFormat: 当前生效的属性数据导出格式枚举。
 
         Raises:
-            ValueError: 配置值不属于 `csv` 或 `npy` 时抛出。
+            ValueError: 配置值不属于受支持的属性载荷格式时抛出。
 
         Notes:
-            该配置读取自 `data_options["attr_data_format"]`；未提供时默认使用 `csv`。
-            这里返回真实枚举对象，后续策略实现据此选择文件扩展名和序列化路径。
+            该值来源于 `data_options["attr_data_format"]` 的解析结果。
+            调用方未显式传入时，沿用当前存储方案对应的默认值。
         """
 
         return self._resolved_data_options.attr_data_format
 
     def decimal_round(self) -> int | None:
-        """返回浮点数导出时的小数位截断精度。"""
+        """?????????????????"""
 
         return self._resolved_data_options.decimal_round
 
     def float_dtype(self) -> str | None:
-        """返回浮点数组导出时的目标 dtype 名称。"""
+        """???????????? dtype ???"""
 
         return self._resolved_data_options.float_dtype
 
     def h5_dataset_options(self) -> dict[str, Any]:
-        """返回当前样本存储 H5 dataset 写入选项。"""
+        """???????? H5 dataset ?????"""
 
         return self._resolved_data_options.h5_dataset_options.copy()
 
@@ -154,17 +154,17 @@ class StorageContext:
         """解析样本在当前存储方案下对应的文件名或目录名。
 
         Args:
-            sample: 需要落盘的样本对象。
+            sample: 需要落盘命名的样本对象。
 
         Returns:
-            str: 最终使用的文件名或目录名。
+            str: 当前存储方案下最终使用的样本名称。
 
         Raises:
             ValueError: `name_resolver` 返回空字符串时抛出。
 
         Notes:
-            当未提供 `name_resolver` 时默认使用 `sample.uid`。
-            自定义解析器的上下文字典固定包含 `uid`、`alias`、`storage_scheme` 三个键。
+            未配置 `name_resolver` 时默认直接使用 `sample.uid`。
+            自定义解析器返回值会在此处统一做字符串化和去首尾空白处理。
         """
 
         if self.name_resolver is None:
@@ -272,7 +272,7 @@ class StorageContext:
         return payload
 
     def serialize_container(self, data: Any) -> dict[str, Any]:
-        """将数据容器对象序列化为可存储的字典载荷。"""
+        """????????????????????"""
 
         if not hasattr(data, "to_dict"):
             raise TypeError(f"{type(data).__name__} 不支持 to_dict")
@@ -329,22 +329,22 @@ class StorageContext:
         return annotation
 
     def set_h5_path(self) -> Path:
-        """返回样本集级 H5 文件路径。"""
+        """?????? H5 ?????"""
 
         return self.base_dir / self.set_filename
 
     def sqlite_index_path(self) -> Path:
-        """杩斿洖 SQLite 绱㈠紩鏂囦欢璺緞銆?"""
+        """?? SQLite ???????"""
 
         return self.base_dir / DEFAULT_SQLITE_INDEX_FILENAME
 
     def sqlite_payload_h5_path(self) -> Path:
-        """杩斿洖 SQLite + H5 鏍锋湰闆?payload H5 璺緞銆?"""
+        """?? SQLite + H5 ??? payload H5 ???"""
 
         return self.base_dir / DEFAULT_SQLITE_PAYLOAD_H5_FILENAME
 
     def metadata_table_path(self) -> Path:
-        """返回元数据索引表路径。"""
+        """???????????"""
 
         return self.base_dir / METADATA_TABLE_FILENAME
 
@@ -363,16 +363,7 @@ class StorageContext:
         df.to_csv(self.metadata_table_path(), index=False, encoding=CSV_ENCODING_UTF8_SIG)
 
     def upsert_metadata_table_row(self, sample: SampleBaseModel, name: str) -> None:
-        """向元数据索引表写入或更新单个样本条目。
-
-        Args:
-            sample: 需要写入索引的样本对象。
-            name: 样本在当前存储方案下的文件名或目录名。
-
-        Notes:
-            表中至少维护 `uid`、文件名、别名和 `metadata` 的 JSON 展平结果。
-            若表中已存在相同 `uid` 的旧记录，会先删除再追加新行。
-        """
+        """???????????????????"""
 
         df = self.load_metadata_table()
         row: dict[str, Any] = {
@@ -388,13 +379,13 @@ class StorageContext:
         self.save_metadata_table(pd.DataFrame(df))
 
     def float_format(self) -> str | None:
-        """返回 `pandas` 导出浮点列时可复用的格式化字符串。"""
+        """?? `pandas` ?????????????????"""
 
         if self.decimal_round() is None:
             return None
         return f"%.{self.decimal_round()}f"
 
     def prepare_container_for_csv(self, category: str, data: Any) -> Any:
-        """将数据容器转换为适合 CSV 导出的标准化对象。"""
+        """?????????? CSV ?????????"""
 
         return self.deserialize_container(category, self.serialize_container(data))

@@ -6,5 +6,5 @@
 输出：评价结果和目录日志文件。
 
 运行命令：`python examples/10_scenarios/06_logged_run/main.py`  
-关键 API：`configure_logging()`、`get_logger()`、`Sample.eval_zvl()`  
+关键 API：`configure_logging()`、`get_logger()`、`DefaultSample.eval_zvl()`  
 对应测试：`tests/test_examples_systems.py::test_scenario_logged_run`

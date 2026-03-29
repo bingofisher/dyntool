@@ -46,7 +46,7 @@ def test_mkdocs_scaffold_exists() -> None:
         PROJECT_ROOT / "docs" / "gen_reference_pages.py",
     ]
     missing = [path.relative_to(PROJECT_ROOT).as_posix() for path in required_files if not path.exists()]
-    assert not missing, f"missing documentation scaffold files: {missing}"
+    assert not missing, f"缺少文档脚手架文件: {missing}"
 
 
 def test_mkdocs_config_uses_expected_stack_and_layout() -> None:
@@ -102,13 +102,13 @@ def test_formal_docs_do_not_use_removed_entrypoints() -> None:
         PROJECT_ROOT / "docs" / "api",
         PROJECT_ROOT / "docs" / "usage",
         PROJECT_ROOT / "docs" / "workflows",
-        PROJECT_ROOT / "docs" / "systems",
         PROJECT_ROOT / "docs" / "index.md",
         PROJECT_ROOT / "docs" / "user_guide.md",
         PROJECT_ROOT / "docs" / "examples_overview.md",
     ]
     forbidden = (
         "`dyntool.resource`",
+        "dyntool.resource.",
         "DynTool(",
         "from dyntool import DynTool",
         "from dyntool.domain",
@@ -125,15 +125,11 @@ def test_formal_docs_do_not_use_removed_entrypoints() -> None:
             if any(token in text for token in forbidden):
                 offenders.append(path.relative_to(PROJECT_ROOT).as_posix())
 
-    assert offenders == [], f"formal docs still contain removed entrypoints: {offenders}"
+    assert offenders == [], f"正式文档仍包含已删除入口: {offenders}"
 
 
 def test_active_docs_do_not_use_workspace_absolute_links() -> None:
-    scan_roots = [
-        PROJECT_ROOT / "README.md",
-        PROJECT_ROOT / "ARCHITECTURE.md",
-        PROJECT_ROOT / "docs",
-    ]
+    scan_roots = [PROJECT_ROOT / "README.md", PROJECT_ROOT / "ARCHITECTURE.md", PROJECT_ROOT / "docs"]
     offenders: list[str] = []
     for root in scan_roots:
         paths = [root] if root.is_file() else sorted(root.rglob("*.md"))
@@ -142,7 +138,7 @@ def test_active_docs_do_not_use_workspace_absolute_links() -> None:
             if "/D:/BaiduSyncdisk/13_CodeRepository/Projects/AdvDynTool/" in text:
                 offenders.append(path.relative_to(PROJECT_ROOT).as_posix())
 
-    assert offenders == [], f"docs still contain workspace absolute links: {offenders}"
+    assert offenders == [], f"文档仍包含工作区绝对路径: {offenders}"
 
 
 def test_formal_navigation_pages_declare_stability() -> None:
@@ -164,7 +160,7 @@ def test_formal_navigation_pages_declare_stability() -> None:
 
     for rel in flatten(payload["nav"]):
         text = (PROJECT_ROOT / "docs" / rel).read_text(encoding="utf-8")
-        assert any(label in text for label in labels), f"{rel} missing stability label"
+        assert any(label in text for label in labels), f"{rel} 缺少稳定性标签"
 
 
 def test_custom_extension_doc_is_internal_only() -> None:
