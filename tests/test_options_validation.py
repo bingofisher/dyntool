@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from dyntool import AccelSeries, PlotKind, Sample, SampleDomain, SampleSet, StorageMode
+from dyntool import AccelSeries, PlotKind, Sample, SampleDomain, SampleSet, StorageMode, StorageScheme
 
 
 def test_plot_payload_bridge_is_removed() -> None:
@@ -39,3 +39,63 @@ def test_storage_mode_requires_enum_value(tmp_path: Path) -> None:
         )
 
     sample_set.save(tmp_path / "samples.h5", mode=StorageMode.CREATE)
+
+
+def test_connect_storage_rejects_unknown_data_option(tmp_path: Path) -> None:
+    sample_set = SampleSet()
+
+    with pytest.raises(ValueError, match="data_options"):
+        sample_set.connect_storage(
+            tmp_path / "unknown_data_option",
+            mode=StorageMode.CREATE,
+            storage_scheme=StorageScheme.SAMPLE_DIR,
+            data_options={"unknown_option": 1},
+        )
+
+
+def test_connect_storage_rejects_h5_options_for_non_h5_scheme(tmp_path: Path) -> None:
+    sample_set = SampleSet()
+
+    with pytest.raises(ValueError, match="h5_compression"):
+        sample_set.connect_storage(
+            tmp_path / "not_h5",
+            mode=StorageMode.CREATE,
+            storage_scheme=StorageScheme.SAMPLE_DIR,
+            data_options={"h5_compression": "gzip"},
+        )
+
+
+def test_connect_storage_exposes_normalized_h5_data_options(tmp_path: Path) -> None:
+    sample_set = SampleSet()
+
+    sample_set.connect_storage(
+        tmp_path / "sample_h5",
+        mode=StorageMode.CREATE,
+        storage_scheme=StorageScheme.SAMPLE_H5,
+    )
+
+    assert sample_set.storage is not None
+    assert sample_set.storage.data_options["h5_compression"] == "gzip"
+    assert sample_set.storage.data_options["h5_compression_level"] == 4
+    assert sample_set.storage.data_options["h5_dataset_options"] == {
+        "compression": "gzip",
+        "compression_opts": 4,
+    }
+
+
+def test_connect_storage_exposes_normalized_h5_data_options_for_set_sqlite_h5(tmp_path: Path) -> None:
+    sample_set = SampleSet()
+
+    sample_set.connect_storage(
+        tmp_path / "sample_set_sqlite_h5",
+        mode=StorageMode.CREATE,
+        storage_scheme=StorageScheme.SET_SQLITE_H5,
+    )
+
+    assert sample_set.storage is not None
+    assert sample_set.storage.data_options["h5_compression"] == "gzip"
+    assert sample_set.storage.data_options["h5_compression_level"] == 4
+    assert sample_set.storage.data_options["h5_dataset_options"] == {
+        "compression": "gzip",
+        "compression_opts": 4,
+    }

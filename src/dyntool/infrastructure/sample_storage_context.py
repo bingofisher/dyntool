@@ -12,9 +12,8 @@ import pandas as pd
 
 from .storage_constants import (
     CSV_ENCODING_UTF8_SIG,
-    DATA_OPTION_ATTR_DATA_FORMAT,
-    DATA_OPTION_DECIMAL_ROUND,
-    DATA_OPTION_FLOAT_DTYPE,
+    DEFAULT_SQLITE_INDEX_FILENAME,
+    DEFAULT_SQLITE_PAYLOAD_H5_FILENAME,
     DEFAULT_SET_H5_FILENAME,
     META_COL_ALIAS,
     META_COL_METADATA_JSON,
@@ -23,6 +22,7 @@ from .storage_constants import (
     METADATA_TABLE_COLUMNS,
     METADATA_TABLE_FILENAME,
 )
+from .storage_options import ResolvedStorageDataOptions, resolve_storage_data_options
 from .data_storage import DataStorage
 from ..storage.types import AttrDataFormat, NameResolver, StorageScheme
 
@@ -70,7 +70,11 @@ class StorageContext:
         self.sampleset = sampleset
         self.base_dir = base_dir
         self.storage_scheme = storage_scheme
-        self.data_options = data_options or {}
+        self._resolved_data_options: ResolvedStorageDataOptions = resolve_storage_data_options(
+            storage_scheme,
+            data_options,
+        )
+        self.data_options = self._resolved_data_options.as_dict()
         self.name_resolver = name_resolver
         self.set_filename = set_filename
         self.data_storage = data_storage or DataStorage()
@@ -129,31 +133,22 @@ class StorageContext:
             这里返回真实枚举对象，后续策略实现据此选择文件扩展名和序列化路径。
         """
 
-        fmt = str(self.data_options.get(DATA_OPTION_ATTR_DATA_FORMAT, AttrDataFormat.CSV.value))
-        try:
-            return AttrDataFormat(fmt)
-        except ValueError as exc:
-            raise ValueError("data_options.attr_data_format 必须是 'csv' 或 'npy'。") from exc
+        return self._resolved_data_options.attr_data_format
 
     def decimal_round(self) -> int | None:
         """返回浮点数导出时的小数位截断精度。"""
 
-        value = self.data_options.get(DATA_OPTION_DECIMAL_ROUND)
-        if value is None:
-            return None
-        if not isinstance(value, int) or value < 0:
-            raise ValueError("data_options.decimal_round must be an integer >= 0")
-        return value
+        return self._resolved_data_options.decimal_round
 
     def float_dtype(self) -> str | None:
         """返回浮点数组导出时的目标 dtype 名称。"""
 
-        value = self.data_options.get(DATA_OPTION_FLOAT_DTYPE)
-        if value is None:
-            return None
-        if value not in {"float32", "float64"}:
-            raise ValueError("data_options.float_dtype 仅支持 'float32' 或 'float64'")
-        return value
+        return self._resolved_data_options.float_dtype
+
+    def h5_dataset_options(self) -> dict[str, Any]:
+        """返回当前样本存储 H5 dataset 写入选项。"""
+
+        return self._resolved_data_options.h5_dataset_options.copy()
 
     def resolve_name(self, sample: SampleBaseModel) -> str:
         """解析样本在当前存储方案下对应的文件名或目录名。
@@ -208,7 +203,8 @@ class StorageContext:
         selected = self.resolve_storage_categories(categories)
         out: dict[str, Any] = {}
         for category in selected:
-            data = getattr(sample, category, None)
+            field = sample.sample_schema.resolve_field(category)
+            data = sample.data_vars.get(field)
             if data is None:
                 continue
             if not hasattr(data, "to_dict") or not hasattr(data.__class__, "from_dict"):
@@ -336,6 +332,16 @@ class StorageContext:
         """返回样本集级 H5 文件路径。"""
 
         return self.base_dir / self.set_filename
+
+    def sqlite_index_path(self) -> Path:
+        """杩斿洖 SQLite 绱㈠紩鏂囦欢璺緞銆?"""
+
+        return self.base_dir / DEFAULT_SQLITE_INDEX_FILENAME
+
+    def sqlite_payload_h5_path(self) -> Path:
+        """杩斿洖 SQLite + H5 鏍锋湰闆?payload H5 璺緞銆?"""
+
+        return self.base_dir / DEFAULT_SQLITE_PAYLOAD_H5_FILENAME
 
     def metadata_table_path(self) -> Path:
         """返回元数据索引表路径。"""

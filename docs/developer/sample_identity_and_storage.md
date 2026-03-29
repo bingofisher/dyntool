@@ -59,6 +59,7 @@ flowchart TD
 - 负责样本级 `load_sample(...)` 与集合级 `load_all(...)`
 - `save_all()` 写当前状态
 - `organize()` 清理不再属于当前样本集的冗余 UID 条目
+- `SET_SQLITE_H5` 下由 SQLite 维护 metadata / presence 索引，H5 仅维护真实 payload
 
 ## alias 规则
 

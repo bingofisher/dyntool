@@ -33,6 +33,8 @@ from .types import SampleField, SampleLoadMode
 
 SampleType = TypeVar("SampleType", bound=SampleBase)
 logger = get_logger("samples")
+_H5_SUFFIXES = {".h5", ".hdf5", ".hdf"}
+_DEFAULT_SET_H5_FILENAME = "all_samples.h5"
 
 
 def _require_storage_mode(value: Any | None) -> None:
@@ -400,6 +402,11 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
     def get_metadatadf(self, flatten_sep: str = "@") -> pd.DataFrame:
         """将样本元数据转换为扁平化 DataFrame。"""
 
+        if flatten_sep == "@" and self.storage is not None and not self.storage_dirty:
+            try:
+                return self.storage.metadata_frame(uids=list(self.keys()))
+            except RuntimeError:
+                pass
         metadata_list = [meta.to_flatten_dict(sep=flatten_sep) for meta in self.get_metadata()]
         return pd.DataFrame(metadata_list)
 
@@ -740,6 +747,194 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
         if strict is not None:
             result.strict = strict
         return result
+
+    def _conversion_fields(
+        self,
+        categories: list[DataCategory | str] | None,
+    ) -> list[SampleField]:
+        """返回转换前需要保证可用的内部槽位列表。"""
+
+        resolved = self._categories_to_fields(categories)
+        if resolved is not None:
+            return resolved
+        return list(self.storable_fields())
+
+    def _resolve_conversion_target(
+        self,
+        path: str | Path,
+        *,
+        storage_scheme: Any,
+        set_filename: str | None,
+    ) -> tuple[Path, str | None]:
+        """解析转换目标的规范根路径与集合文件名。"""
+
+        resolved_path = Path(path).resolve()
+        scheme_value = str(getattr(storage_scheme, "value", storage_scheme))
+        if scheme_value == "set_h5":
+            if resolved_path.suffix.lower() in _H5_SUFFIXES:
+                return resolved_path.parent, resolved_path.name
+            return resolved_path, set_filename or _DEFAULT_SET_H5_FILENAME
+        return resolved_path, set_filename
+
+    def _matches_current_storage_target(
+        self,
+        *,
+        target_base_dir: Path,
+        storage_scheme: Any,
+        target_set_filename: str | None,
+    ) -> bool:
+        """判断转换目标是否与当前已连接存储等价。"""
+
+        if self.storage is None or getattr(self.storage, "base_dir", None) is None:
+            return False
+
+        current_scheme = getattr(self.storage, "storage_scheme", None)
+        current_scheme_value = str(getattr(current_scheme, "value", current_scheme))
+        target_scheme_value = str(getattr(storage_scheme, "value", storage_scheme))
+        current_base_dir = Path(self.storage.base_dir).resolve()
+        if current_scheme_value != target_scheme_value or current_base_dir != target_base_dir:
+            return False
+        if target_scheme_value != "set_h5":
+            return True
+
+        current_set_filename = str(getattr(self.storage, "set_filename", _DEFAULT_SET_H5_FILENAME))
+        resolved_target_set_filename = str(target_set_filename or _DEFAULT_SET_H5_FILENAME)
+        return current_set_filename == resolved_target_set_filename
+
+    def _ensure_conversion_source_ready(
+        self,
+        *,
+        items: list[tuple[str, SampleType]],
+        required_fields: list[SampleField],
+    ) -> None:
+        """确保转换前所需槽位已在内存中可用。"""
+
+        for _, sample in items:
+            pending_fields = [field for field in required_fields if not sample.is_loaded(field)]
+            if not pending_fields:
+                continue
+            source_storage = getattr(getattr(sample, "_storage_set", None), "storage", None)
+            if source_storage is None:
+                if sample.load_mode in {SampleLoadMode.LAZY, SampleLoadMode.METADATA_ONLY}:
+                    raise RuntimeError(
+                        "当前样本集存在未完全加载的样本，且缺少可用于补载的源存储连接，无法转换储存模式。"
+                    )
+                continue
+            sample.ensure_loaded(categories=pending_fields)
+
+    def _is_full_storage_conversion(
+        self,
+        *,
+        categories: list[DataCategory | str] | None,
+        filter: Callable[[SampleType], bool] | None,
+    ) -> bool:
+        """判断当前转换是否覆盖整个样本集及全部可存储槽位。"""
+
+        if filter is not None:
+            return False
+        if categories is None:
+            return True
+        return set(self._conversion_fields(categories)) == set(self.storable_fields())
+
+    def _build_conversion_snapshot(
+        self,
+        *,
+        items: list[tuple[str, SampleType]],
+        strict: bool,
+    ) -> Self:
+        """基于当前样本状态构建用于落盘的独立快照。"""
+
+        snapshot = self.__class__()
+        snapshot.strict = strict
+        for _, sample in items:
+            cloned = cast(SampleType, sample.model_copy(deep=True))
+            snapshot[cloned.uid] = cloned
+        return snapshot
+
+    def convert_storage(
+        self,
+        path: str | Path,
+        *,
+        mode: Any | None = None,
+        storage_scheme: Any,
+        data_options: dict[str, Any] | None = None,
+        categories: list[DataCategory | str] | None = None,
+        strict: bool | None = None,
+        filter: Callable[[SampleType], bool] | None = None,
+        workers: int = 1,
+        chunk_size: int = 256,
+        name_resolver: Any | None = None,
+        set_filename: str | None = None,
+    ) -> Self:
+        """将当前样本集复制转换为另一种正式存储方案。
+
+        Args:
+            path: 显式目标路径，必须不同于当前已连接存储。
+            mode: 目标存储连接模式；未显式提供时沿用 `save()` 的默认创建语义。
+            storage_scheme: 目标存储方案枚举，必须使用正式 `StorageScheme`。
+            data_options: 目标存储使用的正式 `data_options`。
+            categories: 仅转换指定公开分类；为 `None` 时转换全部可存储分类。
+            strict: 是否覆盖当前样本集的严格模式。
+            filter: 仅转换命中的样本；命中样本之外的内容不会写入目标。
+            workers: 批量写入 worker 数量。
+            chunk_size: 批量写入分块大小。
+            name_resolver: 可选目标样本命名解析器。
+            set_filename: 集合级文件名，仅在集合容器方案中生效。
+
+        Returns:
+            当前样本集对象本身。
+
+        Notes:
+            本方法是复制式转换，不会删除旧存储。只有完整转换时才会在成功后把当前实例重绑到新存储；
+            若使用了 `filter` 或仅转换部分 `categories`，则当前实例保持原存储绑定不变。
+        """
+
+        _require_storage_mode(mode)
+        _require_storage_scheme(storage_scheme)
+        _require_name_resolver(name_resolver)
+
+        target_base_dir, target_set_filename = self._resolve_conversion_target(
+            path,
+            storage_scheme=storage_scheme,
+            set_filename=set_filename,
+        )
+        if self._matches_current_storage_target(
+            target_base_dir=target_base_dir,
+            storage_scheme=storage_scheme,
+            target_set_filename=target_set_filename,
+        ):
+            raise ValueError("convert_storage() 的目标路径与当前存储等价，请提供不同的目标路径或存储方案。")
+
+        effective_strict = self.strict if strict is None else strict
+        selected_items = self._filtered_items(filter=filter)
+        required_fields = self._conversion_fields(categories)
+        self._ensure_conversion_source_ready(items=selected_items, required_fields=required_fields)
+
+        snapshot = self._build_conversion_snapshot(items=selected_items, strict=effective_strict)
+        snapshot.save(
+            path,
+            mode=mode,
+            storage_scheme=storage_scheme,
+            data_options=data_options,
+            categories=categories,
+            strict=effective_strict,
+            workers=workers,
+            chunk_size=chunk_size,
+            name_resolver=name_resolver,
+            set_filename=set_filename,
+        )
+
+        if self._is_full_storage_conversion(categories=categories, filter=filter):
+            self.connect_storage(
+                target_base_dir,
+                strict=effective_strict,
+                storage_scheme=storage_scheme,
+                data_options=data_options,
+                name_resolver=name_resolver,
+                set_filename=target_set_filename,
+            )
+            self.storage_dirty = False
+        return self
 
     def save(
         self,

@@ -10,6 +10,7 @@ from .sample_storage_strategy_impl import (
     _SampleH5Strategy,
     _SampleJsonStrategy,
     _SetH5Strategy,
+    _SetSqliteH5Strategy,
 )
 
 __all__ = [
@@ -17,6 +18,7 @@ __all__ = [
     "_SampleJsonStrategy",
     "_SampleH5Strategy",
     "_SetH5Strategy",
+    "_SetSqliteH5Strategy",
     "_AttrTableStrategy",
     "_SampleDirStrategy",
     "STRATEGY_REGISTRY",

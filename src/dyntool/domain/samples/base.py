@@ -49,6 +49,7 @@ class SampleBase(BaseModel):
     _dirty_categories: set[SampleField] = PrivateAttr(default_factory=set)
     _load_mode: SampleLoadMode = PrivateAttr(default=SampleLoadMode.EAGER)
     _originated_from_storage: bool = PrivateAttr(default=False)
+    _storage_payload_id: str | None = PrivateAttr(default=None)
 
     model_config = ConfigDict(
         extra="forbid",

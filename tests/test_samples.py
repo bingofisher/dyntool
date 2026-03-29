@@ -2,7 +2,9 @@
 
 from datetime import datetime
 from pathlib import Path
+import sqlite3
 
+import h5py
 import numpy as np
 import pytest
 
@@ -699,6 +701,45 @@ class TestDefaultSampleSet:
         assert isinstance(accel_value, np.ndarray)
         assert accel_value.dtype == np.float32
 
+    def test_sample_h5_storage_uses_gzip_compression_by_default(self, tmp_path: Path) -> None:
+        sample = self._make_default_sample("sample_h5_gzip")
+        path = tmp_path / "single_sample.h5"
+
+        sample.save(path, storage_scheme=StorageScheme.SAMPLE_H5)
+
+        with h5py.File(path / f"{sample.uid}.h5", "r") as handle:
+            dataset = handle["accel"]["value"]
+            assert dataset.compression == "gzip"
+            assert dataset.compression_opts == 4
+
+    def test_set_h5_storage_uses_gzip_compression_by_default(self, tmp_path: Path) -> None:
+        sample_set = SampleSet()
+        sample = self._make_default_sample("set_h5_gzip")
+        sample_set[sample.uid] = sample
+        path = tmp_path / "sample_set.h5"
+
+        sample_set.save(path, storage_scheme=StorageScheme.SET_H5)
+
+        with h5py.File(path, "r") as handle:
+            dataset = handle[sample.uid]["accel"]["value"]
+            assert dataset.compression == "gzip"
+            assert dataset.compression_opts == 4
+
+    def test_sample_h5_storage_allows_explicit_compression_override(self, tmp_path: Path) -> None:
+        sample = self._make_default_sample("sample_h5_lzf")
+        path = tmp_path / "single_sample_lzf.h5"
+
+        sample.save(
+            path,
+            storage_scheme=StorageScheme.SAMPLE_H5,
+            data_options={"h5_compression": "lzf"},
+        )
+
+        with h5py.File(path / f"{sample.uid}.h5", "r") as handle:
+            dataset = handle["accel"]["value"]
+            assert dataset.compression == "lzf"
+            assert dataset.compression_opts is None
+
     def test_connect_storage_rejects_removed_data_format(self, tmp_path: Path) -> None:
         sample_set = SampleSet()
         with pytest.raises(TypeError):
@@ -1230,3 +1271,312 @@ class TestSampleSetLoadContracts:
         assert isinstance(report, BatchOperationReport)
         assert report.stats.failed == 0
         assert loaded[sample.uid].otovl is not None
+
+
+class TestSetSqliteH5Storage:
+    def test_set_sqlite_h5_round_trip_lazy_and_metadata_frame(self, tmp_path: Path) -> None:
+        sample_a = Sample(
+            metadata=Metadata(
+                attributes={"line": "A"},
+                extra={"source": "sqlite", "batch": "g1"},
+            ),
+            accel=AccelSeries.from_data(np.random.randn(128) * 0.01, dt=0.002),
+        )
+        sample_b = Sample(
+            metadata=Metadata(
+                attributes={"line": "B"},
+                extra={"source": "sqlite", "batch": "g2"},
+            ),
+            accel=AccelSeries.from_data(np.random.randn(96) * 0.01, dt=0.002),
+        )
+        source = SampleSet({sample_a.uid: sample_a, sample_b.uid: sample_b})
+        store_dir = tmp_path / "sqlite_h5_store"
+
+        source.save(store_dir, storage_scheme=StorageScheme.SET_SQLITE_H5)
+
+        assert (store_dir / "index.sqlite").exists()
+        assert (store_dir / "payload.h5").exists()
+
+        loaded = SampleSet.from_storage(
+            store_dir,
+            storage_scheme=StorageScheme.SET_SQLITE_H5,
+            load_mode=SampleLoadMode.LAZY,
+        )
+        lazy_sample = loaded[sample_a.uid]
+
+        assert lazy_sample.is_loaded("accel") is False
+
+        metadata_frame = loaded.get_metadatadf()
+        assert set(metadata_frame["attributes@line"]) == {"A", "B"}
+        assert set(metadata_frame["extra@source"]) == {"sqlite"}
+        assert set(metadata_frame["extra@batch"]) == {"g1", "g2"}
+
+        assert lazy_sample.accel is not None
+        assert lazy_sample.is_loaded("accel") is True
+
+    def test_set_sqlite_h5_persists_index_tables(self, tmp_path: Path) -> None:
+        sample = Sample(
+            metadata=Metadata(
+                attributes={"line": "L1"},
+                extra={"source": "sqlite-index"},
+            ),
+            accel=AccelSeries.from_data(np.random.randn(64) * 0.01, dt=0.002),
+        )
+        source = SampleSet({sample.uid: sample})
+        store_dir = tmp_path / "sqlite_index_store"
+
+        source.save(store_dir, storage_scheme=StorageScheme.SET_SQLITE_H5)
+
+        conn = sqlite3.connect(store_dir / "index.sqlite")
+        try:
+            sample_rows = conn.execute("SELECT uid, alias, payload_id FROM sample").fetchall()
+            metadata_rows = conn.execute(
+                "SELECT key, value_text FROM sample_metadata_flat ORDER BY key",
+            ).fetchall()
+            presence_rows = conn.execute(
+                "SELECT slot_name, exists_flag, h5_path FROM sample_slot_presence",
+            ).fetchall()
+        finally:
+            conn.close()
+
+        assert len(sample_rows) == 1
+        assert sample_rows[0][0] == sample.uid
+        assert sample_rows[0][1] == sample.alias
+        assert ("attributes@line", "L1") in metadata_rows
+        assert ("extra@source", "sqlite-index") in metadata_rows
+        assert presence_rows == [("accel", 1, f"/samples/{sample_rows[0][2]}/slots/accel")]
+
+    def test_set_sqlite_h5_keeps_payload_id_stable_after_uid_change(self, tmp_path: Path) -> None:
+        sample = Sample(
+            metadata=Metadata(
+                attributes={"line": "L1"},
+                extra={"source": "before"},
+            ),
+            accel=AccelSeries.from_data(np.random.randn(64) * 0.01, dt=0.002),
+        )
+        store_dir = tmp_path / "sqlite_uid_change"
+        SampleSet({sample.uid: sample}).save(store_dir, storage_scheme=StorageScheme.SET_SQLITE_H5)
+
+        conn = sqlite3.connect(store_dir / "index.sqlite")
+        try:
+            before_uid, before_payload_id = conn.execute(
+                "SELECT uid, payload_id FROM sample",
+            ).fetchone()
+        finally:
+            conn.close()
+
+        loaded = SampleSet.from_storage(
+            store_dir,
+            storage_scheme=StorageScheme.SET_SQLITE_H5,
+            load_mode=SampleLoadMode.METADATA_ONLY,
+        )
+        loaded_sample = loaded[before_uid]
+        loaded_sample.update_metadata(
+            attributes={"line": "L2"},
+            extra={"source": "after"},
+        )
+        after_uid = loaded_sample.uid
+
+        loaded.save(store_dir, storage_scheme=StorageScheme.SET_SQLITE_H5)
+
+        conn = sqlite3.connect(store_dir / "index.sqlite")
+        try:
+            rows = conn.execute("SELECT uid, payload_id FROM sample").fetchall()
+        finally:
+            conn.close()
+
+        with h5py.File(store_dir / "payload.h5", "r") as h5_file:
+            payload_keys = list(h5_file["samples"].keys())
+
+        assert before_uid != after_uid
+        assert rows == [(after_uid, before_payload_id)]
+        assert payload_keys == [before_payload_id]
+
+    def test_from_storage_infers_set_sqlite_h5_scheme(self, tmp_path: Path) -> None:
+        sample = Sample(
+            metadata=Metadata(extra={"source": "infer"}),
+            accel=AccelSeries.from_data(np.random.randn(32) * 0.01, dt=0.002),
+        )
+        store_dir = tmp_path / "infer_sqlite_h5"
+        SampleSet({sample.uid: sample}).save(store_dir, storage_scheme=StorageScheme.SET_SQLITE_H5)
+
+        loaded = SampleSet.from_storage(
+            store_dir,
+            load_mode=SampleLoadMode.LAZY,
+        )
+
+        assert loaded[sample.uid].metadata.extra["source"] == "infer"
+
+
+class TestSampleSetConvertStorage:
+    def _make_sample(self, source: str) -> Sample:
+        accel = AccelSeries.from_data(np.random.randn(128) * 0.01, dt=0.002)
+        return Sample(
+            metadata=Metadata(
+                attributes={"line": source},
+                extra={"source": source},
+            ),
+            accel=accel,
+            vel=accel.calc_vel(),
+        )
+
+    @staticmethod
+    def _target_path(tmp_path: Path, scheme: StorageScheme) -> Path:
+        if scheme is StorageScheme.SET_H5:
+            return tmp_path / f"{scheme.value}.h5"
+        return tmp_path / scheme.value
+
+    @pytest.mark.parametrize(
+        "target_scheme",
+        [
+            StorageScheme.SAMPLE_JSON,
+            StorageScheme.SAMPLE_H5,
+            StorageScheme.SET_H5,
+            StorageScheme.SET_SQLITE_H5,
+            StorageScheme.ATTR_TABLE,
+            StorageScheme.SAMPLE_DIR,
+        ],
+    )
+    def test_convert_storage_supports_formal_sample_set_schemes(
+        self,
+        tmp_path: Path,
+        target_scheme: StorageScheme,
+    ) -> None:
+        sample = self._make_sample("formal")
+        source_dir = tmp_path / "source_store"
+        SampleSet({sample.uid: sample}).save(source_dir, storage_scheme=StorageScheme.SAMPLE_DIR)
+
+        loaded = SampleSet.from_storage(
+            source_dir,
+            storage_scheme=StorageScheme.SAMPLE_DIR,
+            load_mode=SampleLoadMode.LAZY,
+        )
+        assert loaded[sample.uid].is_loaded("vel") is False
+
+        target_path = self._target_path(tmp_path, target_scheme)
+        loaded.convert_storage(target_path, storage_scheme=target_scheme)
+
+        assert loaded.storage is not None
+        assert loaded.storage.storage_scheme is target_scheme
+
+        converted = SampleSet.from_storage(
+            target_path,
+            storage_scheme=target_scheme,
+            load_mode=SampleLoadMode.EAGER,
+        )
+
+        assert sample.uid in converted
+        assert converted[sample.uid].accel is not None
+        assert converted[sample.uid].vel is not None
+
+    def test_convert_storage_full_conversion_rebinds_followup_saves(self, tmp_path: Path) -> None:
+        sample = self._make_sample("rebind")
+        source_dir = tmp_path / "source_rebind"
+        target_path = tmp_path / "converted_rebind.h5"
+        SampleSet({sample.uid: sample}).save(source_dir, storage_scheme=StorageScheme.SAMPLE_DIR)
+
+        loaded = SampleSet.from_storage(source_dir, storage_scheme=StorageScheme.SAMPLE_DIR)
+        loaded.convert_storage(target_path, storage_scheme=StorageScheme.SET_H5)
+        loaded[sample.uid].set_alias("converted-alias")
+        loaded.save_all()
+
+        source_loaded = SampleSet.from_storage(source_dir, storage_scheme=StorageScheme.SAMPLE_DIR)
+        converted_loaded = SampleSet.from_storage(target_path, storage_scheme=StorageScheme.SET_H5)
+
+        assert source_loaded[sample.uid].alias != "converted-alias"
+        assert converted_loaded[sample.uid].alias == "converted-alias"
+
+    def test_convert_storage_partial_conversion_keeps_original_binding(self, tmp_path: Path) -> None:
+        sample_a = self._make_sample("A")
+        sample_b = self._make_sample("B")
+        source_dir = tmp_path / "source_partial"
+        target_path = tmp_path / "partial_target.h5"
+        SampleSet({sample_a.uid: sample_a, sample_b.uid: sample_b}).save(
+            source_dir,
+            storage_scheme=StorageScheme.SAMPLE_DIR,
+        )
+
+        loaded = SampleSet.from_storage(source_dir, storage_scheme=StorageScheme.SAMPLE_DIR)
+        loaded.convert_storage(
+            target_path,
+            storage_scheme=StorageScheme.SET_H5,
+            categories=[DataCategory.TS_ACCEL],
+            filter=lambda sample: sample.metadata.extra["source"] == "A",
+        )
+
+        assert loaded.storage is not None
+        assert loaded.storage.storage_scheme is StorageScheme.SAMPLE_DIR
+        assert loaded.storage.base_dir == source_dir.resolve()
+
+        converted = SampleSet.from_storage(
+            target_path,
+            storage_scheme=StorageScheme.SET_H5,
+            load_mode=SampleLoadMode.EAGER,
+        )
+
+        assert sample_a.uid in converted
+        assert sample_b.uid not in converted
+        assert converted[sample_a.uid].accel is not None
+        assert converted[sample_a.uid].vel is None
+
+    def test_convert_storage_from_lazy_view_prefetches_storable_slots(self, tmp_path: Path) -> None:
+        sample = self._make_sample("lazy-prefetch")
+        source_dir = tmp_path / "source_lazy_prefetch"
+        target_dir = tmp_path / "target_lazy_prefetch"
+        SampleSet({sample.uid: sample}).save(source_dir, storage_scheme=StorageScheme.SET_SQLITE_H5)
+
+        loaded = SampleSet.from_storage(
+            source_dir,
+            storage_scheme=StorageScheme.SET_SQLITE_H5,
+            load_mode=SampleLoadMode.LAZY,
+        )
+        assert loaded[sample.uid].is_loaded("accel") is False
+        assert loaded[sample.uid].is_loaded("vel") is False
+
+        loaded.convert_storage(target_dir, storage_scheme=StorageScheme.SAMPLE_DIR)
+
+        converted = SampleSet.from_storage(
+            target_dir,
+            storage_scheme=StorageScheme.SAMPLE_DIR,
+            load_mode=SampleLoadMode.EAGER,
+        )
+
+        assert converted[sample.uid].accel is not None
+        assert converted[sample.uid].vel is not None
+
+    def test_convert_storage_rejects_equivalent_target(self, tmp_path: Path) -> None:
+        sample = self._make_sample("same-target")
+        source_dir = tmp_path / "same_target_store"
+        SampleSet({sample.uid: sample}).save(source_dir, storage_scheme=StorageScheme.SAMPLE_DIR)
+
+        loaded = SampleSet.from_storage(source_dir, storage_scheme=StorageScheme.SAMPLE_DIR)
+
+        with pytest.raises(ValueError, match="目标路径"):
+            loaded.convert_storage(source_dir, storage_scheme=StorageScheme.SAMPLE_DIR)
+
+    def test_convert_storage_requires_source_binding_for_unloaded_samples(self, tmp_path: Path) -> None:
+        sample = self._make_sample("missing-source")
+        source_dir = tmp_path / "missing_source_store"
+        target_path = tmp_path / "missing_source_target.h5"
+        SampleSet({sample.uid: sample}).save(source_dir, storage_scheme=StorageScheme.SAMPLE_DIR)
+
+        loaded = SampleSet.from_storage(
+            source_dir,
+            storage_scheme=StorageScheme.SAMPLE_DIR,
+            load_mode=SampleLoadMode.METADATA_ONLY,
+        )
+        loaded.storage = None
+
+        with pytest.raises(RuntimeError, match="源存储连接"):
+            loaded.convert_storage(target_path, storage_scheme=StorageScheme.SET_H5)
+
+    def test_convert_storage_supports_fully_loaded_in_memory_sample_set(self, tmp_path: Path) -> None:
+        sample = self._make_sample("memory-only")
+        sample_set = SampleSet({sample.uid: sample})
+        target_path = tmp_path / "memory_only_target.h5"
+
+        sample_set.convert_storage(target_path, storage_scheme=StorageScheme.SET_H5)
+
+        loaded = SampleSet.from_storage(target_path, storage_scheme=StorageScheme.SET_H5)
+        assert sample.uid in loaded
+        assert loaded[sample.uid].vel is not None

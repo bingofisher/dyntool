@@ -1,10 +1,8 @@
 # 存储模式与读写规则
-
 稳定性：`Public API`
 
 ## 这一页解决什么问题
-
-这一页说明模型、样本和样本集的正式持久化规则，以及 `categories`、`strict`、`workers` 等关键参数的公开语义。
+这一页说明模型、样本和样本集的正式持久化规则，以及 `data_options`、`categories`、`strict`、`workers` 等关键参数的公开语义。
 
 ## 最短可运行用法
 
@@ -30,6 +28,73 @@ loaded = SampleSet.from_storage("output/sample_set.h5", storage_scheme=StorageSc
 print(loaded.count())
 ```
 
+```python
+sample_set.convert_storage(
+    "output/sample_set_sqlite_h5",
+    storage_scheme=StorageScheme.SET_SQLITE_H5,
+)
+```
+
+## 大样本集推荐方案
+
+- `StorageScheme.SET_H5` 继续适合单文件归档与交换
+- `StorageScheme.SET_SQLITE_H5` 适合大样本集的快速打开、`load_mode=METADATA_ONLY/LAZY`、metadata 导出与索引驱动读取
+- `SET_SQLITE_H5` 的目录固定包含 `index.sqlite` 和 `payload.h5`
+- `SampleSet.convert_storage(...)` 用于把当前样本集复制转换到另一种正式存储方案；只有完整转换时才会自动把当前实例重绑到新存储
+
+## H5 默认压缩
+
+- 单模型 H5、单样本 H5、样本集 H5 现在默认都启用 `gzip`
+- 默认压缩级别为 `4`
+- 如果显式覆盖压缩配置，则以显式配置为准
+- 未知键、错用范围或非法压缩参数会直接报中文错误，不再静默忽略
+
+## `data_options` 正式契约
+
+`data_options` 只用于样本和样本集存储入口。当前支持下列键：
+
+- `attr_data_format`
+  作用：控制 `StorageScheme.ATTR_TABLE` 中属性槽位落盘为 `csv` 或 `npy`
+  默认值：`csv`
+  适用范围：仅 `ATTR_TABLE`
+- `decimal_round`
+  作用：保存前对浮点载荷执行统一小数位收敛
+  默认值：`None`
+  适用范围：样本/样本集全部正式方案
+- `float_dtype`
+  作用：保存前把浮点数组收敛到 `float32` 或 `float64`
+  默认值：`None`
+  适用范围：样本/样本集全部正式方案
+- `h5_compression`
+  作用：控制 H5 样本存储压缩算法
+  默认值：`gzip`
+ 适用范围：`SAMPLE_H5`、`SET_H5`、`SET_SQLITE_H5`
+  允许值：`gzip`、`lzf`、`None`
+- `h5_compression_level`
+  作用：控制 `gzip` 压缩级别
+  默认值：`4`
+  适用范围：仅 `gzip`
+  允许值：`0` 到 `9`
+- `h5_dataset_options`
+  作用：高级 H5 dataset 参数映射
+  默认值：`{"compression": "gzip", "compression_opts": 4}`
+ 适用范围：`SAMPLE_H5`、`SET_H5`、`SET_SQLITE_H5`
+  允许键：`compression`、`compression_opts`、`shuffle`、`fletcher32`、`chunks`
+
+## 覆盖优先级
+
+- 先应用正式单项配置，例如 `h5_compression` 和 `h5_compression_level`
+- 再应用 `h5_dataset_options`
+- 如果二者冲突，以 `h5_dataset_options` 中的显式值为准
+- 对 `ATTR_TABLE` 之外的方案传入 `attr_data_format` 会直接报错
+- 对非 H5 样本方案传入 `h5_*` 键会直接报错
+
+## 单模型 H5 的说明
+
+- 单模型 `CSV/H5` 读写仍通过 `io_options` 控制
+- 单模型 H5 的高级覆盖键仍是 `dataset_options`
+- 即使不传 `dataset_options`，单模型 H5 现在也默认启用 `gzip` 和级别 `4`
+
 ## 关键代码片段
 
 --8<-- "generated/snippets/storage_scheme_compare.py"
@@ -47,7 +112,8 @@ print(loaded.count())
 ## 常见误区
 
 - 误以为计算派生对象会自动持久化
-- 把内部枚举或内部字段名当成正式 `categories` 入口
+- 在非 H5 样本方案上继续传 `h5_compression`
+- 把内部字段名当成正式 `categories` 入口
 - 在正式文档中直接导入 `SampleLoadMode` 或 `DataCategory`
 
 ## 相关示例

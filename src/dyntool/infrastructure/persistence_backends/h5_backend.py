@@ -10,6 +10,7 @@ import h5py
 import numpy as np
 
 from ...domain.constants import DataCategory, normalize_unit_map
+from ..storage_options import resolve_h5_dataset_options
 
 
 def _write_mapping(
@@ -27,7 +28,8 @@ def _write_mapping(
             _write_mapping(subgroup, value, dataset_options=dataset_options)
             continue
         arr = np.asarray(value)
-        dataset = group.create_dataset(str(key), data=arr, **(dataset_options or {}))
+        effective_dataset_options = {} if arr.shape == () else dict(dataset_options or {})
+        dataset = group.create_dataset(str(key), data=arr, **effective_dataset_options)
         unit = units.get(str(key))
         if unit:
             dataset.attrs["unit"] = unit
@@ -63,7 +65,7 @@ class H5Backend:
             raise TypeError(f"{type(model).__name__} must implement to_dict().")
         data = model.to_dict()
         path.parent.mkdir(parents=True, exist_ok=True)
-        dataset_options = options.get("dataset_options", {})
+        dataset_options = resolve_h5_dataset_options(dataset_options=options.get("dataset_options"))
         with h5py.File(path, "w") as handle:
             _write_mapping(handle, data, dataset_options=dataset_options)
 

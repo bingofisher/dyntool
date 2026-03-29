@@ -44,6 +44,15 @@ print(freqs[:3])
 - `dyntool.config`：通用配置加载
 - `dyntool.resources`：内置资源读取
 
+## 存储默认行为
+
+- `dyntool.storage` 的公开调用方式保持不变
+- 单模型 H5、单样本 H5、样本集 H5 默认启用 `gzip`
+- 默认压缩级别为 `4`
+- 样本/样本集 `data_options` 现在是正式契约，未知键和错用范围会立即报错
+- `StorageScheme.SET_SQLITE_H5` 适用于大样本集的 `METADATA_ONLY` / `LAZY` 打开、metadata 导出和索引驱动读取
+- `SampleSet.convert_storage(...)` 是正式公开方法，用于把当前样本集复制转换到另一种正式 `StorageScheme`
+
 ## 自动参考
 
 ::: dyntool

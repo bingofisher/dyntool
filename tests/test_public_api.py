@@ -184,6 +184,7 @@ def test_top_level_exports_reference_expected_objects() -> None:
     assert SampleDomain.VIBRATION_TEST.value == "vibration_test"
     assert UnitSystem.si() is not None
     assert StorageScheme.SET_H5.value == "set_h5"
+    assert StorageScheme.SET_SQLITE_H5.value == "set_sqlite_h5"
     assert StorageMode.OPEN.value == "open"
     assert AttrDataFormat.CSV.value == "csv"
     assert ContainerFormat.H5.value == "h5"
@@ -231,6 +232,7 @@ def test_sample_and_sampleset_support_current_class_first_flow(tmp_path: Path) -
 
     assert isinstance(result, OperationResult)
     assert isinstance(sample_set.eval_zvl(overwrite=True, freq_range=(2.0, 60.0)), BatchOperationReport)
+    assert hasattr(sample_set, "convert_storage")
     assert loaded[sample.uid].zvl is not None
 
 

@@ -3,6 +3,7 @@
 import tempfile
 from pathlib import Path
 
+import h5py
 import numpy as np
 import pytest
 
@@ -73,3 +74,26 @@ class TestH5Backend:
             backend.save(path, accel)
             with pytest.raises(ValueError, match="category"):
                 backend.load(path)
+
+    def test_save_uses_gzip_compression_by_default(self) -> None:
+        backend = H5Backend()
+        accel = AccelSeries.from_data(np.random.randn(64) * 0.01, dt=0.01)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "accel_default_compression.h5"
+            backend.save(path, accel)
+            with h5py.File(path, "r") as handle:
+                dataset = handle["value"]
+                assert dataset.compression == "gzip"
+                assert dataset.compression_opts == 4
+
+    def test_save_allows_explicit_dataset_options_override(self) -> None:
+        backend = H5Backend()
+        accel = AccelSeries.from_data(np.random.randn(64) * 0.01, dt=0.01)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "accel_lzf.h5"
+            backend.save(path, accel, dataset_options={"compression": "lzf"})
+            with h5py.File(path, "r") as handle:
+                dataset = handle["value"]
+                assert dataset.compression == "lzf"
