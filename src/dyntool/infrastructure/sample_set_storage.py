@@ -8,6 +8,8 @@ from functools import wraps
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Self
 
+import pandas as pd
+
 from ..logging import get_logger
 from ..storage.types import (
     NameResolver,
@@ -132,18 +134,18 @@ class SampleSetStorage:
         self.base_dir = base_dir
         self._connected = True
         self.storage_scheme = resolved_scheme
-        self.data_options = resolved_data_options.copy() if resolved_data_options else {}
         self.name_resolver = resolved_name_resolver
         self.set_filename = resolved_set_filename
         self._ctx = StorageContext(
             self.sampleset,
             base_dir=base_dir,
             storage_scheme=resolved_scheme,
-            data_options=self.data_options,
+            data_options=resolved_data_options,
             name_resolver=resolved_name_resolver,
             set_filename=resolved_set_filename,
             data_storage=self.data_storage,
         )
+        self.data_options = self._ctx.data_options.copy()
         self._sample_storage = SampleStorage(self._ctx)
         logger.info(
             "sample-set storage ready: %s (mode=%s, storage_scheme=%s)",
@@ -169,6 +171,16 @@ class SampleSetStorage:
         if self._sample_storage is None:
             raise RuntimeError("样本集存储尚未连接，请先调用 connect()")
         return self._sample_storage
+
+    @ensure_connected
+    def metadata_frame(self, *, uids: list[str] | None = None) -> pd.DataFrame:
+        """浠庡簳灞傜储寮曟瀯寤?metadata 琛ㄦ牸銆?"""
+
+        strategy = self._require_sample_storage().strategy
+        metadata_frame = getattr(strategy, "metadata_frame", None)
+        if callable(metadata_frame):
+            return metadata_frame(uids=uids)
+        raise RuntimeError("褰撳墠瀛樺偍鏂规涓嶆敮鎸佺洿鎺ヨ鍙?metadata_frame")
 
     def _selected_items(
         self,

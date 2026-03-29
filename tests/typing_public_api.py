@@ -45,6 +45,7 @@ if TYPE_CHECKING:
     assert_type(accel, AccelSeries)
     assert_type(UnitSystem.si(), UnitSystem)
     assert_type(StorageScheme.SET_H5, StorageScheme)
+    assert_type(StorageScheme.SET_SQLITE_H5, StorageScheme)
     assert_type(StorageMode.OPEN, StorageMode)
     assert_type(ContainerFormat.H5, ContainerFormat)
     assert_type(PlotKind.TIME, PlotKind)
@@ -82,6 +83,10 @@ if TYPE_CHECKING:
     assert_type(
         vib_sample_set.eval_zvl(freq_range=(2.0, 60.0)),
         BatchOperationReport[VibrationTestSampleSet],
+    )
+    assert_type(
+        vib_sample_set.convert_storage("out/converted.h5", storage_scheme=StorageScheme.SET_H5),
+        VibrationTestSampleSet,
     )
 
     saved_model_path = dt_storage.save_model(accel, "out/accel.csv")

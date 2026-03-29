@@ -119,7 +119,12 @@ def connect_sample_set(
     name_resolver: NameResolver | None = None,
     set_filename: str | None = None,
 ) -> SampleSetT:
-    """将样本集连接到指定存储位置。"""
+    """将样本集连接到指定存储位置。
+
+    Notes:
+        `data_options` 采用正式命名契约，未知键会立即报错。H5 样本存储默认启用
+        `gzip` 压缩，默认级别为 `4`。
+    """
 
     return StorageRuntime().connect_sample_set_runtime(
         sample_set,
@@ -146,7 +151,12 @@ def save_sample_set(
     name_resolver: NameResolver | None = None,
     set_filename: str | None = None,
 ) -> None:
-    """保存样本集。"""
+    """保存样本集。
+
+    Notes:
+        当目标方案为 `SAMPLE_H5` 或 `SET_H5` 时，若未显式覆盖压缩相关参数，
+        将默认使用 `gzip` 压缩和级别 `4`。
+    """
 
     StorageRuntime().save_sample_set_runtime(
         sample_set,
@@ -176,7 +186,11 @@ def load_sample_set(
     chunk_size: int = 256,
     set_filename: str | None = None,
 ) -> SampleSetBase[Any]:
-    """加载样本集。"""
+    """加载样本集。
+
+    Notes:
+        `data_options` 会在连接阶段完成校验；不适用于当前方案的键和未知键都会直接报错。
+    """
 
     return StorageRuntime().load(
         path,

@@ -38,6 +38,7 @@ class StorageScheme(StrEnum):
         `SAMPLE_JSON`: 每个样本使用 JSON 容器保存。
         `SAMPLE_H5`: 每个样本使用独立 HDF5 容器保存。
         `SET_H5`: 整个样本集写入同一个 HDF5 文件。
+        `SET_SQLITE_H5`: 使用 SQLite 索引和 HDF5 payload 的并行样本集存储。
         `ATTR_TABLE`: 以表格布局组织元数据和属性索引。
         `SAMPLE_DIR`: 每个样本对应一个目录，目录内再保存各数据槽位文件。
 
@@ -49,6 +50,7 @@ class StorageScheme(StrEnum):
     SAMPLE_JSON = "sample_json"
     SAMPLE_H5 = "sample_h5"
     SET_H5 = "set_h5"
+    SET_SQLITE_H5 = "set_sqlite_h5"
     ATTR_TABLE = "attr_table"
     SAMPLE_DIR = "sample_dir"
 
@@ -101,6 +103,19 @@ class StorageConnectOptions:
         data_options: 透传给存储上下文的格式和精度选项。
         name_resolver: 自定义样本文件名解析函数。
         set_filename: 当 `scheme` 为 `SET_H5` 时使用的样本集文件名。
+    Notes:
+        `data_options` 当前为正式契约，未知键会立即报错。默认与适用范围如下：
+
+        - `attr_data_format`: 仅适用于 `StorageScheme.ATTR_TABLE`，默认 `csv`
+        - `decimal_round`: 适用于样本/样本集各方案，默认 `None`
+        - `float_dtype`: 适用于样本/样本集各方案，默认 `None`
+        - `h5_compression`: 仅适用于 `StorageScheme.SAMPLE_H5` / `StorageScheme.SET_H5` /
+          `StorageScheme.SET_SQLITE_H5`，
+          默认 `gzip`
+        - `h5_compression_level`: 仅适用于 `gzip`，默认 `4`
+        - `h5_dataset_options`: 仅适用于 H5 样本存储，允许键为 `compression`、
+          `compression_opts`、`shuffle`、`fletcher32`、`chunks`，并在冲突时覆盖前述
+          H5 单项配置
     """
 
     base_dir: str | Path | None = None

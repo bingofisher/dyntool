@@ -162,11 +162,7 @@ def _check_gitignore(violations: list[str]) -> None:
         return
     text = _read_text(path)
     blocked_entries = {".codex/", "/.codex/"}
-    active_entries = {
-        line.strip()
-        for line in text.splitlines()
-        if line.strip() and not line.lstrip().startswith("#")
-    }
+    active_entries = {line.strip() for line in text.splitlines() if line.strip() and not line.lstrip().startswith("#")}
     if blocked_entries & active_entries:
         violations.append(".gitignore: must not ignore the repository-scoped .codex/ directory")
 
@@ -200,7 +196,9 @@ def _check_legacy_tokens(violations: list[str]) -> None:
         text = _read_text(path)
         for token, pattern in FORBIDDEN_PUBLIC_SURFACE_PATTERNS.items():
             if pattern.search(text):
-                violations.append(f"{path.relative_to(PROJECT_ROOT)}: contains removed or legacy public-surface token {token!r}")
+                violations.append(
+                    f"{path.relative_to(PROJECT_ROOT)}: contains removed or legacy public-surface token {token!r}"
+                )
 
 
 def main() -> int:

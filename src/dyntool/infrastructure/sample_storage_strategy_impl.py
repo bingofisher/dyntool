@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 
 from .sample_storage_strategy_base import _StorageStrategy
+from .sample_storage_sqlite_h5 import _SetSqliteH5Strategy
 from .storage_constants import (
     DATA_NPZ_FILENAME,
     H5_ATTR_ALIAS,
@@ -106,6 +107,7 @@ class _SampleH5Strategy(_StorageStrategy):
 
     def _write_payload_group(self, group: Any, payload: dict[str, Any]) -> None:
         units = payload.get("_units", {})
+        dataset_options = self.ctx.h5_dataset_options()
         for key, value in payload.items():
             if key == "_units" or value is None:
                 continue
@@ -115,7 +117,8 @@ class _SampleH5Strategy(_StorageStrategy):
             arr = np.asarray(value)
             if arr.dtype == object:
                 raise TypeError(f"H5 存储暂不支持对象数组字段: {key}")
-            dataset = group.create_dataset(key, data=arr)
+            effective_dataset_options = {} if arr.shape == () else dataset_options
+            dataset = group.create_dataset(key, data=arr, **effective_dataset_options)
             unit = units.get(key, "")
             if unit:
                 dataset.attrs[H5_ATTR_UNIT] = unit
@@ -449,6 +452,7 @@ STRATEGY_REGISTRY: dict[StorageScheme, type[_StorageStrategy]] = {
     StorageScheme.SAMPLE_JSON: _SampleJsonStrategy,
     StorageScheme.SAMPLE_H5: _SampleH5Strategy,
     StorageScheme.SET_H5: _SetH5Strategy,
+    StorageScheme.SET_SQLITE_H5: _SetSqliteH5Strategy,
     StorageScheme.ATTR_TABLE: _AttrTableStrategy,
     StorageScheme.SAMPLE_DIR: _SampleDirStrategy,
 }
@@ -457,6 +461,7 @@ __all__ = [
     "_SampleJsonStrategy",
     "_SampleH5Strategy",
     "_SetH5Strategy",
+    "_SetSqliteH5Strategy",
     "_AttrTableStrategy",
     "_SampleDirStrategy",
     "STRATEGY_REGISTRY",
