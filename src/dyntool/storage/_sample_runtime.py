@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from ..domain.samples import SampleBaseModel
-from ._runtime_common import SampleT, StorageMode, infer_sample_scheme, logger
+from ._runtime_common import SampleT, StorageMode, infer_sample_scheme, logger, resolve_sample_scheme_for_read
 
 
 class _SampleStorageRuntimeMixin:
@@ -28,6 +28,11 @@ class _SampleStorageRuntimeMixin:
             sample_set[sample.uid] = sample
         if kwargs.get("storage_scheme") is None and kwargs.get("scheme") is None:
             kwargs["storage_scheme"] = infer_sample_scheme(Path(base_dir))
+        elif Path(base_dir).exists():
+            kwargs["storage_scheme"] = resolve_sample_scheme_for_read(
+                Path(base_dir),
+                requested_scheme=kwargs.get("storage_scheme") or kwargs.get("scheme"),
+            )
         self.connect_sample_set_runtime(sample_set, base_dir, **kwargs)
         sample._storage_set = sample_set
         return sample

@@ -50,6 +50,7 @@ class SampleBase(BaseModel):
     _load_mode: SampleLoadMode = PrivateAttr(default=SampleLoadMode.EAGER)
     _originated_from_storage: bool = PrivateAttr(default=False)
     _storage_payload_id: str | None = PrivateAttr(default=None)
+    _storage_presence: dict[SampleField, bool] = PrivateAttr(default_factory=dict)
 
     model_config = ConfigDict(
         extra="forbid",
@@ -126,6 +127,7 @@ class SampleBase(BaseModel):
         object.__setattr__(self, "_loaded_categories", set(self.data_vars))
         object.__setattr__(self, "_dirty_categories", set())
         object.__setattr__(self, "_load_mode", SampleLoadMode.EAGER)
+        object.__setattr__(self, "_storage_presence", {field: True for field in self.data_vars})
         self._bind_metadata(self.metadata)
         if not self.alias or not self.alias.strip():
             self._set_alias_internal(self._default_alias_for_metadata(), mark_override=False)
@@ -370,6 +372,8 @@ class SampleBase(BaseModel):
         if field not in self.data_vars:
             spec = self.sample_schema.field_spec(field)
             if self._storage_set is not None and self._storage_set.storage is not None and spec.include_in_storage:
+                if self._storage_presence.get(field) is False:
+                    return None
                 if self._load_mode is SampleLoadMode.LAZY:
                     self.ensure_loaded(categories=[self.sample_schema.category(field)])
                 elif self._load_mode is SampleLoadMode.METADATA_ONLY:
@@ -411,13 +415,42 @@ class SampleBase(BaseModel):
         if self._storage_set is None or self._storage_set.storage is None:
             return self
         selected_fields = self._normalize_public_categories(categories)
-        loaded = self._storage_set.storage.load_sample(self.uid, selected_fields)
-        loaded._originated_from_storage = True
-        for category in loaded.loaded_categories:
-            self._replace_data_var_internal(category, loaded.get_data_var(category))
+        if selected_fields is None:
+            selected_fields = [
+                self.sample_schema.resolve_field(slot_name)
+                for slot_name in self.sample_schema.slot_names(include_storage_only=True)
+            ]
+        pending_fields = [
+            field
+            for field in selected_fields
+            if field not in self._loaded_categories and self._storage_presence.get(field, True)
+        ]
+        if not pending_fields:
+            if self._load_mode is SampleLoadMode.METADATA_ONLY:
+                self._set_load_mode_internal(SampleLoadMode.LAZY)
+            return self
+
+        loaded_fields = self._storage_set.storage.load_fields(self.uid, pending_fields)
+        for field in pending_fields:
+            payload = loaded_fields.get(str(field))
+            self._replace_data_var_internal(field, cast(DataModelBase | None, payload))
+            self._storage_presence[field] = payload is not None
         if self._load_mode is SampleLoadMode.METADATA_ONLY:
             self._set_load_mode_internal(SampleLoadMode.LAZY)
         return self
+
+    def _set_storage_presence_internal(
+        self,
+        presence: Mapping[SampleField | str, bool],
+    ) -> None:
+        """内部写入样本槽位存在性映射。"""
+
+        normalized: dict[SampleField, bool] = {}
+        for name, exists in presence.items():
+            normalized[self._resolve_field(str(name))] = bool(exists)
+        for field in self._loaded_categories:
+            normalized[field] = True
+        object.__setattr__(self, "_storage_presence", normalized)
 
     def unload(
         self,
@@ -681,7 +714,7 @@ class SampleBase(BaseModel):
                 现有设置。
             **kwargs: 支持键包括 `mode`、`storage_scheme`、`data_options`、
                 `name_resolver`、`set_filename`。`mode` 控制创建或打开行为；
-                `storage_scheme` 指定 `SAMPLE_JSON`、`SAMPLE_H5`、`SAMPLE_DIR`
+                `storage_scheme` 指定 `SAMPLE_JSON`、`SAMPLE_H5`、`SET_DIR`
                 等方案；`data_options` 用于传递底层存储配置；`name_resolver` 用于
                 自定义文件名解析；`set_filename` 用于 `SET_H5` 容器场景的集合文件名。
 

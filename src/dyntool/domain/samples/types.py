@@ -1,9 +1,11 @@
-"""样本加载、字段与视图配置类型。"""
+"""样本加载、字段、视图与比较报告类型。"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
+
+import pandas as pd
 
 
 class SampleField(StrEnum):
@@ -45,9 +47,25 @@ class SampleSetViewOptions:
     access_mode: StorageAccessMode = StorageAccessMode.READ_ONLY
 
 
+@dataclass(slots=True)
+class SampleSetComparisonReport:
+    """样本集结构与摘要对比报告。"""
+
+    same_type: bool
+    same_sample_type: bool
+    same_size: bool
+    left_only_uids: tuple[str, ...]
+    right_only_uids: tuple[str, ...]
+    common_uids: tuple[str, ...]
+    metadata_diff: pd.DataFrame
+    presence_diff: pd.DataFrame
+    scalar_diff: pd.DataFrame
+
+
 __all__ = [
     "SampleField",
     "SampleLoadMode",
+    "SampleSetComparisonReport",
     "SampleSetViewOptions",
     "StorageAccessMode",
 ]

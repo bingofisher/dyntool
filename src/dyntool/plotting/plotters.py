@@ -1153,7 +1153,7 @@ class StoryValuePlotter(PlotterBase):
 
     plotter_kind = PlotterKind.STORY_VALUE
     default_x_label = "value"
-    default_y_label = "level"
+    default_y_label = "story"
     category_order = (
         PlotCategory.SAMPLE.value,
         PlotCategory.STAT.value,

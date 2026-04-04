@@ -22,7 +22,7 @@ _H5_STORAGE_SCHEMES = {
     StorageScheme.SET_H5,
     StorageScheme.SET_SQLITE_H5,
 }
-_ATTR_TABLE_SCHEMES = {StorageScheme.ATTR_TABLE}
+_ATTR_TABLE_SCHEMES = {StorageScheme.SET_ATTR_TABLE}
 _ALLOWED_DATA_OPTION_KEYS = (
     DATA_OPTION_ATTR_DATA_FORMAT,
     DATA_OPTION_DECIMAL_ROUND,
@@ -146,7 +146,7 @@ def _raise_on_inapplicable_keys(
     data_options: Mapping[str, Any],
 ) -> None:
     if storage_scheme not in _ATTR_TABLE_SCHEMES and DATA_OPTION_ATTR_DATA_FORMAT in data_options:
-        raise ValueError("data_options.attr_data_format 仅适用于 StorageScheme.ATTR_TABLE。")
+        raise ValueError("data_options.attr_data_format 仅适用于 StorageScheme.SET_ATTR_TABLE。")
     if storage_scheme not in _H5_STORAGE_SCHEMES:
         for key in (
             DATA_OPTION_H5_COMPRESSION,

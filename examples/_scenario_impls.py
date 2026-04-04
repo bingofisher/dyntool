@@ -465,13 +465,13 @@ def _recipe_sample_set_filter_parallel_io(output_dir: Path | None = None) -> dic
     ]
     source = DefaultSampleSet.from_samples(source_samples, sample_domain=SampleDomain.VIBRATION_TEST)
     source.eval_zvl(overwrite=True, freq_range=(2.0, 60.0))
-    source.save(store_dir, storage_scheme=StorageScheme.SAMPLE_DIR, workers=2, chunk_size=1)
+    source.save(store_dir, storage_scheme=StorageScheme.SET_DIR, workers=2, chunk_size=1)
 
     keep_uid = source_samples[0].uid
     loaded = DefaultSampleSet.from_storage(
         store_dir,
         sample_domain=SampleDomain.VIBRATION_TEST,
-        storage_scheme=StorageScheme.SAMPLE_DIR,
+        storage_scheme=StorageScheme.SET_DIR,
         filter=lambda item: item.uid == keep_uid,
         workers=2,
         chunk_size=1,
@@ -532,7 +532,7 @@ def _recipe_storage_scheme_selection(output_dir: Path | None = None) -> dict[str
     sample = _make_vibration_sample(suffix="scheme", values=[0.0, 0.1, -0.02, 0.04])
     sample_set = DefaultSampleSet.from_samples([sample], sample_domain=SampleDomain.VIBRATION_TEST)
     sample_set.save(h5_path, storage_scheme=StorageScheme.SET_H5)
-    sample_set.save(dir_path, storage_scheme=StorageScheme.SAMPLE_DIR)
+    sample_set.save(dir_path, storage_scheme=StorageScheme.SET_DIR)
 
     return {
         "h5_path": str(h5_path),

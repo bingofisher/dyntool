@@ -9,7 +9,7 @@ from .default import DefaultSample, DefaultSampleSet, Sample, SampleSet
 from .registry import sample_from_structured_payload, sample_set_from_structured_payload
 from .schema import SampleSchema, SampleSlotSpec
 from .sets import SampleSetBase
-from .types import SampleLoadMode
+from .types import SampleLoadMode, SampleSetComparisonReport
 from .vibration_test import VibrationTestSample, VibrationTestSampleSet
 
 __all__ = [
@@ -21,6 +21,7 @@ __all__ = [
     "SampleSchema",
     "SampleSlotSpec",
     "SampleLoadMode",
+    "SampleSetComparisonReport",
     "Sample",
     "SampleSet",
     "DefaultSample",

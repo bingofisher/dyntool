@@ -12,6 +12,7 @@ import pandas as pd
 
 _RESOURCES_ROOT = Path(__file__).resolve().parent
 _MANIFEST_PATH = _RESOURCES_ROOT / "manifest.json"
+_DEFAULT_RESOURCE_CSV_ENCODING = "utf-8-sig"
 _CENTER_FREQ_COLUMNS = (
     "中心频率 (Hz)",
     "中心频率(Hz)",
@@ -70,7 +71,13 @@ def csv(
     options: ResourceQueryOptions | None = None,
     csv_options: dict[str, Any] | None = None,
 ) -> pd.DataFrame:
-    """读取指定资源 key 对应的 CSV。"""
+    """读取指定资源 key 对应的 CSV。
+
+    Notes:
+        `src/dyntool/resources/**/*.csv` 统一视为资源数据资产，默认按
+        `utf-8-sig` 读取，以兼顾程序读取和 Excel 直接打开。调用方若显式
+        传入 `encoding`，则以调用方参数为准。
+    """
 
     resolved_key = key or (options.key if options is not None else None)
     if resolved_key is None:
@@ -83,6 +90,7 @@ def csv(
     merged = dict(options.csv_options) if options is not None else {}
     if csv_options is not None:
         merged.update(csv_options)
+    merged.setdefault("encoding", _DEFAULT_RESOURCE_CSV_ENCODING)
     return pd.read_csv(target, **merged)
 
 

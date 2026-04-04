@@ -30,7 +30,7 @@ from .batch import (
 )
 from .commands import VibEvalCommand
 from .namespaces import SampleSetEvaluationNamespace, SampleSetProcessingNamespace
-from .types import SampleField, SampleLoadMode
+from .types import SampleField, SampleLoadMode, SampleSetComparisonReport
 
 if TYPE_CHECKING:
     from .types import SampleSetViewOptions
@@ -380,6 +380,23 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
 
         normalized_fields = self._categories_to_fields(categories)
         selected_items = self._select_samples(uid=None, uids=list(uids) if uids is not None else None, filter=filter)
+        if normalized_fields and self.storage is not None:
+            pending_uids: list[str] = []
+            for uid, sample in selected_items:
+                pending_fields = [field for field in normalized_fields if not sample.is_loaded(field)]
+                if pending_fields:
+                    pending_uids.append(uid)
+            if pending_uids:
+                loaded_map = self.storage.load_many_fields(pending_uids, normalized_fields)
+                for uid, sample in selected_items:
+                    for field in normalized_fields:
+                        payload = loaded_map.get(uid, {}).get(str(field))
+                        if payload is None:
+                            continue
+                        sample._replace_data_var_internal(field, cast(DataModelBase, payload))
+                    if sample.load_mode is SampleLoadMode.METADATA_ONLY and uid in loaded_map:
+                        sample._set_load_mode_internal(SampleLoadMode.LAZY)
+                return self
         for _, sample in selected_items:
             sample.ensure_loaded(categories=normalized_fields)
         return self
@@ -494,6 +511,184 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
         """返回样本集的 metadata 表格。"""
 
         return self.get_metadatadf(flatten_sep=flatten_sep)
+
+    def _compare_metadata_rows(
+        self,
+        other: "SampleSetBase[Any]",
+        *,
+        common_uids: list[str],
+        metadata_fields: list[str] | None,
+    ) -> pd.DataFrame:
+        """构建 metadata 差异表。"""
+
+        rows: list[dict[str, Any]] = []
+        for uid in common_uids:
+            left_flat = self[uid].metadata.to_flatten_dict(sep="@")
+            right_flat = other[uid].metadata.to_flatten_dict(sep="@")
+            fields = metadata_fields or sorted(set(left_flat) | set(right_flat))
+            for field in fields:
+                left_value = left_flat.get(field)
+                right_value = right_flat.get(field)
+                if left_value != right_value:
+                    rows.append({"uid": uid, "field": field, "left": left_value, "right": right_value})
+        return pd.DataFrame(rows)
+
+    def _sample_field_present(self, sample: SampleType, field: SampleField) -> bool:
+        """判断样本在指定槽位上是否存在数据。"""
+
+        if sample.get_data_var(field) is not None:
+            return True
+        if getattr(sample, "_storage_set", None) is None or getattr(sample._storage_set, "storage", None) is None:
+            return False
+        return bool(getattr(sample, "_storage_presence", {}).get(field, False))
+
+    def _compare_presence_rows(
+        self,
+        other: "SampleSetBase[Any]",
+        *,
+        common_uids: list[str],
+        requested_data_vars: list[str] | None,
+    ) -> pd.DataFrame:
+        """构建槽位存在性差异表。"""
+
+        rows: list[dict[str, Any]] = []
+        requested_fields = (
+            [self.sample_schema.resolve_field(name) for name in requested_data_vars]
+            if requested_data_vars
+            else list(self.storable_fields())
+        )
+        for uid in common_uids:
+            left_sample = self[uid]
+            right_sample = other[uid]
+            for field in requested_fields:
+                left_present = self._sample_field_present(left_sample, field)
+                right_present = self._sample_field_present(right_sample, field)
+                if left_present != right_present:
+                    rows.append(
+                        {
+                            "uid": uid,
+                            "field": field.value,
+                            "left_present": left_present,
+                            "right_present": right_present,
+                        }
+                    )
+        return pd.DataFrame(rows)
+
+    def _compare_scalar_rows(
+        self,
+        other: "SampleSetBase[Any]",
+        *,
+        common_uids: list[str],
+        metadata_fields: list[str] | None,
+        data_vars: list[str] | None,
+        features: list[str] | None,
+        rtol: float,
+        atol: float,
+    ) -> pd.DataFrame:
+        """构建标量摘要差异表。"""
+
+        if not common_uids or (not data_vars and not features):
+            return pd.DataFrame()
+
+        left_frame = self.scalar_frame(
+            metadata_fields=metadata_fields,
+            data_vars=data_vars,
+            features=features,
+            uids=common_uids,
+            strict=False,
+        ).set_index("uid", drop=False)
+        right_frame = other.scalar_frame(
+            metadata_fields=metadata_fields,
+            data_vars=data_vars,
+            features=features,
+            uids=common_uids,
+            strict=False,
+        ).set_index("uid", drop=False)
+
+        reserved_columns = {"uid", "alias", *(metadata_fields or [])}
+        scalar_columns = sorted((set(left_frame.columns) & set(right_frame.columns)) - reserved_columns)
+        rows: list[dict[str, Any]] = []
+        for uid in common_uids:
+            if uid not in left_frame.index or uid not in right_frame.index:
+                continue
+            for column in scalar_columns:
+                left_value = left_frame.at[uid, column]
+                right_value = right_frame.at[uid, column]
+                if pd.isna(left_value) and pd.isna(right_value):
+                    continue
+                if pd.isna(left_value) or pd.isna(right_value):
+                    continue
+                if isinstance(left_value, (int, float, np.integer, np.floating)) and isinstance(
+                    right_value, (int, float, np.integer, np.floating)
+                ):
+                    if np.isclose(float(left_value), float(right_value), rtol=rtol, atol=atol):
+                        continue
+                elif left_value == right_value:
+                    continue
+                rows.append(
+                    {
+                        "uid": uid,
+                        "field": str(column),
+                        "left": left_value,
+                        "right": right_value,
+                        "rtol": rtol,
+                        "atol": atol,
+                    }
+                )
+        return pd.DataFrame(rows)
+
+    def compare_with(
+        self,
+        other: "SampleSetBase[Any]",
+        *,
+        metadata_fields: Iterable[str] | None = None,
+        data_vars: Iterable[str] | None = None,
+        features: Iterable[str] | None = None,
+        rtol: float = 1e-6,
+        atol: float = 1e-6,
+        strict_types: bool = True,
+    ) -> SampleSetComparisonReport:
+        """对比两个样本集的结构与标量摘要。"""
+
+        same_type = type(self) is type(other)
+        same_sample_type = self.sample_type is other.sample_type
+        if strict_types and not same_sample_type:
+            raise TypeError("compare_with() 要求两个样本集的 sample_type 一致")
+
+        left_only_uids = tuple(uid for uid in self.keys() if uid not in other)
+        right_only_uids = tuple(uid for uid in other.keys() if uid not in self)
+        common_uids = tuple(uid for uid in self.keys() if uid in other)
+        requested_metadata = [str(field) for field in metadata_fields] if metadata_fields is not None else None
+        requested_data_vars = [str(name) for name in data_vars] if data_vars is not None else None
+        requested_features = [str(name) for name in features] if features is not None else None
+
+        return SampleSetComparisonReport(
+            same_type=same_type,
+            same_sample_type=same_sample_type,
+            same_size=len(self) == len(other),
+            left_only_uids=left_only_uids,
+            right_only_uids=right_only_uids,
+            common_uids=common_uids,
+            metadata_diff=self._compare_metadata_rows(
+                other,
+                common_uids=list(common_uids),
+                metadata_fields=requested_metadata,
+            ),
+            presence_diff=self._compare_presence_rows(
+                other,
+                common_uids=list(common_uids),
+                requested_data_vars=requested_data_vars,
+            ),
+            scalar_diff=self._compare_scalar_rows(
+                other,
+                common_uids=list(common_uids),
+                metadata_fields=requested_metadata,
+                data_vars=requested_data_vars,
+                features=requested_features,
+                rtol=rtol,
+                atol=atol,
+            ),
+        )
 
     def _normalize_requested_categories(
         self,
@@ -629,6 +824,50 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
     ) -> pd.DataFrame:
         """组合 metadata、标量 data_var 与派生特征为表格。"""
 
+        requested_metadata = [str(field) for field in metadata_fields or ()]
+        requested_data_vars = [str(name) for name in data_vars or ()]
+        requested_features = [str(name) for name in features or ()]
+        if self.storage is not None and self.storage_dirty is False and filter is None and sort_by is None:
+            selected_uids = list(self.find(uids=uids, criteria=criteria).keys())
+            try:
+                frame = self.storage.summary_frame(
+                    uids=selected_uids,
+                    metadata_fields=requested_metadata,
+                    data_vars=requested_data_vars,
+                    features=requested_features,
+                )
+                if strict:
+                    data_var_columns = {
+                        data_var: [column for column in frame.columns if str(column).startswith(f"{data_var}.")]
+                        for data_var in requested_data_vars
+                    }
+                    required_columns = [
+                        *requested_metadata,
+                        *requested_features,
+                        *[column for columns in data_var_columns.values() for column in columns],
+                    ]
+                    missing_columns = [column for column in requested_features if column not in frame.columns]
+                    missing_data_vars = [data_var for data_var, columns in data_var_columns.items() if not columns]
+                    if missing_columns or missing_data_vars:
+                        raise RuntimeError("摘要层暂不支持当前标量字段")
+                    if required_columns:
+                        subset = frame[[column for column in required_columns if column in frame.columns]]
+                        if subset.isna().any(axis=None):
+                            first_missing = next(
+                                (column for column in subset.columns if subset[column].isna().any()),
+                                None,
+                            )
+                            if first_missing is not None:
+                                raise ValueError(f"摘要层缺少列 '{first_missing}' 的有效值")
+                if dropna and not frame.empty:
+                    reserved_columns = {"uid", "alias", *requested_metadata}
+                    value_columns = [column for column in frame.columns if column not in reserved_columns]
+                    if value_columns:
+                        frame = frame.dropna(axis=0, how="all", subset=value_columns)
+                return frame.reset_index(drop=True)
+            except RuntimeError:
+                pass
+
         rows: list[dict[str, Any]] = []
         selected = self.find_many(
             uids=uids,
@@ -637,9 +876,6 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
             sort_by=sort_by,
             view_options=self._with_load_mode(view_options, load_mode=SampleLoadMode.EAGER),
         )
-        requested_metadata = [str(field) for field in metadata_fields or ()]
-        requested_data_vars = [str(name) for name in data_vars or ()]
-        requested_features = [str(name) for name in features or ()]
 
         for sample in selected.values():
             row: dict[str, Any] = {"uid": sample.uid, "alias": sample.alias}
@@ -1162,7 +1398,8 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
     ) -> None:
         """确保转换前所需槽位已在内存中可用。"""
 
-        for _, sample in items:
+        pending_uids: list[str] = []
+        for uid, sample in items:
             pending_fields = [field for field in required_fields if not sample.is_loaded(field)]
             if not pending_fields:
                 continue
@@ -1173,7 +1410,23 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
                         "当前样本集存在未完全加载的样本，且缺少可用于补载的源存储连接，无法转换储存模式。"
                     )
                 continue
-            sample.ensure_loaded(categories=pending_fields)
+            pending_uids.append(uid)
+
+        if not pending_uids or self.storage is None:
+            return
+
+        loaded_map = self.storage.load_many_fields(pending_uids, [str(field) for field in required_fields])
+        for uid, sample in items:
+            if uid not in loaded_map:
+                continue
+            for field in required_fields:
+                if sample.is_loaded(field):
+                    continue
+                payload = loaded_map.get(uid, {}).get(str(field))
+                sample._replace_data_var_internal(field, cast(DataModelBase | None, payload))
+                sample._storage_presence[field] = payload is not None
+            if sample.load_mode is SampleLoadMode.METADATA_ONLY:
+                sample._set_load_mode_internal(SampleLoadMode.LAZY)
 
     def _is_full_storage_conversion(
         self,
@@ -1189,20 +1442,37 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
             return True
         return set(self._conversion_fields(categories)) == set(self.storable_fields())
 
-    def _build_conversion_snapshot(
+    def _build_transfer_sample(
         self,
         *,
-        items: list[tuple[str, SampleType]],
+        sample: SampleType,
+        required_fields: list[SampleField],
         strict: bool,
-    ) -> Self:
+    ) -> SampleType:
         """基于当前样本状态构建用于落盘的独立快照。"""
 
-        snapshot = self.__class__()
-        snapshot.strict = strict
-        for _, sample in items:
-            cloned = cast(SampleType, sample.model_copy(deep=True))
-            snapshot[cloned.uid] = cloned
-        return snapshot
+        data_vars: dict[SampleField, DataModelBase] = {}
+        for field in required_fields:
+            data = sample.get_data_var(field)
+            if data is None:
+                continue
+            data_vars[field] = data
+
+        transfer = cast(
+            SampleType,
+            sample.__class__(
+                alias=sample.alias,
+                metadata=sample.metadata.model_copy(deep=False),
+                strict=strict,
+                data_vars=data_vars,
+            ),
+        )
+        transfer._set_load_mode_internal(SampleLoadMode.EAGER)
+        transfer._loaded_categories = set(data_vars)
+        transfer._storage_presence = {field: True for field in data_vars}
+        transfer._storage_set = None
+        transfer._storage_payload_id = None
+        return transfer
 
     def convert_storage(
         self,
@@ -1211,6 +1481,8 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
         mode: Any | None = None,
         storage_scheme: Any,
         data_options: dict[str, Any] | None = None,
+        progress_callback: Callable[[int, int], None] | None = None,
+        show_progress: bool | None = None,
         categories: list[DataCategory | str] | None = None,
         strict: bool | None = None,
         filter: Callable[[SampleType], bool] | None = None,
@@ -1226,6 +1498,8 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
             mode: 目标存储连接模式；未显式提供时沿用 `save()` 的默认创建语义。
             storage_scheme: 目标存储方案枚举，必须使用正式 `StorageScheme`。
             data_options: 目标存储使用的正式 `data_options`。
+            progress_callback: 可选进度回调，参数为 `(completed, total)`。
+            show_progress: 是否显示内置进度条。`None` 表示按当前日志配置自动判定。
             categories: 仅转换指定公开分类；为 `None` 时转换全部可存储分类。
             strict: 是否覆盖当前样本集的严格模式。
             filter: 仅转换命中的样本；命中样本之外的内容不会写入目标。
@@ -1263,18 +1537,32 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
         required_fields = self._conversion_fields(categories)
         self._ensure_conversion_source_ready(items=selected_items, required_fields=required_fields)
 
-        snapshot = self._build_conversion_snapshot(items=selected_items, strict=effective_strict)
-        snapshot.save(
-            path,
-            mode=mode,
-            storage_scheme=storage_scheme,
-            data_options=data_options,
-            categories=categories,
-            strict=effective_strict,
-            workers=workers,
-            chunk_size=chunk_size,
-            name_resolver=name_resolver,
-            set_filename=set_filename,
+        snapshot = self.__class__()
+        snapshot.strict = effective_strict
+        for _, sample in selected_items:
+            transfer = self._build_transfer_sample(
+                sample=sample,
+                required_fields=required_fields,
+                strict=effective_strict,
+            )
+            snapshot[transfer.uid] = transfer
+        cast(
+            Self,
+            resolve_sample_set_runtime(snapshot, action="save").save_sample_set(
+                snapshot,
+                path=str(path),
+                mode=mode,
+                storage_scheme=storage_scheme,
+                data_options=data_options,
+                progress_callback=progress_callback,
+                show_progress=show_progress,
+                categories=required_fields,
+                strict=effective_strict,
+                workers=workers,
+                chunk_size=chunk_size,
+                name_resolver=name_resolver,
+                set_filename=set_filename,
+            ),
         )
 
         if self._is_full_storage_conversion(categories=categories, filter=filter):
@@ -1309,7 +1597,7 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
         Args:
             path: 可选的显式目标路径；为 `None` 时要求当前样本集已连接存储。
             mode: 存储打开模式，通常为创建或覆盖。
-            storage_scheme: 存储方案枚举，例如 `SET_H5`、`SAMPLE_DIR`。
+            storage_scheme: 存储方案枚举，例如 `SET_H5`、`SET_DIR`。
             data_options: 传给底层存储实现的命名配置映射。
             categories: 公开读取/保存选择器。支持 `DataCategory` 枚举或其 value 字符串。
             strict: 是否覆盖当前样本集的严格模式。
@@ -1371,7 +1659,7 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
         Args:
             path: 可选的显式来源路径；为 `None` 时从已连接存储上下文读取。
             mode: 存储打开模式，通常为打开或只读。
-            storage_scheme: 存储方案枚举，例如 `SET_H5`、`SAMPLE_DIR`。
+            storage_scheme: 存储方案枚举，例如 `SET_H5`、`SET_DIR`。
             data_options: 传给底层存储实现的命名配置映射。
             categories: 公开读取选择器。支持 `DataCategory` 枚举或其 value 字符串。
             load_mode: 样本加载模式。`METADATA_ONLY` 只恢复索引，`LAZY` 按需读取，
@@ -1450,6 +1738,8 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
     def save_all(
         self,
         *,
+        progress_callback: Callable[[int, int], None] | None = None,
+        show_progress: bool | None = None,
         categories: list[DataCategory | str] | None = None,
         strict: bool | None = None,
         filter: Callable[[SampleType], bool] | None = None,
@@ -1459,6 +1749,8 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
         """批量保存当前样本集中的样本。
 
         Args:
+            progress_callback: 可选进度回调，参数为 `(completed, total)`。
+            show_progress: 是否显示内置进度条。`None` 表示按当前日志配置自动判定。
             categories: 公开保存选择器。支持 `DataCategory` 枚举或其 value 字符串。
             strict: 是否覆盖当前样本集的严格模式。
             filter: 样本过滤函数，仅对命中的样本执行保存。
@@ -1477,6 +1769,8 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
             action="save_all",
         ).save_all_samples(
             self,
+            progress_callback=progress_callback,
+            show_progress=show_progress,
             categories=resolved_categories,
             strict=effective_strict,
             filter=filter,
@@ -1492,6 +1786,7 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
         self,
         *,
         progress_callback: Callable[[int, int], None] | None = None,
+        show_progress: bool | None = None,
         categories: list[DataCategory | str] | None = None,
         load_mode: SampleLoadMode = SampleLoadMode.EAGER,
         strict: bool | None = None,
@@ -1503,6 +1798,7 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
 
         Args:
             progress_callback: 进度回调，参数为 `(completed, total)`。
+            show_progress: 是否显示内置进度条。`None` 表示按当前日志配置自动判定。
             categories: 公开加载选择器。支持 `DataCategory` 枚举或其 value 字符串。
             load_mode: 样本加载模式。`METADATA_ONLY` 只恢复索引，`LAZY` 按需读取，
                 `EAGER` 立即加载声明目标槽位。
@@ -1526,6 +1822,7 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
         ).load_all_samples(
             self,
             progress_callback=progress_callback,
+            show_progress=show_progress,
             categories=runtime_categories,
             strict=effective_strict,
             filter=filter,

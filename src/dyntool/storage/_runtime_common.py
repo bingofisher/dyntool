@@ -11,8 +11,10 @@ from ..domain.samples import SampleBaseModel, SampleSetBase
 from ..infrastructure.storage_constants import (
     DEFAULT_SQLITE_INDEX_FILENAME,
     DEFAULT_SQLITE_PAYLOAD_H5_FILENAME,
+    METADATA_TABLE_FILENAME,
 )
 from ..logging import get_logger
+from ._repository import detect_storage_scheme, validate_detected_scheme
 from .types import StorageMode, StorageScheme
 
 logger = get_logger("storage")
@@ -33,23 +35,51 @@ def infer_model_format(path: str | Path) -> str:
 def infer_sample_set_scheme(path: Path) -> StorageScheme:
     """根据样本集路径推断存储方案。"""
 
-    if path.is_dir():
-        index_path = path / DEFAULT_SQLITE_INDEX_FILENAME
-        payload_path = path / DEFAULT_SQLITE_PAYLOAD_H5_FILENAME
-        if index_path.exists() and payload_path.exists():
-            return StorageScheme.SET_SQLITE_H5
-    return StorageScheme.SET_H5 if path.suffix.lower() in _H5_SUFFIXES else StorageScheme.SAMPLE_DIR
+    try:
+        return detect_storage_scheme(path, kind="sample_set")
+    except Exception:  # noqa: BLE001
+        if path.is_dir():
+            index_path = path / DEFAULT_SQLITE_INDEX_FILENAME
+            payload_path = path / DEFAULT_SQLITE_PAYLOAD_H5_FILENAME
+            if index_path.exists() and payload_path.exists():
+                return StorageScheme.SET_SQLITE_H5
+            if (path / METADATA_TABLE_FILENAME).exists():
+                return StorageScheme.SET_ATTR_TABLE
+        return StorageScheme.SET_H5 if path.suffix.lower() in _H5_SUFFIXES else StorageScheme.SET_DIR
 
 
 def infer_sample_scheme(path: Path) -> StorageScheme:
     """根据单样本路径推断存储方案。"""
 
-    suffix = path.suffix.lower()
-    if suffix in _H5_SUFFIXES:
-        return StorageScheme.SAMPLE_H5
-    if suffix == ".json":
-        return StorageScheme.SAMPLE_JSON
-    return StorageScheme.SAMPLE_DIR
+    try:
+        return detect_storage_scheme(path, kind="sample")
+    except Exception:  # noqa: BLE001
+        suffix = path.suffix.lower()
+        if suffix in _H5_SUFFIXES:
+            return StorageScheme.SAMPLE_H5
+        if suffix == ".json":
+            return StorageScheme.SAMPLE_JSON
+        return StorageScheme.SET_DIR
+
+
+def resolve_sample_set_scheme_for_read(
+    path: Path,
+    *,
+    requested_scheme: StorageScheme | None,
+) -> StorageScheme:
+    """在读路径上解析并校验样本集存储方案。"""
+
+    return validate_detected_scheme(path, requested_scheme=requested_scheme, kind="sample_set")
+
+
+def resolve_sample_scheme_for_read(
+    path: Path,
+    *,
+    requested_scheme: StorageScheme | None,
+) -> StorageScheme:
+    """在读路径上解析并校验单样本存储方案。"""
+
+    return validate_detected_scheme(path, requested_scheme=requested_scheme, kind="sample")
 
 
 def resolve_sample_set_connect_target(
@@ -111,5 +141,7 @@ __all__ = [
     "logger",
     "require_mode",
     "require_scheme",
+    "resolve_sample_scheme_for_read",
     "resolve_sample_set_connect_target",
+    "resolve_sample_set_scheme_for_read",
 ]

@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import importlib
+from typing import TYPE_CHECKING
 
-from . import config, logging, plotting, resources, storage
 from ._version import __version__
 from .domain.constants import UnitSystem
 from .domain.enums import SampleDomain
@@ -46,17 +46,21 @@ from .domain.models import (
 from .domain.runtime import register_default_runtime_initializer
 from .domain.samples import (
     BatchOperationReport,
-    DefaultSample as _DefaultSample,
-    DefaultSampleSet as _DefaultSampleSet,
+    DefaultSample,
+    DefaultSampleSet,
     OperationResult,
-    Sample,
-    SampleSet,
     VibrationTestSample,
     VibrationTestSampleSet,
 )
 from .logging import LoggingMode
-from .plotting.types import PlotKind
-from .storage.types import AttrDataFormat, ContainerFormat, StorageMode, StorageScheme
+from .domain.plot_types import PlotKind
+from .storage.types import AttrDataFormat, ContainerFormat, StorageConnectOptions, StorageMode, StorageScheme
+
+if TYPE_CHECKING:
+    from . import config, logging, plotting, resources, storage
+
+
+_LAZY_MODULE_EXPORTS = {"config", "logging", "plotting", "resources", "storage"}
 
 
 def _initialize_default_bindings() -> None:
@@ -66,11 +70,18 @@ def _initialize_default_bindings() -> None:
     runtime_binding._initialize_default_bindings()
 
 
+def __getattr__(name: str) -> object:
+    """按需加载正式模块导出，避免顶层导入产生额外副作用。"""
+
+    if name in _LAZY_MODULE_EXPORTS:
+        module = importlib.import_module(f".{name}", __name__)
+        globals()[name] = module
+        return module
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
 # 顶层导入只注册默认 runtime 初始化器，不直接触发默认 runtime 绑定。
 register_default_runtime_initializer(_initialize_default_bindings)
-
-DefaultSample = _DefaultSample
-DefaultSampleSet = _DefaultSampleSet
 
 __all__ = [
     "__version__",
@@ -108,14 +119,15 @@ __all__ = [
     "FDMVLLimitStandard",
     "Metadata",
     "VibrationTestMetadata",
-    "Sample",
-    "SampleSet",
+    "DefaultSample",
+    "DefaultSampleSet",
     "VibrationTestSample",
     "VibrationTestSampleSet",
     "SampleDomain",
     "UnitSystem",
     "StorageScheme",
     "StorageMode",
+    "StorageConnectOptions",
     "AttrDataFormat",
     "ContainerFormat",
     "LoggingMode",

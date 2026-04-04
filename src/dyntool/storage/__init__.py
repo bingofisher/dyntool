@@ -11,8 +11,17 @@ from ..domain.metadata import MetadataBase
 from ..domain.models import DataModelBase
 from ..domain.samples import SampleBaseModel, SampleSetBase
 from ..domain.samples.types import SampleLoadMode, SampleSetViewOptions, StorageAccessMode
+from ._repository import detect_storage_scheme, inspect_storage_repository
 from .runtime import StorageRuntime
-from .types import AttrDataFormat, ContainerFormat, NameResolver, StorageMode, StorageScheme
+from .types import (
+    AttrDataFormat,
+    ContainerFormat,
+    NameResolver,
+    StorageConnectOptions,
+    StorageMode,
+    StorageRepositoryReport,
+    StorageScheme,
+)
 
 ModelT = TypeVar("ModelT", bound=DataModelBase)
 MetadataT = TypeVar("MetadataT", bound=MetadataBase)
@@ -145,6 +154,8 @@ def save_sample_set(
     *,
     scheme: StorageScheme | None = None,
     data_options: dict[str, Any] | None = None,
+    progress_callback: Callable[[int, int], None] | None = None,
+    show_progress: bool | None = None,
     categories: list[str] | None = None,
     strict: bool | None = None,
     filter: Callable[[Any], bool] | None = None,
@@ -158,6 +169,8 @@ def save_sample_set(
     Notes:
         当目标方案为 `SAMPLE_H5` 或 `SET_H5` 时，若未显式覆盖压缩相关参数，
         将默认使用 `gzip` 压缩和级别 `4`。
+        `show_progress=None` 时，会按当前 logging 是否输出到控制台自动判定是否显示
+        简洁进度条；`progress_callback` 始终接收 `(completed, total)`。
     """
 
     StorageRuntime().save_sample_set_runtime(
@@ -165,6 +178,8 @@ def save_sample_set(
         path=path,
         storage_scheme=scheme,
         data_options=data_options,
+        progress_callback=progress_callback,
+        show_progress=show_progress,
         categories=categories,
         strict=strict,
         filter=filter,
@@ -181,6 +196,8 @@ def load_sample_set(
     domain: SampleDomain,
     scheme: StorageScheme | None = None,
     data_options: dict[str, Any] | None = None,
+    progress_callback: Callable[[int, int], None] | None = None,
+    show_progress: bool | None = None,
     categories: list[str] | None = None,
     strict: bool | None = None,
     filter: Callable[[Any], bool] | None = None,
@@ -192,6 +209,8 @@ def load_sample_set(
 
     Notes:
         `data_options` 会在连接阶段完成校验；不适用于当前方案的键和未知键都会直接报错。
+        `show_progress=None` 时，会按当前 logging 是否输出到控制台自动判定是否显示
+        简洁进度条；`progress_callback` 始终接收 `(completed, total)`。
     """
 
     return StorageRuntime().load(
@@ -199,6 +218,8 @@ def load_sample_set(
         domain=domain,
         scheme=scheme,
         data_options=data_options,
+        progress_callback=progress_callback,
+        show_progress=show_progress,
         categories=categories,
         strict=strict,
         filter=filter,
@@ -217,9 +238,13 @@ __all__ = [
     "AttrDataFormat",
     "ContainerFormat",
     "NameResolver",
+    "StorageConnectOptions",
     "StorageMode",
+    "StorageRepositoryReport",
     "StorageScheme",
     "connect_sample_set",
+    "detect_storage_scheme",
+    "inspect_storage_repository",
     "inspect_model_units",
     "load_metadata",
     "load_model",

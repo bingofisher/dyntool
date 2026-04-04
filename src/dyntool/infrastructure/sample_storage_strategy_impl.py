@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import pandas as pd
 
-from .sample_storage_strategy_base import _StorageStrategy
+from .sample_storage_strategy_base import _StorageStrategy, _StorageWriteSession
 from .sample_storage_sqlite_h5 import _SetSqliteH5Strategy
 from .storage_constants import (
     DATA_NPZ_FILENAME,
@@ -187,6 +187,44 @@ class _SampleH5Strategy(_StorageStrategy):
                 sample.update(**{category: self.ctx.deserialize_container(category, self._read_group_payload(group))})
         return sample
 
+    def load_sample_fields(
+        self,
+        uid: str,
+        name: str,
+        categories: list[str],
+    ) -> dict[str, object]:
+        import h5py
+
+        loaded: dict[str, object] = {}
+        if not categories:
+            return loaded
+        with h5py.File(self.ctx.base_dir / f"{name}.h5", "r") as f:
+            for category in self.resolve_load_categories(categories):
+                if category not in f:
+                    continue
+                group = f[category]
+                if not isinstance(group, h5py.Group):
+                    continue
+                loaded[category] = self.ctx.deserialize_container(category, self._read_group_payload(group))
+        return loaded
+
+    def sample_presence(
+        self,
+        uid: str,
+        name: str,
+    ) -> dict[str, bool]:
+        import h5py
+
+        del uid
+        path = self.ctx.base_dir / f"{name}.h5"
+        if not path.exists():
+            return {}
+        with h5py.File(path, "r") as f:
+            return {
+                category: category in f and isinstance(f[category], h5py.Group)
+                for category in self.ctx.category_fields()
+            }
+
     def organize(self, valid_uids: set[str]) -> int:
         removed = 0
         for uid, name in self.uid_name_index().items():
@@ -253,6 +291,85 @@ class _SetH5Strategy(_SampleH5Strategy):
                     continue
                 sample.update(**{category: self.ctx.deserialize_container(category, self._read_group_payload(cat_grp))})
         return sample
+
+    def load_sample_fields(
+        self,
+        uid: str,
+        name: str,
+        categories: list[str],
+    ) -> dict[str, object]:
+        import h5py
+
+        del name
+        loaded: dict[str, object] = {}
+        if not categories:
+            return loaded
+        with h5py.File(self.ctx.set_h5_path(), "r") as f:
+            grp = f[uid]
+            if not isinstance(grp, h5py.Group):
+                raise TypeError(f"set_h5 中 UID 节点不是 Group: {uid}")
+            for category in self.resolve_load_categories(categories):
+                if category not in grp:
+                    continue
+                cat_grp = grp[category]
+                if not isinstance(cat_grp, h5py.Group):
+                    continue
+                loaded[category] = self.ctx.deserialize_container(category, self._read_group_payload(cat_grp))
+        return loaded
+
+    def load_many_sample_fields(
+        self,
+        items: list[tuple[str, str]],
+        categories: list[str],
+    ) -> dict[str, dict[str, object]]:
+        import h5py
+
+        loaded: dict[str, dict[str, object]] = {uid: {} for uid, _ in items}
+        if not categories or not items:
+            return loaded
+        selected = self.resolve_load_categories(categories)
+        with h5py.File(self.ctx.set_h5_path(), "r") as f:
+            for uid, _ in items:
+                if uid not in f:
+                    raise FileNotFoundError(f"set_h5 中不存在 UID: {uid}")
+                grp = f[uid]
+                if not isinstance(grp, h5py.Group):
+                    raise TypeError(f"set_h5 中 UID 节点不是 Group: {uid}")
+                row: dict[str, object] = {}
+                for category in selected:
+                    if category not in grp:
+                        continue
+                    cat_grp = grp[category]
+                    if not isinstance(cat_grp, h5py.Group):
+                        continue
+                    row[category] = self.ctx.deserialize_container(category, self._read_group_payload(cat_grp))
+                loaded[uid] = row
+        return loaded
+
+    def write_session(self) -> _StorageWriteSession:
+        return _SetH5WriteSession(self)
+
+    def sample_presence(
+        self,
+        uid: str,
+        name: str,
+    ) -> dict[str, bool]:
+        import h5py
+
+        del name
+        path = self.ctx.set_h5_path()
+        if not path.exists():
+            return {}
+        with h5py.File(path, "r") as f:
+            if uid not in f:
+                return {}
+            grp = f[uid]
+            if not isinstance(grp, h5py.Group):
+                return {}
+            return {
+                category: category in grp and isinstance(grp[category], h5py.Group)
+                for category in self.ctx.category_fields()
+            }
 
     def organize(self, valid_uids: set[str]) -> int:
         import h5py
@@ -436,6 +553,41 @@ class _SampleDirStrategy(_StorageStrategy):
                 sample.update(**{category: self.ctx.deserialize_container(category, payload)})
         return sample
 
+    def load_sample_fields(
+        self,
+        uid: str,
+        name: str,
+        categories: list[str],
+    ) -> dict[str, object]:
+        del uid
+        sample_dir = self.ctx.base_dir / name
+        data_path = sample_dir / DATA_NPZ_FILENAME
+        loaded: dict[str, object] = {}
+        if not data_path.exists():
+            return loaded
+        selected_categories = set(self.resolve_load_categories(categories))
+        with np.load(data_path, allow_pickle=True) as npz:
+            for category in npz.files:
+                if category not in selected_categories:
+                    continue
+                payload = npz[category].item()
+                loaded[category] = self.ctx.deserialize_container(category, payload)
+        return loaded
+
+    def sample_presence(
+        self,
+        uid: str,
+        name: str,
+    ) -> dict[str, bool]:
+        del uid
+        sample_dir = self.ctx.base_dir / name
+        data_path = sample_dir / DATA_NPZ_FILENAME
+        if not data_path.exists():
+            return {category: False for category in self.ctx.category_fields()}
+        with np.load(data_path, allow_pickle=True) as npz:
+            files = set(npz.files)
+        return {category: category in files for category in self.ctx.category_fields()}
+
     def organize(self, valid_uids: set[str]) -> int:
         removed = 0
         for uid, name in self.uid_name_index().items():
@@ -453,9 +605,41 @@ STRATEGY_REGISTRY: dict[StorageScheme, type[_StorageStrategy]] = {
     StorageScheme.SAMPLE_H5: _SampleH5Strategy,
     StorageScheme.SET_H5: _SetH5Strategy,
     StorageScheme.SET_SQLITE_H5: _SetSqliteH5Strategy,
-    StorageScheme.ATTR_TABLE: _AttrTableStrategy,
-    StorageScheme.SAMPLE_DIR: _SampleDirStrategy,
+    StorageScheme.SET_ATTR_TABLE: _AttrTableStrategy,
+    StorageScheme.SET_DIR: _SampleDirStrategy,
 }
+
+
+class _SetH5WriteSession(_StorageWriteSession):
+    def __init__(self, strategy: _SetH5Strategy) -> None:
+        super().__init__(strategy)
+        self._strategy = strategy
+        self._file: Any | None = None
+
+    def __enter__(self) -> "_SetH5WriteSession":
+        import h5py
+
+        self._file = h5py.File(self._strategy.ctx.set_h5_path(), "a")
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+        del exc_type, exc, tb
+        if self._file is not None:
+            self._file.close()
+            self._file = None
+
+    def save_sample(self, sample: SampleBaseModel, categories: list[str] | None = None) -> None:
+        if self._file is None:
+            raise RuntimeError("SET_H5 写入会话尚未打开")
+        data_dict = self._strategy.ctx.sample_data_dict(sample, categories)
+        if sample.uid in self._file:
+            del self._file[sample.uid]
+        grp = self._file.create_group(sample.uid)
+        grp.attrs[H5_ATTR_ALIAS] = sample.alias
+        grp.attrs[H5_ATTR_METADATA_JSON] = json.dumps(sample.metadata.model_dump(), ensure_ascii=False, default=str)
+        for category, data in data_dict.items():
+            self._strategy._write_group(grp, category, data)
+
 
 __all__ = [
     "_SampleJsonStrategy",
