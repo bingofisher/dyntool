@@ -10,8 +10,11 @@
 - 历史模块只允许删除或归档，不再新增业务功能
 - 正式公开面保持最小且稳定
 - 文档、示例、测试和公开 API 说明必须同步
-- 仓库文本文件统一使用 UTF-8 无 BOM 与 LF
-- Python 程序中的文本读写必须显式写出 `encoding="utf-8"`
+- 源码、文档、配置文件、测试文件统一使用 UTF-8 无 BOM。
+- `src/dyntool/resources/**/*.csv` 统一使用 UTF-8-SIG。
+- 仓库文本文件行尾统一使用 LF。
+- Python 程序中的普通文本读写必须显式写出 `encoding="utf-8"`
+- 资源 CSV 读写必须显式使用 `utf-8-sig`，或通过 `dyntool.resources` 正式入口复用默认编码策略
 
 ## 类型与参数规则
 

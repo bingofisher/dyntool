@@ -7,6 +7,8 @@ AdvDynTool 的正式使用路径分为两步：
 1. 先选“对象”：顶层对象 API，如 `AccelSeries`、`Metadata`、`DefaultSample`、`DefaultSampleSet`
 2. 再选“动作”：正式模块 API，如 `dyntool.storage`、`dyntool.plotting`、`dyntool.logging`
 
+`DefaultSample / DefaultSampleSet` 是正式顶层样本对象名；`Sample / SampleSet` 顶层导入已移除。
+
 ## 正式模块
 
 - `dyntool.storage`：存储与读写
@@ -14,6 +16,14 @@ AdvDynTool 的正式使用路径分为两步：
 - `dyntool.logging`：日志配置与 logger 获取
 - `dyntool.config`：配置加载
 - `dyntool.resources`：内置资源读取
+
+## 当前 1.1.1 重点能力
+
+- `dyntool.storage` 正式公开 `StorageConnectOptions`
+- 支持 `detect_storage_scheme(...)` 与 `inspect_storage_repository(...)`
+- 样本集批量读写支持 `show_progress` 与 `progress_callback`
+- 大数据样本集主线优先推荐 `StorageScheme.SET_SQLITE_H5`
+- `DefaultSampleSet.compare_with(...)` 可做结构与摘要级对比
 
 ## 推荐阅读顺序
 

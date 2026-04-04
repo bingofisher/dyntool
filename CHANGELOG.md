@@ -2,6 +2,23 @@
 
 稳定性：`Public API`
 
+## v1.1.1 - 2026-03-30
+
+### 公开口径回正
+
+- 对齐 `README`、`ARCHITECTURE`、MkDocs 首页、使用总览与公开 API 页面，统一恢复 `DefaultSample / DefaultSampleSet` 为唯一正式顶层样本对象名。
+- `Sample / SampleSet` 顶层导入已移除；这是一项针对公开口径不一致的破坏性修正。
+
+### 存储与样本集主线说明补全
+
+- 正式文档补充 `StorageConnectOptions`、`detect_storage_scheme(...)`、`inspect_storage_repository(...)` 的公开契约说明。
+- 同步记录批量读写的 `show_progress` / `progress_callback`、`SET_SQLITE_H5` 大数据加载路径，以及 `compare_with(...)` 摘要级对比能力。
+- README 与 API 页面明确 H5 默认 `gzip` 压缩、默认级别 `4` 以及 `data_options` 的早失败行为。
+
+### 文档规则修正
+
+- 修正文档规则页的编码约束文字，使其与当前测试守卫和资源 CSV 规则一致。
+
 ## v1.1.0 - 2026-03-19
 
 ### 公开面重整

@@ -144,3 +144,21 @@ flowchart TD
 - `timestamp`：采样开始时间或记录时间戳。
 - `extra`：附加业务信息，不参与标准 identity。
 - 对保留的开放参数必须写清支持键，不允许把“透传给底层”当成最终契约。
+
+## `sqlite_h5_v2` 内部实验结论
+
+稳定性：`Private / implementation detail`
+
+- `sqlite_h5_v2` 的实验已经完成，结论是“`metadata_json` 作为唯一完整 metadata 源”可以显著改善写入速度和仓库体积。
+- 该实验结果已经收敛进正式 `SET_SQLITE_H5 v2`，因此不再维护独立的实验运行时分派。
+- 当前仍保留少量私有 helper，仅用于 benchmark 和旧版 `v1` 基线验证。
+- 当前私有入口位于 `sample_storage_sqlite_h5.py`，仅供 benchmark 脚本调用；只有真实大仓库 A/B 结果明确优于 current 时，才会继续进入正式迁移设计。
+## `SET_SQLITE_H5` v2 存储格式说明
+
+稳定性：`Internal API`
+
+- 当前正式 `SET_SQLITE_H5` 已完成 `v2` 正式化。
+- `v2` 只保留 `sample.metadata_json` 作为完整 metadata 源，不再维护 `sample_metadata_flat` 或 metadata lookup 表。
+- 旧版 `v1` 仓库在连接时会自动迁移到 `v2`；新版代码继续读取升级后的仓库，旧代码不保证兼容。
+- `SampleSetBase.metadata_frame()` 的公开逻辑没有变化，仍优先走 storage 快路径；只是 `SET_SQLITE_H5 v2` 的 storage 快路径改为读取 `metadata_json` 后在 Python 侧展开。
+- 后续若要继续优化 metadata 读取，应优先在 `metadata_json` 展开 helper 上增加会话内缓存或批量反序列化优化，而不是恢复 `sample_metadata_flat`。

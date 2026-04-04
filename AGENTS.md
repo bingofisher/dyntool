@@ -72,7 +72,8 @@
 
 ## 7) 文本、编码与仓库规则
 - README、ARCHITECTURE、docs、全部 docstring、代码注释统一使用中文。
-- 仓库源码、文档、配置文件统一使用 UTF-8 无 BOM。
+- 仓库源码、文档、配置文件、测试文件统一使用 UTF-8 无 BOM。
+- `src/dyntool/resources/**/*.csv` 统一使用 UTF-8-SIG。
 - 仓库文本文件统一使用 LF。
 - 对外 CSV 导出可按兼容需求使用 `utf-8` 或 `utf-8-sig`。
 - 不允许提交乱码文本。
@@ -88,17 +89,18 @@
 
 ## 9) 质量门禁
 - 提交前至少执行：
-  - `python scripts/check_codex_assets.py`
-  - `ruff check src/dyntool tests examples`
+  - `python -B scripts/check_codex_assets.py`
+  - `ruff check --no-cache src/dyntool tests examples`
   - `ruff format --check src/dyntool tests examples`
-  - `python scripts/check_layer_imports.py`
-  - `python scripts/check_text_quality.py`
-  - `python scripts/check_docstring_coverage.py`
-  - `python scripts/check_public_api_baseline.py`
-  - `python scripts/check_mkdocs_site.py`
-  - `uv run mkdocs build --strict`
+  - `python -B scripts/check_layer_imports.py`
+  - `python -B scripts/check_text_quality.py`
+  - `python -B scripts/check_docstring_coverage.py`
+  - `python -B scripts/check_public_api_baseline.py`
+  - `python -B scripts/check_resource_consistency.py`
+  - `python -B scripts/check_mkdocs_site.py`
+  - `uv run python -B -m mkdocs build --strict --site-dir .pytest_tmp/mkdocs-site`
   - `pyright src/dyntool tests/typing_public_api.py`
-  - `pytest -q`
+  - `uv run python -B -m pytest -q --basetemp .pytest_tmp/pytest -p no:cacheprovider`
 - 关键行为必须有测试：
   - demo 路径
   - `from_accel -> eval -> save/load -> plot` 最小闭环
@@ -139,3 +141,20 @@
 ### 十分复杂任务与重构任务
 - 整个项目重构、跨层大改或十分复杂的任务，才考虑使用子代理。
 - 涉及公开 API 调整、存储格式变化、单位语义变化时，仍必须先按第 8 节询问用户。
+
+## 12) 维护脚本
+- 编码与文本卫生维护入口：
+  - `python -B scripts/fix_text_hygiene.py --check`
+  - `python -B scripts/fix_text_hygiene.py --apply`
+- 生成物清理维护入口：
+  - `python -B scripts/clean_generated_artifacts.py --check`
+  - `python -B scripts/clean_generated_artifacts.py --apply`
+- 这两个脚本只作为维护入口，不替代第 9 节的强制门禁。
+- `fix_text_hygiene.py` 只自动修复低风险问题：UTF-8 BOM、LF、可确定的固定乱码片段。
+- 无法确定映射的疑似乱码必须保留为人工处理项，不能猜测性转码。
+- `clean_generated_artifacts.py` 只允许清理仓库内高置信临时产物，不得删除 `.venv`、`.uv-cache`、`.worktrees`、`.git`。
+- 生成物治理优先从命令源头解决，不依赖“生成后再循环删除”：
+  - Python 入口统一禁用 bytecode 写入
+  - `ruff` 统一使用 `--no-cache`
+  - `mkdocs build` 统一输出到已忽略目录
+  - `pytest` 临时目录统一落到已忽略路径，并关闭 `cacheprovider`

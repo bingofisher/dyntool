@@ -75,15 +75,15 @@
 
 提交前至少验证：
 
-- `uv run python scripts/check_text_quality.py`
-- `uv run python scripts/check_docstring_coverage.py`
-- `uv run python scripts/check_mkdocs_site.py`
-- `uv run mkdocs build --strict`
+- `uv run python -B scripts/check_text_quality.py`
+- `uv run python -B scripts/check_docstring_coverage.py`
+- `uv run python -B scripts/check_mkdocs_site.py`
+- `uv run python -B -m mkdocs build --strict --site-dir .pytest_tmp/mkdocs-site`
 
 若改动涉及公开 API、示例或文档结构，还必须同步验证：
 
-- `uv run python scripts/check_public_api_baseline.py`
-- `uv run pytest -q`
+- `uv run python -B scripts/check_public_api_baseline.py`
+- `uv run python -B -m pytest -q --basetemp .pytest_tmp/pytest -p no:cacheprovider`
 
 ## 禁止项
 

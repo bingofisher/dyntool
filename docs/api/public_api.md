@@ -11,10 +11,16 @@
 - 模块 API：`dyntool.storage`、`dyntool.plotting`、`dyntool.logging`
 - 支持模块：`dyntool.config`、`dyntool.resources`
 
+### 样本类名口径
+
+- `DefaultSample / DefaultSampleSet` 是当前唯一正式顶层样本对象名
+- `Sample / SampleSet` 顶层导入已移除
+- 内部实现仍可保留 `Sample` / `SampleSet` 命名，但不再属于正式公开面
+
 ### structured payload 类别名迁移说明
 
 - 当前样本 payload 恢复接受的正式类别名包括 `DefaultSample`、`DefaultSampleSet`、`VibrationTestSample`、`VibrationTestSampleSet`
-- 历史兼容类别名 `Sample`、`SampleSet` 已移除
+- 旧 payload 中的历史兼容类别名 `Sample`、`SampleSet` 已移除
 - 读取旧 payload 时会抛出中文错误，并明确提示迁移到 `DefaultSample` / `DefaultSampleSet`
 
 ## 推荐闭环
@@ -55,6 +61,8 @@ print(freqs[:3])
 以下名称属于 `dyntool.storage` 正式公开契约，允许在业务代码中直接导入并作为参数类型使用：
 
 - 存储方案与容器类型：`StorageScheme`、`StorageMode`、`ContainerFormat`、`AttrDataFormat`
+- 连接参数类型：`StorageConnectOptions`
+- 仓库检查与自动识别：`StorageRepositoryReport`、`detect_storage_scheme(...)`、`inspect_storage_repository(...)`
 - 样本集读取 / 视图配置：`SampleLoadMode`、`StorageAccessMode`、`SampleSetViewOptions`
 - 领域 / 分类与命名解析：`SampleDomain`、`DataCategory`、`NameResolver`
 
@@ -67,11 +75,22 @@ from dyntool.storage import (
     SampleDomain,
     SampleLoadMode,
     SampleSetViewOptions,
+    StorageRepositoryReport,
+    StorageConnectOptions,
     StorageAccessMode,
+    detect_storage_scheme,
+    inspect_storage_repository,
     StorageMode,
     StorageScheme,
 )
 ```
+
+### `dyntool.storage` 批量进度与连接日志
+
+- `DefaultSampleSet.load_all(...)`、`save_all(...)`、`convert_storage(...)` 支持 `show_progress` 和 `progress_callback`
+- 默认是否显示进度条，按当前 logging 是否输出到控制台判定
+- 该规则同时兼容 `stdlib` 与 `loguru`
+- `connect_storage(...)` 与 `dyntool.storage.connect_sample_set(...)` 保持原参数形状，但现在会记录更详细的连接开始/完成日志，并严格要求 `mode` / `storage_scheme` 使用正式枚举
 
 ## 计算主线与保留快捷方法
 
@@ -91,6 +110,18 @@ from dyntool.storage import (
 - 样本/样本集 `data_options` 现在是正式契约，未知键和错用范围会立即报错
 
 ## 自动参考
+
+## 大数据加载说明
+
+- `SampleLoadMode` 的公开语义没有变化，但样本集内部已经统一到三层加载架构：
+  - 索引层：`uid`、`alias`、扁平 `metadata`、槽位存在性、payload 定位信息
+  - 摘要层：高价值标量与采样摘要
+  - payload 层：真实数组与复合对象
+- 因此在 `SET_SQLITE_H5` 下：
+  - `metadata_frame()` 直接走索引层
+  - `scalar_frame()` 在可回答时优先走摘要层
+  - `LAZY` 首次访问只补载目标槽位，不再回退为整样本重建
+- `SET_H5` 与 `SET_DIR` 也已经支持槽位级补载；这属于实现优化，不改变公开 API 形状。
 
 ::: dyntool
     options:
@@ -121,3 +152,21 @@ from dyntool.storage import (
     options:
       show_root_heading: true
       show_source: false
+
+## StorageScheme 命名迁移
+
+- 正式推荐名称：`SET_DIR`、`SET_ATTR_TABLE`
+- 旧名字 `SAMPLE_DIR`、`ATTR_TABLE` 已移除。
+## 存储自动识别与完整性验证
+
+- `detect_storage_scheme(...)`：按存储签名自动识别单样本或样本集存储方案
+- `inspect_storage_repository(...)`：按 `quick / deep` 两层做仓库完整性验证
+- `StorageRepositoryReport`：承载检测方案、校验层级、问题列表、告警和样本计数
+- 这些能力默认服务于读路径、连接和迁移后的自检闭环，不改变现有保存接口形状
+
+## DefaultSampleSet 对比
+
+- `DefaultSampleSet.compare_with(...)`：提供结构与摘要级对比
+- 默认比较 UID、metadata、槽位存在性和标量摘要
+- 浮点标量比较通过 `rtol` 与 `atol` 控制容差
+- 本轮不包含时间历程、频谱等 payload 的逐点差异比对
