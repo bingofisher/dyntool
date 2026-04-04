@@ -67,7 +67,7 @@ FORBIDDEN_PUBLIC_SURFACE_PATTERNS = {
     for token in FORBIDDEN_PUBLIC_SURFACE_TOKENS
 }
 ROLE_MATRIX_PATH = Path(".agents/skills/advdyntool-task-routing/references/role-matrix.toml")
-DOC_WORKFLOW_PATH = Path("docs/developer/codex_workflow.md")
+DOC_WORKFLOW_PATH = Path("docs/developer/development_workflow.md")
 BOM = bytes((0xEF, 0xBB, 0xBF))
 
 

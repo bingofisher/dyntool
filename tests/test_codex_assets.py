@@ -71,7 +71,7 @@ def _seed_minimal_codex_assets(root: Path) -> None:
     _write_text(root / ".codex" / "project-context.md", "# 项目上下文\n当前公开入口是 `dyntool`。\n")
     _write_text(root / ".codex" / "library-contract.md", "# 库约定\n主入口是 `from dyntool import DefaultSample`。\n")
     _write_text(root / ".codex" / "prompts" / "task-template.md", "# 任务模板\n请先检查 `AGENTS.md`。\n")
-    _write_text(root / "docs" / "developer" / "codex_workflow.md", "# Codex 工作流\n")
+    _write_text(root / "docs" / "developer" / "development_workflow.md", "# 开发工作流\n")
     _write_text(
         root / ".agents" / "skills" / "advdyntool-task-routing" / "references" / "role-matrix.toml",
         "required_agents = [\n"

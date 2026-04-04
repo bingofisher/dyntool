@@ -38,7 +38,7 @@ def test_finish_local_release_classifies_paths_into_fixed_groups() -> None:
             "tests/test_samples.py",
             "scripts/check_public_api_baseline.py",
             "README.md",
-            "docs/developer/codex_workflow.md",
+            "docs/developer/development_workflow.md",
             "scripts/fix_text_hygiene.py",
             "task_plan.md",
         }
@@ -50,7 +50,7 @@ def test_finish_local_release_classifies_paths_into_fixed_groups() -> None:
     assert "tests/test_samples.py" in grouped["tests"]
     assert "scripts/check_public_api_baseline.py" in grouped["tests"]
     assert "README.md" in grouped["docs"]
-    assert "docs/developer/codex_workflow.md" in grouped["docs"]
+    assert "docs/developer/development_workflow.md" in grouped["docs"]
     assert "scripts/fix_text_hygiene.py" in grouped["chore"]
 
 

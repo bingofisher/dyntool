@@ -102,7 +102,7 @@ nav:
       - API 设计: developer/api_design.md
       - Sample / Storage 流程: developer/sample_identity_and_storage.md
       - 文档规范: developer/doc_conventions.md
-      - Codex 工作流与 Agents / Skills: developer/codex_workflow.md
+      - 开发工作流与 Git / 项目管理: developer/development_workflow.md
       - 测试与示例: developer/testing_and_examples.md
       - 规范驱动限值模型: developer/limit_models.md
       - 自定义扩展: developer/custom_extension.md
