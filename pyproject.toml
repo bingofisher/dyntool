@@ -77,7 +77,7 @@ path = "src/dyntool/_version.py"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
-addopts = "--ignore-glob=*冲突文件* -o cache_dir=.pytest_cache"
+addopts = "--ignore-glob=*冲突文件* -p no:cacheprovider"
 norecursedirs = [".pytest_cache", "__pycache__", ".uv-cache"]
 
 [tool.ruff]
