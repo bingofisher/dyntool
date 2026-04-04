@@ -29,6 +29,7 @@ from dyntool import (
     OperationResult,
     PlotKind,
     SampleDomain,
+    StorageConnectOptions,
     StorageMode,
     StorageScheme,
     UnitSystem,
@@ -48,12 +49,24 @@ if TYPE_CHECKING:
     assert_type(accel, AccelSeries)
     assert_type(UnitSystem.si(), UnitSystem)
     assert_type(StorageScheme.SET_H5, StorageScheme)
+    assert_type(StorageScheme.SET_DIR, StorageScheme)
+    assert_type(StorageScheme.SET_ATTR_TABLE, StorageScheme)
     assert_type(StorageMode.OPEN, StorageMode)
+    assert_type(StorageConnectOptions(), StorageConnectOptions)
     assert_type(ContainerFormat.H5, ContainerFormat)
     assert_type(PlotKind.TIME, PlotKind)
     assert_type(dt_storage.DataCategory.TS_ACCEL, dt_storage.DataCategory)
     assert_type(dt_storage.SampleLoadMode.LAZY, dt_storage.SampleLoadMode)
     assert_type(dt_storage.SampleDomain.VIBRATION_TEST, dt_storage.SampleDomain)
+    assert_type(dt_storage.StorageConnectOptions(), dt_storage.StorageConnectOptions)
+    assert_type(
+        dt_storage.detect_storage_scheme("out/sample_set.h5", kind="sample_set"),
+        StorageScheme,
+    )
+    assert_type(
+        dt_storage.inspect_storage_repository("out/sample_set.h5"),
+        dt_storage.StorageRepositoryReport,
+    )
     assert_type(dt_storage.StorageAccessMode.READ_ONLY, dt_storage.StorageAccessMode)
     assert_type(
         dt_storage.SampleSetViewOptions(
@@ -108,6 +121,16 @@ if TYPE_CHECKING:
     assert_type(vib_sample_set.data_map("accel"), dict[str, object])
     assert_type(vib_sample_set.find_many(), VibrationTestSampleSet)
     assert_type(vib_sample_set.find_one(), VibrationTestSample | None)
+    comparison = vib_sample_set.compare_with(
+        vib_sample_set,
+        metadata_fields=["case"],
+        data_vars=["zvl"],
+        features=["pga"],
+    )
+    assert_type(comparison.same_type, bool)
+    assert_type(comparison.metadata_diff, pd.DataFrame)
+    assert_type(comparison.presence_diff, pd.DataFrame)
+    assert_type(comparison.scalar_diff, pd.DataFrame)
     assert_type(vib_sample_set.distinct_metadata("case"), tuple[object, ...])
     assert_type(
         vib_sample_set.scalar_frame(

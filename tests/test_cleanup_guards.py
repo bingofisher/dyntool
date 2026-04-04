@@ -102,6 +102,21 @@ def test_check_text_quality_covers_planning_files_and_detects_mojibake(tmp_path:
     assert script.main() == 1
 
 
+def test_check_resource_consistency_rejects_non_utf8_sig_resource_csv(tmp_path: Path) -> None:
+    script = _load_script_module(
+        "check_resource_consistency_encoding_script",
+        PROJECT_ROOT / "scripts" / "check_resource_consistency.py",
+    )
+    resources_root = tmp_path / "src" / "dyntool" / "resources"
+    resources_root.mkdir(parents=True)
+    manifest_path = resources_root / "manifest.json"
+    csv_path = resources_root / "center_freq.csv"
+    manifest_path.write_text('{"center_freq": "center_freq.csv"}\n', encoding="utf-8")
+    csv_path.write_text("中心频率 (Hz)\n1.0\n", encoding="utf-8", newline="\n")
+
+    assert script.main(project_root=tmp_path, resources_root=resources_root, manifest_path=manifest_path) == 1
+
+
 def test_examples_use_public_entrypoints_only() -> None:
     example_files = sorted((PROJECT_ROOT / "examples").rglob("*.py"))
     assert example_files
@@ -238,9 +253,9 @@ def test_custom_extension_manifest_entry_is_internal_only() -> None:
 def test_repository_has_no_mkdocs_build_artifacts() -> None:
     assert not (PROJECT_ROOT / "docs" / "_build").exists()
     assert not (PROJECT_ROOT / "site").exists()
-    cache_dirs = [
-        path for path in PROJECT_ROOT.rglob("__pycache__") if path.relative_to(PROJECT_ROOT).parts[:1] != ("tests",)
-    ]
+    assert not (PROJECT_ROOT / ".ruff_cache").exists()
+    assert not (PROJECT_ROOT / ".pytest_cache").exists()
+    cache_dirs = sorted(PROJECT_ROOT.rglob("__pycache__"))
     assert not cache_dirs
 
 

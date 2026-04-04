@@ -94,6 +94,15 @@ def test_public_api_page_mentions_all_formal_module_apis() -> None:
     assert "`dyntool.resource`" not in text
 
 
+def test_encoding_rules_split_normal_text_and_resource_csv() -> None:
+    agents_text = (PROJECT_ROOT / "AGENTS.md").read_text(encoding="utf-8")
+    architecture_rules_text = (PROJECT_ROOT / "docs" / "architecture_rules.md").read_text(encoding="utf-8")
+
+    for text in (agents_text, architecture_rules_text):
+        assert "源码、文档、配置文件、测试文件统一使用 UTF-8 无 BOM。" in text
+        assert "`src/dyntool/resources/**/*.csv` 统一使用 UTF-8-SIG。" in text
+
+
 def test_formal_docs_do_not_use_removed_entrypoints() -> None:
     scan_roots = [
         PROJECT_ROOT / "README.md",
@@ -111,6 +120,9 @@ def test_formal_docs_do_not_use_removed_entrypoints() -> None:
         "dyntool.resource.",
         "DynTool(",
         "from dyntool import DynTool",
+        "from dyntool import Sample",
+        "from dyntool import SampleSet",
+        "`Sample / SampleSet` 是正式主名",
         "from dyntool.domain",
         "import dyntool.domain",
         "from dyntool.application",

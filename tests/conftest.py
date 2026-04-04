@@ -3,11 +3,8 @@
 from __future__ import annotations
 
 import os
-import shutil
 import sys
 from pathlib import Path
-
-import matplotlib.pyplot as plt
 import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -16,20 +13,6 @@ PACKAGE_ROOT = SOURCE_ROOT / "dyntool"
 
 os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
 sys.dont_write_bytecode = True
-
-
-def _cleanup_generated_artifacts() -> None:
-    """清理前序门禁命令遗留的构建产物。"""
-
-    for target in (PROJECT_ROOT / "site", PROJECT_ROOT / "docs" / "_build"):
-        if target.exists():
-            shutil.rmtree(target, ignore_errors=True)
-
-    for path in PROJECT_ROOT.rglob("__pycache__"):
-        relative = path.relative_to(PROJECT_ROOT)
-        if relative.parts[:1] == ("tests",):
-            continue
-        shutil.rmtree(path, ignore_errors=True)
 
 
 def _reset_dyntool_modules() -> None:
@@ -63,7 +46,6 @@ def _assert_current_worktree_package() -> None:
 def pytest_sessionstart(session: pytest.Session) -> None:
     """在测试会话开始时校验导入链。"""
 
-    _cleanup_generated_artifacts()
     _assert_current_worktree_package()
 
 
@@ -72,4 +54,8 @@ def _close_all_matplotlib_figures() -> None:
     """每个测试结束后关闭全部 matplotlib 图。"""
 
     yield
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError:
+        return
     plt.close("all")

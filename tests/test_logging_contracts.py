@@ -581,7 +581,7 @@ def test_storage_runtime_connects_sample_set(
     result = runtime.connect_sample_set_runtime(
         sample_set,
         workspace_tmp_dir,
-        storage_scheme=dt_storage.StorageScheme.SAMPLE_DIR,
+        storage_scheme=dt_storage.StorageScheme.SET_DIR,
         mode=dt_storage.StorageMode.OPEN,
     )
 
@@ -592,7 +592,7 @@ def test_storage_runtime_connects_sample_set(
             "connect",
             {
                 "mode": dt_storage.StorageMode.OPEN,
-                "storage_scheme": dt_storage.StorageScheme.SAMPLE_DIR,
+                "storage_scheme": dt_storage.StorageScheme.SET_DIR,
                 "data_options": None,
                 "name_resolver": None,
                 "set_filename": None,

@@ -33,7 +33,7 @@ def test_save_load_baseline_sample_dir(tmp_path: Path) -> None:
     source.connect_storage(
         store_dir,
         mode=StorageMode.CREATE,
-        storage_scheme=StorageScheme.SAMPLE_DIR,
+        storage_scheme=StorageScheme.SET_DIR,
     )
     assert source.storage is not None
 
@@ -47,7 +47,7 @@ def test_save_load_baseline_sample_dir(tmp_path: Path) -> None:
     loaded.connect_storage(
         store_dir,
         mode=StorageMode.OPEN,
-        storage_scheme=StorageScheme.SAMPLE_DIR,
+        storage_scheme=StorageScheme.SET_DIR,
     )
     assert loaded.storage is not None
 

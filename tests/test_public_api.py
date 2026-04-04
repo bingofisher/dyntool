@@ -15,6 +15,8 @@ from dyntool import (
     AttrDataFormat,
     BatchOperationReport,
     ContainerFormat,
+    DefaultSample,
+    DefaultSampleSet,
     DispSeries,
     FDMVLEval,
     FDMVLLimit,
@@ -35,13 +37,12 @@ from dyntool import (
     PSpecVelSeries,
     RespSpec,
     ResponseSpectrum,
-    Sample,
     SampleDomain,
-    SampleSet,
     SpecAccelSeries,
     SpecDispSeries,
     SpecVelSeries,
     StorageMode,
+    StorageConnectOptions,
     StorageScheme,
     TimeSeries,
     UnitSystem,
@@ -107,14 +108,15 @@ def test_top_level_exports_match_current_public_surface() -> None:
         "FDMVLLimitStandard",
         "Metadata",
         "VibrationTestMetadata",
-        "Sample",
-        "SampleSet",
+        "DefaultSample",
+        "DefaultSampleSet",
         "VibrationTestSample",
         "VibrationTestSampleSet",
         "SampleDomain",
         "UnitSystem",
         "StorageScheme",
         "StorageMode",
+        "StorageConnectOptions",
         "AttrDataFormat",
         "ContainerFormat",
         "LoggingMode",
@@ -130,6 +132,8 @@ def test_top_level_exports_match_current_public_surface() -> None:
 def test_removed_top_level_symbols_stay_removed() -> None:
     for name in (
         "DynTool",
+        "Sample",
+        "SampleSet",
         "resource",
         "PlotBackend",
         "DataModelBase",
@@ -177,19 +181,27 @@ def test_top_level_exports_reference_expected_objects() -> None:
     assert FDMVLLimit.__name__ == "FDMVLLimit"
     assert Metadata.__name__ == "Metadata"
     assert VibrationTestMetadata.__name__ == "VibrationTestMetadata"
-    assert Sample.__name__ == "Sample"
-    assert SampleSet.__name__ == "SampleSet"
+    assert hasattr(DefaultSample, "sample_schema")
+    assert hasattr(DefaultSampleSet, "from_storage")
     assert VibrationTestSample.__name__ == "VibrationTestSample"
     assert VibrationTestSampleSet.__name__ == "VibrationTestSampleSet"
     assert SampleDomain.VIBRATION_TEST.value == "vibration_test"
     assert UnitSystem.si() is not None
     assert StorageScheme.SET_H5.value == "set_h5"
     assert StorageScheme.SET_SQLITE_H5.value == "set_sqlite_h5"
+    assert StorageScheme.SET_DIR.value == "sample_dir"
+    assert StorageScheme.SET_ATTR_TABLE.value == "attr_table"
     assert StorageMode.OPEN.value == "open"
+    assert StorageConnectOptions().scheme is StorageScheme.SET_DIR
     assert AttrDataFormat.CSV.value == "csv"
     assert ContainerFormat.H5.value == "h5"
     assert LoggingMode.CONSOLE_ONLY.value == "console_only"
     assert PlotKind.TIME.value == "time"
+
+
+def test_storage_scheme_legacy_aliases_are_removed() -> None:
+    assert not hasattr(StorageScheme, "SAMPLE_DIR")
+    assert not hasattr(StorageScheme, "ATTR_TABLE")
 
 
 def test_formal_modules_are_available() -> None:
@@ -198,6 +210,32 @@ def test_formal_modules_are_available() -> None:
     assert config is dt_config
     assert resources is dt_resource
     assert plotting is dt_plotting
+
+
+def test_storage_module_exports_connect_options_contract() -> None:
+    options = dt_storage.StorageConnectOptions(
+        scheme=dt_storage.StorageScheme.SET_H5,
+        mode=dt_storage.StorageMode.CREATE,
+        set_filename="bundle.h5",
+    )
+
+    assert isinstance(options, dt_storage.StorageConnectOptions)
+    assert options.scheme is dt_storage.StorageScheme.SET_H5
+    assert options.mode is dt_storage.StorageMode.CREATE
+
+
+def test_storage_module_exposes_detection_and_inspection_helpers(tmp_path: Path) -> None:
+    sample = DefaultSample(metadata=Metadata(extra={"source": "public-api"}))
+    store_dir = tmp_path / "public_api_set_dir"
+    DefaultSampleSet({sample.uid: sample}).save(store_dir, storage_scheme=StorageScheme.SET_DIR)
+
+    detected = dt_storage.detect_storage_scheme(store_dir, kind="sample_set")
+    report = dt_storage.inspect_storage_repository(store_dir, level="quick")
+
+    assert detected is StorageScheme.SET_DIR
+    assert isinstance(report, dt_storage.StorageRepositoryReport)
+    assert report.detected_scheme is StorageScheme.SET_DIR
+    assert report.is_valid is True
 
 
 def test_resource_module_exposes_formal_actions() -> None:
@@ -212,8 +250,8 @@ def test_resource_module_exposes_formal_actions() -> None:
     assert len(freqs) == len(index)
 
 
-def test_sample_and_sampleset_support_current_class_first_flow(tmp_path: Path) -> None:
-    sample = Sample.from_accel_data(
+def test_default_sample_and_set_support_current_public_flow(tmp_path: Path) -> None:
+    sample = DefaultSample.from_accel_data(
         [0.0, 0.1, -0.02],
         dt=0.01,
         sample_domain=SampleDomain.VIBRATION_TEST,
@@ -221,10 +259,10 @@ def test_sample_and_sampleset_support_current_class_first_flow(tmp_path: Path) -
         **_make_vibration_kwargs(),
     )
     result = sample.eval_zvl(overwrite=True, freq_range=(2.0, 60.0))
-    sample_set = SampleSet.from_samples([sample], sample_domain=SampleDomain.VIBRATION_TEST)
+    sample_set = DefaultSampleSet.from_samples([sample], sample_domain=SampleDomain.VIBRATION_TEST)
     store_path = tmp_path / "sample_set.h5"
     sample_set.save(store_path, storage_scheme=StorageScheme.SET_H5)
-    loaded = SampleSet.from_storage(
+    loaded = DefaultSampleSet.from_storage(
         store_path,
         sample_domain=SampleDomain.VIBRATION_TEST,
         storage_scheme=StorageScheme.SET_H5,
@@ -233,6 +271,9 @@ def test_sample_and_sampleset_support_current_class_first_flow(tmp_path: Path) -
     assert isinstance(result, OperationResult)
     assert isinstance(sample_set.eval_zvl(overwrite=True, freq_range=(2.0, 60.0)), BatchOperationReport)
     assert hasattr(sample_set, "convert_storage")
+    comparison = sample_set.compare_with(sample_set, data_vars=["zvl"], features=["pga"])
+    assert comparison.same_type is True
+    assert comparison.scalar_diff.empty
     assert loaded[sample.uid].zvl is not None
 
 

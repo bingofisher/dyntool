@@ -33,6 +33,29 @@ def test_csv_reads_resource_table() -> None:
     assert not frame.empty
 
 
+def test_csv_defaults_to_utf8_sig_for_resource_files(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    resource_file = tmp_path / "center_freq.csv"
+    resource_file.write_bytes(b"\xef\xbb\xbf" + "中心频率 (Hz)\n1.0\n2.0\n".encode("utf-8"))
+    monkeypatch.setattr(dt_resource, "_STANDARD_KEYS", {"center_freq": resource_file.name})
+    monkeypatch.setattr(dt_resource, "_RESOURCES_ROOT", tmp_path)
+
+    frame = dt_resource.csv("center_freq")
+
+    assert list(frame.columns) == ["中心频率 (Hz)"]
+    assert frame.iloc[:, 0].tolist() == [1.0, 2.0]
+
+
+def test_csv_honors_explicit_encoding_over_default(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    resource_file = tmp_path / "center_freq.csv"
+    resource_file.write_text("中心频率 (Hz)\n3.0\n", encoding="utf-8", newline="\n")
+    monkeypatch.setattr(dt_resource, "_STANDARD_KEYS", {"center_freq": resource_file.name})
+    monkeypatch.setattr(dt_resource, "_RESOURCES_ROOT", tmp_path)
+
+    frame = dt_resource.csv("center_freq", csv_options={"encoding": "utf-8"})
+
+    assert frame.iloc[:, 0].tolist() == [3.0]
+
+
 def test_center_freqs_returns_filtered_band_data() -> None:
     values, index = dt_resource.center_freqs((10.0, 20.0))
 

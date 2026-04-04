@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import sys
 import tomllib
 from pathlib import Path
@@ -85,23 +86,36 @@ def _scan_forbidden_tokens(forbidden_tokens: list[str]) -> list[str]:
     return violations
 
 
-def _check_package_exports(allowed: list[str], removed: list[str]) -> list[str]:
-    import dyntool
+def _extract_module_all(path: Path) -> list[str]:
+    source = path.read_text(encoding="utf-8")
+    tree = ast.parse(source, filename=str(path))
 
-    exported = list(getattr(dyntool, "__all__", []))
+    for node in tree.body:
+        if not isinstance(node, ast.Assign):
+            continue
+        for target in node.targets:
+            if isinstance(target, ast.Name) and target.id == "__all__":
+                value = ast.literal_eval(node.value)
+                if not isinstance(value, list | tuple):
+                    raise TypeError(f"{path}: __all__ must be a list or tuple literal")
+                return [str(item) for item in value]
+
+    raise ValueError(f"{path}: missing __all__ assignment")
+
+
+def _check_package_exports(allowed: list[str], removed: list[str]) -> list[str]:
+    exported = _extract_module_all(PROJECT_ROOT / "src" / "dyntool" / "__init__.py")
     violations: list[str] = []
     if sorted(exported) != sorted(allowed):
         violations.append("src/dyntool/__init__.py: __all__ does not match top_level_exports_allowed")
     for name in removed:
-        if hasattr(dyntool, name):
+        if name in exported:
             violations.append(f"src/dyntool/__init__.py: removed export still exists: {name}")
     return violations
 
 
 def _check_storage_module_exports(allowed: list[str]) -> list[str]:
-    import dyntool.storage as dt_storage
-
-    exported = list(getattr(dt_storage, "__all__", []))
+    exported = _extract_module_all(PROJECT_ROOT / "src" / "dyntool" / "storage" / "__init__.py")
     if sorted(exported) == sorted(allowed):
         return []
     return ["src/dyntool/storage/__init__.py: __all__ does not match storage_module_exports_allowed"]
@@ -122,9 +136,7 @@ def _check_public_api_docs(storage_module_exports_allowed: list[str]) -> list[st
         if token not in text:
             violations.append(f"docs/api/public_api.md: missing public API token {token!r}")
 
-    storage_contract_tokens = [
-        token for token in storage_module_exports_allowed if token[:1].isupper()
-    ]
+    storage_contract_tokens = [token for token in storage_module_exports_allowed if token[:1].isupper()]
     for token in storage_contract_tokens:
         if token not in text:
             violations.append(f"docs/api/public_api.md: missing storage contract token {token!r}")

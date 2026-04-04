@@ -130,7 +130,7 @@ def test_storage_context_canonicalizes_alias_categories_for_storage(
     ctx = StorageContext(
         sampleset,
         base_dir=tmp_path,
-        storage_scheme=StorageScheme.SAMPLE_DIR,
+        storage_scheme=StorageScheme.SET_DIR,
     )
 
     data_dict = ctx.sample_data_dict(sample, ["a"])
@@ -151,7 +151,7 @@ def test_storage_context_rejects_non_storage_slots_even_when_explicit(
     ctx = StorageContext(
         sampleset,
         base_dir=tmp_path,
-        storage_scheme=StorageScheme.SAMPLE_DIR,
+        storage_scheme=StorageScheme.SET_DIR,
     )
 
     with pytest.raises(ValueError, match="vel"):
@@ -170,7 +170,7 @@ def test_sample_storage_load_canonicalizes_categories_before_strategy_call(
     ctx = StorageContext(
         sampleset,
         base_dir=tmp_path,
-        storage_scheme=StorageScheme.SAMPLE_DIR,
+        storage_scheme=StorageScheme.SET_DIR,
     )
     storage = SampleStorage(ctx)
     calls: list[tuple[str, object]] = []
@@ -209,7 +209,7 @@ def test_sample_storage_load_rejects_non_storage_categories(
     ctx = StorageContext(
         sampleset,
         base_dir=tmp_path,
-        storage_scheme=StorageScheme.SAMPLE_DIR,
+        storage_scheme=StorageScheme.SET_DIR,
     )
     storage = SampleStorage(ctx)
 
@@ -229,7 +229,7 @@ def test_sample_storage_load_only_restores_selected_storage_categories(
     ctx = StorageContext(
         sampleset,
         base_dir=tmp_path,
-        storage_scheme=StorageScheme.SAMPLE_DIR,
+        storage_scheme=StorageScheme.SET_DIR,
     )
     storage = SampleStorage(ctx)
 
@@ -253,7 +253,7 @@ def test_sample_set_storage_save_all_only_persists_selected_storage_categories(
     source.storage.connect(
         tmp_path / "selected-save",
         mode=StorageMode.CREATE,
-        storage_scheme=StorageScheme.SAMPLE_DIR,
+        storage_scheme=StorageScheme.SET_DIR,
     )
 
     source.storage.save_all(categories=["a"])
@@ -263,7 +263,7 @@ def test_sample_set_storage_save_all_only_persists_selected_storage_categories(
     loaded.storage.connect(
         tmp_path / "selected-save",
         mode=StorageMode.OPEN,
-        storage_scheme=StorageScheme.SAMPLE_DIR,
+        storage_scheme=StorageScheme.SET_DIR,
     )
     loaded.storage.load_all()
 
@@ -284,7 +284,7 @@ def test_sample_set_storage_load_all_only_restores_selected_storage_categories(
     source.storage.connect(
         tmp_path / "selected-load",
         mode=StorageMode.CREATE,
-        storage_scheme=StorageScheme.SAMPLE_DIR,
+        storage_scheme=StorageScheme.SET_DIR,
     )
     source.storage.save_all()
 
@@ -293,7 +293,7 @@ def test_sample_set_storage_load_all_only_restores_selected_storage_categories(
     loaded.storage.connect(
         tmp_path / "selected-load",
         mode=StorageMode.OPEN,
-        storage_scheme=StorageScheme.SAMPLE_DIR,
+        storage_scheme=StorageScheme.SET_DIR,
     )
     loaded.storage.load_all(categories=["a"])
 
