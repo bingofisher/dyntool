@@ -1990,6 +1990,27 @@ class TestSampleSetCompare:
             zvl=ZVLEval.from_data(zvl=65.0 * scale, aw=0.001 * scale),
         )
 
+    def _make_eval_sample(self, point: str, *, data_var: str, scale: float = 1.0) -> VibrationTestSample:
+        axis = np.linspace(0.0, 20.47, 2048, dtype=float)
+        sample = VibrationTestSample(
+            metadata=VibrationTestMetadata(
+                case="case-a",
+                point=point,
+                instr=f"instr-{point}",
+                dir="Z",
+                record="r1",
+                timestamp="2026-03-30 08:00:00",
+            ),
+            accel=AccelSeries.from_data(
+                scale * (0.01 * np.sin(2 * np.pi * 3.15 * axis) + 0.002 * np.sin(2 * np.pi * 10.0 * axis)),
+                dt=0.01,
+                axis_unit="second",
+                data_unit="meter/second**2",
+            ),
+        )
+        getattr(sample, f"eval_{data_var}")(overwrite=True, freq_range=(2.0, 80.0))
+        return sample
+
     def test_compare_with_reports_uid_metadata_and_scalar_diffs(self) -> None:
         left_a = self._make_sample("A", scale=1.0)
         left_b = self._make_sample("B", scale=1.0)
@@ -2072,6 +2093,53 @@ class TestSampleSetCompare:
         }
         for helper_name in exported_names:
             assert hasattr(sample_set_compare_module, helper_name)
+
+    @pytest.mark.parametrize("data_var", ["otovl", "fdmvl", "fpvdv"])
+    def test_scalar_frame_rejects_non_scalar_eval_data_vars(self, tmp_path: Path, data_var: str) -> None:
+        sample = self._make_eval_sample("S", data_var=data_var)
+        sample_set = VibrationTestSampleSet({sample.uid: sample})
+
+        with pytest.raises(ValueError, match=f"{data_var}'.*不是标量结果"):
+            sample_set.scalar_frame(data_vars=[data_var], strict=False)
+
+        store_dir = tmp_path / f"non_scalar_{data_var}"
+        sample_set.save(store_dir, storage_scheme=StorageScheme.SET_SQLITE_H5)
+        loaded = VibrationTestSampleSet.from_storage(
+            store_dir,
+            storage_scheme=StorageScheme.SET_SQLITE_H5,
+            load_mode=SampleLoadMode.LAZY,
+        )
+
+        with pytest.raises(ValueError, match=f"{data_var}'.*不是标量结果"):
+            loaded.scalar_frame(data_vars=[data_var], strict=False)
+
+    @pytest.mark.parametrize("data_var", ["otovl", "fdmvl", "fpvdv"])
+    def test_compare_with_rejects_non_scalar_eval_data_vars(self, tmp_path: Path, data_var: str) -> None:
+        left_sample = self._make_eval_sample("C", data_var=data_var, scale=1.0)
+        right_sample = self._make_eval_sample("C", data_var=data_var, scale=1.1)
+        left = VibrationTestSampleSet({left_sample.uid: left_sample})
+        right = VibrationTestSampleSet({right_sample.uid: right_sample})
+
+        with pytest.raises(ValueError, match=f"{data_var}'.*不是标量结果"):
+            left.compare_with(right, data_vars=[data_var])
+
+        left_store = tmp_path / f"compare_left_{data_var}"
+        right_store = tmp_path / f"compare_right_{data_var}"
+        left.save(left_store, storage_scheme=StorageScheme.SET_SQLITE_H5)
+        right.save(right_store, storage_scheme=StorageScheme.SET_SQLITE_H5)
+        loaded_left = VibrationTestSampleSet.from_storage(
+            left_store,
+            storage_scheme=StorageScheme.SET_SQLITE_H5,
+            load_mode=SampleLoadMode.LAZY,
+        )
+        loaded_right = VibrationTestSampleSet.from_storage(
+            right_store,
+            storage_scheme=StorageScheme.SET_SQLITE_H5,
+            load_mode=SampleLoadMode.LAZY,
+        )
+
+        with pytest.raises(ValueError, match=f"{data_var}'.*不是标量结果"):
+            loaded_left.compare_with(loaded_right, data_vars=[data_var])
 
 
 @pytest.mark.parametrize(

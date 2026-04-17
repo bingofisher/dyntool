@@ -243,6 +243,33 @@ def test_export_report_package_skips_peak_tables_when_no_peaks_exist(tmp_path: P
     assert "peaks_accel" not in workbook
 
 
+def test_export_report_package_filters_non_scalar_eval_summary_for_lazy_sqlite_h5(tmp_path: Path) -> None:
+    sample_set = _make_sample_set(with_eval=True)
+    store_dir = tmp_path / "sqlite_h5_eval_bundle"
+    package_dir = tmp_path / "report_package_eval_lazy"
+
+    sample_set.save(store_dir, storage_scheme=StorageScheme.SET_SQLITE_H5)
+    loaded = VibrationTestSampleSet.from_storage(
+        store_dir,
+        storage_scheme=StorageScheme.SET_SQLITE_H5,
+        load_mode=SampleLoadMode.LAZY,
+    )
+
+    returned_dir = dt_reporting.export_report_package(
+        loaded,
+        package_dir,
+        include_plots=False,
+        include_eval_summary=True,
+    )
+
+    assert returned_dir == package_dir
+    eval_summary = pd.read_csv(package_dir / "tables" / "eval_summary.csv")
+    assert {"uid", "alias", "zvl.aw", "zvl.zvl"} <= set(eval_summary.columns)
+    assert not any("otovl" in column for column in eval_summary.columns)
+    assert not any("fdmvl" in column for column in eval_summary.columns)
+    assert not any("fpvdv" in column for column in eval_summary.columns)
+
+
 def test_export_scalar_frame_uses_sqlite_h5_summary_fast_path(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

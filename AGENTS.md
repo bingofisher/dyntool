@@ -18,7 +18,7 @@
 ## 3) 正式公开面
 - 正式公开面采用两层结构：
   - 顶层对象 API：`AccelSeries`、`Metadata`、`DefaultSample`、`DefaultSampleSet` 等核心对象
-  - 独立模块 API：`dyntool.storage`、`dyntool.plotting`、`dyntool.logging`
+  - 独立模块 API：`dyntool.storage`、`dyntool.plotting`、`dyntool.logging`、`dyntool.reporting`
 - 正式支持模块：
   - `dyntool.config`
   - `dyntool.resources`

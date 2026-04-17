@@ -43,6 +43,29 @@ def scalar_feature_value(sample: Any, feature: str) -> float:
     raise KeyError(f"不支持的标量特征: {feature}")
 
 
+def supports_scalar_data_var(sample_set: Any, data_var: str | DataCategory) -> bool:
+    """判断 data_var 是否具有标量表格导出能力。"""
+
+    spec = sample_set.sample_schema.field_spec(data_var)
+    return getattr(spec.model_type, "axis_field", None) is None
+
+
+def validate_scalar_data_vars(sample_set: Any, data_vars: Iterable[str] | None) -> None:
+    """验证 requested data_vars 是否全部是标量结果。"""
+
+    invalid: list[str] = []
+    for data_var in data_vars or ():
+        if not supports_scalar_data_var(sample_set, data_var):
+            field = sample_set.sample_schema.resolve_field(data_var)
+            invalid.append(str(field.value))
+    if invalid:
+        quoted = ", ".join(f"'{name}'" for name in invalid)
+        raise ValueError(
+            f"data_var {quoted} 不是标量结果，不能用于 scalar_frame()/compare_with()，请改用 "
+            "series_frame()、图件导出或自定义比较逻辑。"
+        )
+
+
 def build_scalar_frame(
     sample_set: Any,
     *,
@@ -62,6 +85,8 @@ def build_scalar_frame(
     requested_metadata = [str(field) for field in metadata_fields or ()]
     requested_data_vars = [str(name) for name in data_vars or ()]
     requested_features = [str(name) for name in features or ()]
+    validate_scalar_data_vars(sample_set, requested_data_vars)
+
     if sample_set.storage is not None and sample_set.storage_dirty is False and filter is None and sort_by is None:
         selected_uids = list(sample_set.find(uids=uids, criteria=criteria).keys())
         try:
@@ -276,4 +301,6 @@ __all__ = [
     "build_series_frame",
     "metadata_value",
     "scalar_feature_value",
+    "supports_scalar_data_var",
+    "validate_scalar_data_vars",
 ]

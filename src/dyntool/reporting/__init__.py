@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 
 from ..domain.models import OTOVLEval
+from ..domain.samples._sample_set_views import supports_scalar_data_var
 from ..plotting import FramePlotter, OneThirdOctavePlotter, PlotCategory, PlotDataset, PlotTheme
 
 if TYPE_CHECKING:
@@ -346,16 +347,10 @@ def _filter_scalar_data_vars(
 
 
 def _is_scalar_data_var(sample_set: "SampleSetBase[Any]", data_var: str) -> bool:
-    for sample in sample_set.values():
-        model = sample.get_data_var(data_var)
-        if model is None:
-            continue
-        try:
-            model.to_scalar_record()
-        except Exception:  # noqa: BLE001
-            return False
-        return True
-    return False
+    try:
+        return supports_scalar_data_var(sample_set, data_var)
+    except KeyError:
+        return False
 
 
 def _export_scalar_summary_figures(
