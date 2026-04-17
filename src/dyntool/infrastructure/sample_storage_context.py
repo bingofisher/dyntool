@@ -78,11 +78,16 @@ class StorageContext:
         self.name_resolver = name_resolver
         self.set_filename = set_filename
         self.data_storage = data_storage or DataStorage()
+        self._category_fields_cache = tuple(self.sampleset.sample_schema.slot_names(include_storage_only=True))
+        self._resolved_categories_cache: dict[tuple[str, ...] | None, tuple[str, ...]] = {
+            None: self._category_fields_cache,
+        }
+        self._metadata_table_cache: pd.DataFrame | None = None
 
     def category_fields(self) -> list[str]:
         """???????????????????????"""
 
-        return list(self.sampleset.sample_schema.slot_names(include_storage_only=True))
+        return list(self._category_fields_cache)
 
     def resolve_storage_categories(
         self,
@@ -105,19 +110,26 @@ class StorageContext:
         """
 
         if categories is None:
-            return self.category_fields()
+            return list(self._resolved_categories_cache[None])
+
+        cache_key = tuple(str(raw_name) for raw_name in categories)
+        cached = self._resolved_categories_cache.get(cache_key)
+        if cached is not None:
+            return list(cached)
 
         resolved: list[str] = []
         seen: set[str] = set()
-        for raw_name in categories:
-            slot = self.sampleset.sample_schema.slot(str(raw_name))
+        for raw_name in cache_key:
+            slot = self.sampleset.sample_schema.slot(raw_name)
             if not slot.include_in_storage:
                 raise ValueError(f"槽位 '{slot.name}' 未启用存储，不能参与存储读写。")
             if slot.name in seen:
                 continue
             resolved.append(slot.name)
             seen.add(slot.name)
-        return resolved
+        resolved_tuple = tuple(resolved)
+        self._resolved_categories_cache[cache_key] = resolved_tuple
+        return list(resolved_tuple)
 
     def attr_data_format(self) -> AttrDataFormat:
         """返回当前生效的属性数据导出格式。
@@ -351,21 +363,26 @@ class StorageContext:
     def load_metadata_table(self) -> pd.DataFrame:
         """读取元数据索引表；不存在时返回空表。"""
 
-        path = self.metadata_table_path()
-        if not path.exists():
-            return pd.DataFrame(columns=METADATA_TABLE_COLUMNS)
-        return pd.read_csv(path, encoding=CSV_ENCODING_UTF8_SIG)
+        if self._metadata_table_cache is None:
+            path = self.metadata_table_path()
+            if path.exists():
+                self._metadata_table_cache = pd.read_csv(path, encoding=CSV_ENCODING_UTF8_SIG)
+            else:
+                self._metadata_table_cache = pd.DataFrame(columns=METADATA_TABLE_COLUMNS)
+        return self._metadata_table_cache.copy()
 
     def save_metadata_table(self, df: pd.DataFrame) -> None:
         """保存元数据索引表。"""
 
+        normalized_df = df.reset_index(drop=True).copy()
+        self._metadata_table_cache = normalized_df
         self.metadata_table_path().parent.mkdir(parents=True, exist_ok=True)
-        df.to_csv(self.metadata_table_path(), index=False, encoding=CSV_ENCODING_UTF8_SIG)
+        normalized_df.to_csv(self.metadata_table_path(), index=False, encoding=CSV_ENCODING_UTF8_SIG)
 
     def upsert_metadata_table_row(self, sample: SampleBaseModel, name: str) -> None:
         """???????????????????"""
 
-        df = self.load_metadata_table()
+        df = self._metadata_table_cache if self._metadata_table_cache is not None else self.load_metadata_table()
         row: dict[str, Any] = {
             META_COL_UID: sample.uid,
             META_COL_NAME: name,
@@ -373,10 +390,12 @@ class StorageContext:
             META_COL_METADATA_JSON: json.dumps(sample.metadata.model_dump(), ensure_ascii=False, default=str),
         }
         row.update(sample.metadata.to_flatten_dict(sep="@"))
-        if META_COL_UID in df.columns:
-            df = df[df[META_COL_UID] != sample.uid]
-        df = pd.concat([df, pd.DataFrame([row])], ignore_index=True)
-        self.save_metadata_table(pd.DataFrame(df))
+        columns = list(dict.fromkeys([*df.columns.tolist(), *row.keys()]))
+        updated = df.reindex(columns=columns)
+        if META_COL_UID in updated.columns:
+            updated = updated.loc[updated[META_COL_UID] != sample.uid].reset_index(drop=True)
+        updated.loc[len(updated)] = [row.get(column, pd.NA) for column in columns]
+        self.save_metadata_table(updated)
 
     def float_format(self) -> str | None:
         """?? `pandas` ?????????????????"""

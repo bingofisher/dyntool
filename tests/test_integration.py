@@ -45,12 +45,12 @@ def test_class_first_roundtrip_from_accel_to_eval_to_h5(tmp_path: Path) -> None:
     assert loaded_sample.zvl is not None
     assert loaded_sample.metadata.uid == sample.metadata.uid
 
-    plotter = dt_plotting.FramePlotter()
-    plotter.add(
+    theme = dt_plotting.PlotTheme.default()
+    dataset = dt_plotting.PlotDataset.from_model(
         loaded[sample.uid].accel,  # type: ignore[arg-type]
         name="loaded-accel",
         category=dt_plotting.PlotCategory.SAMPLE,
     )
-    result = plotter.plot()
+    result = dt_plotting.FramePlotter(theme=theme).plot_dataset(dataset)
     assert result.figure is not None
     plt.close(result.figure)

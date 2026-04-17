@@ -8,38 +8,54 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
+from ._time_series_compute import (
+    calc_fft_amp_series_from_accel,
+    calc_fft_phase_series_from_accel,
+    calc_fft_with_phase_time_series,
+    calc_freqspec_from_accel_series,
+    calc_freqspec_time_series,
+    calc_respspec_component_from_accel_series,
+    calc_respspec_from_accel_series,
+    eval_fdmvl_from_accel_series,
+    eval_fpvdv_from_accel_series,
+    eval_otovl_from_accel_series,
+    eval_zvl_from_accel_series,
+)
+from ._time_series_io import (
+    time_series_from_dict,
+    time_series_from_pandas,
+    time_series_to_dict,
+    time_series_to_pandas,
+)
+from ._time_series_motion import (
+    differentiate_disp_series_to_vel,
+    differentiate_vel_series_to_accel,
+    integrate_accel_series_to_vel,
+    integrate_vel_series_to_disp,
+)
+from ._time_series_transforms import (
+    baseline_correct_time_series,
+    filter_time_series,
+    resample_like_time_series,
+    resample_uniform_time_series,
+    truncate_time_series,
+)
 from .conversion import MagnitudeConversion
 from .base import DataModelBase
 from ..constants import (
     DataCategory,
     UnitSystem,
     convert_array,
-    format_label_with_unit,
     get_default_unit_system,
     normalize_unit_map,
-    parse_label_unit,
     resolve_unit_system,
     resolve_current_units,
-    resolve_file_units,
-)
-from ...compute.metrics import (
-    fdmvl_from_accel,
-    fpvdv_from_accel,
-    otovl_from_accel,
-    respspec_from_accel,
-    zvl_from_accel,
 )
 from ...compute.signals import (
     BaselineMethod,
     DiffMethod,
-    Differentiation,
     FilterKind,
     IntegMethod,
-    Integration,
-    baseline_correct,
-    fft_with_phase,
-    filter_signal,
-    truncate,
 )
 from ...compute.solvers import LinearSequence, SDOFSolveMethod, WeightType
 
@@ -348,21 +364,7 @@ class TimeSeries(DataModelBase):
     def truncate(self, start: float, end: float) -> Self:
         """按秒为单位裁剪时程。"""
 
-        axis_new, value_new = truncate(
-            self.get_axis(unit="second"),
-            self._base_value_values(),
-            start,
-            end,
-        )
-        return self.__class__._from_base_data(
-            value_new,
-            time=convert_array(
-                axis_new,
-                from_unit="second",
-                to_unit=self.axis_unit,
-            ),
-            units=self.current_units(),
-        )
+        return truncate_time_series(self, start, end)
 
     def resample_uniform(
         self,
@@ -374,59 +376,18 @@ class TimeSeries(DataModelBase):
     ) -> Self:
         """重采样到显式给定的等间距时间轴。"""
 
-        if target_dt <= 0:
-            raise ValueError("target_dt must be positive.")
-        if method != "linear":
-            raise ValueError("当前仅支持 linear 重采样。")
-        base_time = self.get_axis(unit="second")
-        if len(base_time) < 2:
-            raise ValueError("至少需要两个时间点才能重采样。")
-        diffs = np.diff(base_time)
-        if np.any(diffs <= 0):
-            raise ValueError("时间轴必须严格递增后才能重采样。")
-        start_time = float(base_time[0] if start is None else start)
-        end_time = float(base_time[-1] if end is None else end)
-        if end_time <= start_time:
-            raise ValueError("end must be greater than start.")
-        count = int(np.floor((end_time - start_time) / target_dt)) + 1
-        if count < 2:
-            raise ValueError("重采样后的时间轴至少需要两个采样点。")
-        resampled_time = start_time + target_dt * np.arange(count, dtype=np.float64)
-        base_value = self._base_value_values()
-        if base_value.ndim == 1:
-            resampled_value = np.interp(resampled_time, base_time, base_value)
-        elif base_value.ndim == 2:
-            resampled_value = np.column_stack(
-                [np.interp(resampled_time, base_time, base_value[:, idx]) for idx in range(base_value.shape[1])]
-            )
-        else:
-            raise ValueError("value only supports 1D or 2D arrays.")
-        return self.__class__._from_base_data(
-            resampled_value,
-            time=convert_array(
-                resampled_time,
-                from_unit="second",
-                to_unit=self.axis_unit,
-            ),
-            units=self.current_units(),
+        return resample_uniform_time_series(
+            self,
+            target_dt=target_dt,
+            start=start,
+            end=end,
+            method=method,
         )
 
     def resample_like(self, other: "TimeSeries", *, method: str = "linear") -> Self:
         """按目标时程的时间轴进行重采样。"""
 
-        other.require_uniform_time()
-        info = other.sampling_info()
-        dt = info["dt"]
-        start = info["start"]
-        end = info["end"]
-        if not isinstance(dt, float) or not isinstance(start, float) or not isinstance(end, float):
-            raise ValueError("目标时间轴信息不足，无法执行重采样。")
-        return self.resample_uniform(
-            target_dt=dt,
-            start=start,
-            end=end,
-            method=method,
-        )
+        return resample_like_time_series(self, other, method=method)
 
     def baseline_correct(
         self,
@@ -436,60 +397,37 @@ class TimeSeries(DataModelBase):
     ) -> Self:
         """执行基线修正，并保持当前单位不变。"""
 
-        corrected = baseline_correct(self._base_value_values(), method=method, order=order)
-        return self.__class__._from_base_data(
-            corrected,
-            time=self._base_axis_values(),
-            units=self.current_units(),
-        )
+        return baseline_correct_time_series(self, method=method, order=order)
 
     def filter_highpass(self, freq: float, *, order: int = 4) -> Self:
         """执行高通滤波，并保持当前单位不变。"""
 
-        filtered = filter_signal(
-            self._base_value_values(),
-            fs=1.0 / self.dt,
+        return filter_time_series(
+            self,
             kind=FilterKind.HIGHPASS,
             freq=freq,
             order=order,
-        )
-        return self.__class__._from_base_data(
-            filtered,
-            time=self._base_axis_values(),
-            units=self.current_units(),
         )
 
     def filter_lowpass(self, freq: float, *, order: int = 4) -> Self:
         """执行低通滤波，并保持当前单位不变。"""
 
-        filtered = filter_signal(
-            self._base_value_values(),
-            fs=1.0 / self.dt,
+        return filter_time_series(
+            self,
             kind=FilterKind.LOWPASS,
             freq=freq,
             order=order,
-        )
-        return self.__class__._from_base_data(
-            filtered,
-            time=self._base_axis_values(),
-            units=self.current_units(),
         )
 
     def filter_bandpass(self, freq: float, *, f_high: float, order: int = 4) -> Self:
         """执行带通滤波，并保持当前单位不变。"""
 
-        filtered = filter_signal(
-            self._base_value_values(),
-            fs=1.0 / self.dt,
+        return filter_time_series(
+            self,
             kind=FilterKind.BANDPASS,
             freq=freq,
             f_high=f_high,
             order=order,
-        )
-        return self.__class__._from_base_data(
-            filtered,
-            time=self._base_axis_values(),
-            units=self.current_units(),
         )
 
     def calc_fft(
@@ -509,18 +447,7 @@ class TimeSeries(DataModelBase):
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """计算 FFT，并按目标单位返回频率、幅值和相位。"""
 
-        output_units = resolve_unit_system(output_unit_system)
-        data = self.get_value(unit=self._base_value_unit())
-        if data.ndim > 1:
-            data = self._value_array_1d(unit=self._base_value_unit())
-        return fft_with_phase(
-            data,
-            dt=self.dt,
-            value_unit=self._base_value_unit(),
-            output_value_unit=self.value_unit,
-            output_frequency_unit=output_units.frequency,
-            output_phase_unit=output_units.phase,
-        )
+        return calc_fft_with_phase_time_series(self, output_unit_system=output_unit_system)
 
     def calc_freqspec(
         self,
@@ -529,37 +456,12 @@ class TimeSeries(DataModelBase):
     ) -> "FreqSpec":
         """计算组合频谱对象。"""
 
-        from .frequency_spectrum import FreqSpec
-
-        units = output_unit_system or get_default_unit_system()
-        freqs, mag, phase = self.calc_fft_with_phase(output_unit_system=units)
-        return FreqSpec.from_compute_result(
-            {
-                "freq": freqs,
-                "amp": mag,
-                "pha": phase,
-                "units": {
-                    "freq": units.frequency,
-                    "amp": self.value_unit,
-                    "phase": units.phase,
-                },
-                "unit_system": units,
-            },
-            unit_system=units,
-        )
+        return calc_freqspec_time_series(self, output_unit_system=output_unit_system)
 
     def to_pandas(self) -> pd.DataFrame:
         """转换为带当前单位表头的 DataFrame。"""
 
-        axis_name = format_label_with_unit("time", self.axis_unit)
-        value_name = format_label_with_unit("value", self.value_unit)
-        t = self.get_axis()
-        v = self.get_value()
-        index = pd.Index(t, name=axis_name)
-        if v.ndim == 1:
-            return pd.DataFrame({value_name: v}, index=index)
-        cols = [format_label_with_unit(f"value_{i}", self.value_unit) for i in range(v.shape[1])]
-        return pd.DataFrame(v, index=index, columns=cols)
+        return time_series_to_pandas(self)
 
     @classmethod
     def from_pandas(
@@ -573,39 +475,19 @@ class TimeSeries(DataModelBase):
     ) -> Self:
         """根据 DataFrame 构造时程序列。"""
 
-        _, axis_unit = parse_label_unit(df.index.name or "time")
-        parsed_units: dict[str, str | None] = {"time": axis_unit}
-        inferred_value_unit = None
-        if len(df.columns) == 1:
-            _, inferred_value_unit = parse_label_unit(df.columns[0])
-        parsed_units["value"] = inferred_value_unit
-        current = resolve_file_units(
-            {"time", "value"},
-            parsed_units=parsed_units,
-            units=cls._merge_input_units(
-                axis_unit=axis_unit,
-                data_unit=data_unit,
-                units=units,
-            ),
-            allow_partial=True,
-        )
-        default_current = cls._resolve_current_units(
-            units=current if current else units,
+        return time_series_from_pandas(
+            cls,
+            df,
+            axis_unit=axis_unit,
+            data_unit=data_unit,
+            units=units,
             unit_system=unit_system,
         )
-        t = df.index.to_numpy()
-        v = df.iloc[:, 0].to_numpy() if len(df.columns) == 1 else df.to_numpy()
-        model = cls.from_data(v, time=t, units=default_current, unit_system=unit_system)
-        return model
 
     def to_dict(self) -> dict[str, Any]:
         """序列化当前单位数组与单位元数据。"""
 
-        return {
-            "time": self.get_axis(),
-            "value": self.get_value(),
-            "_units": self.current_units(),
-        }
+        return time_series_to_dict(self)
 
     @classmethod
     def from_dict(
@@ -621,27 +503,14 @@ class TimeSeries(DataModelBase):
         """根据字典负载反序列化时程序列。"""
 
         del category
-        current = resolve_file_units(
-            {"time", "value"},
-            parsed_units=data.get("_units", {}),
-            units=cls._merge_input_units(
-                axis_unit=axis_unit,
-                data_unit=data_unit,
-                units=units,
-            ),
-            allow_partial=True,
-        )
-        default_current = cls._resolve_current_units(
-            units=current if current else units,
+        return time_series_from_dict(
+            cls,
+            data,
+            axis_unit=axis_unit,
+            data_unit=data_unit,
+            units=units,
             unit_system=unit_system,
         )
-        model = cls.from_data(
-            data["value"],
-            time=data["time"],
-            units=default_current,
-            unit_system=unit_system,
-        )
-        return model
 
 
 class AccelSeries(TimeSeries):
@@ -678,23 +547,13 @@ class AccelSeries(TimeSeries):
                 常见键包括 `initial`。
         """
 
-        calc_units = calc_unit_system or get_default_unit_system()
-        out_units = output_unit_system or get_default_unit_system()
-        vel_array = Integration(
-            y=self.get_value(unit=calc_units.acceleration),
-            dx=self.dt,
-        ).integ1d(method=method, **options)
-        target_value_unit = output_unit or out_units.velocity
-        units = {"time": out_units.time, "value": target_value_unit}
-        return VelSeries._from_base_data(
-            convert_array(
-                vel_array,
-                from_unit=calc_units.velocity,
-                to_unit=target_value_unit,
-            ),
-            time=self.get_axis(unit=out_units.time),
-            units=units,
-            unit_system=out_units,
+        return integrate_accel_series_to_vel(
+            self,
+            method=method,
+            calc_unit_system=calc_unit_system,
+            output_unit=output_unit,
+            output_unit_system=output_unit_system,
+            **options,
         )
 
     def calc_disp(
@@ -728,16 +587,7 @@ class AccelSeries(TimeSeries):
     ) -> "FreqAmpSeries":
         """按当前单位计算幅值频谱。"""
 
-        from .frequency_spectrum import FreqAmpSeries
-
-        units = output_unit_system or get_default_unit_system()
-        freqs, mag = self.calc_fft(output_unit_system=units)
-        return FreqAmpSeries.from_data(
-            freqs,
-            mag,
-            units={"freq": units.frequency, "amp": self.value_unit},
-            unit_system=units,
-        )
+        return calc_fft_amp_series_from_accel(self, output_unit_system=output_unit_system)
 
     def calc_fft_phase_series(
         self,
@@ -746,16 +596,7 @@ class AccelSeries(TimeSeries):
     ) -> "FreqPhaSeries":
         """按当前单位计算相位频谱。"""
 
-        from .frequency_spectrum import FreqPhaSeries
-
-        units = output_unit_system or get_default_unit_system()
-        freqs, _, phase = self.calc_fft_with_phase(output_unit_system=units)
-        return FreqPhaSeries.from_data(
-            freqs,
-            phase,
-            units={"freq": units.frequency, "phase": units.phase},
-            unit_system=units,
-        )
+        return calc_fft_phase_series_from_accel(self, output_unit_system=output_unit_system)
 
     def pga(self) -> float:
         """返回加速度时程的绝对峰值。"""
@@ -769,21 +610,7 @@ class AccelSeries(TimeSeries):
     ) -> "FreqSpec":
         """计算组合频谱对象。"""
 
-        from .frequency_spectrum import FreqSpec
-
-        units = output_unit_system or get_default_unit_system()
-        freqs, mag, phase = self.calc_fft_with_phase(output_unit_system=units)
-        return FreqSpec.from_data(
-            freqs,
-            amp=mag,
-            pha=phase,
-            units={
-                "freq": units.frequency,
-                "amp": self.value_unit,
-                "phase": units.phase,
-            },
-            unit_system=units,
-        )
+        return calc_freqspec_from_accel_series(self, output_unit_system=output_unit_system)
 
     def calc_respspec(
         self,
@@ -795,20 +622,13 @@ class AccelSeries(TimeSeries):
     ) -> "RespSpec":
         """按显式单位规则由加速度计算响应谱。"""
 
-        from .response_spectrum import RespSpec
-
-        calc_units = calc_unit_system or get_default_unit_system()
-        out_units = output_unit_system or get_default_unit_system()
-        result = respspec_from_accel(
-            self.get_value(unit=calc_units.acceleration),
-            self.dt,
-            periods=periods,
+        return calc_respspec_from_accel_series(
+            self,
             method=method,
-            accel_unit=calc_units.acceleration,
-            calc_unit_system=calc_units,
-            output_unit_system=out_units,
+            calc_unit_system=calc_unit_system,
+            output_unit_system=output_unit_system,
+            periods=periods,
         )
-        return RespSpec.from_compute_result(result, unit_system=out_units)
 
     def calc_respspec_bundle(
         self,
@@ -836,16 +656,14 @@ class AccelSeries(TimeSeries):
         output_unit_system: UnitSystem | None = None,
         periods: np.ndarray | None = None,
     ) -> "ResponseSpectrum":
-        bundle = self.calc_respspec_bundle(
+        return calc_respspec_component_from_accel_series(
+            self,
+            component,
             method=method,
             calc_unit_system=calc_unit_system,
             output_unit_system=output_unit_system,
             periods=periods,
         )
-        result = getattr(bundle, component, None)
-        if result is None:
-            raise ValueError(f"Response spectrum component {component!r} is unavailable.")
-        return result
 
     def calc_respspec_sa(
         self,
@@ -948,20 +766,14 @@ class AccelSeries(TimeSeries):
     ) -> "ZVLEval":
         """根据加速度数据计算 Z 振级。"""
 
-        calc_units = calc_unit_system or get_default_unit_system()
-        result = zvl_from_accel(
-            self.get_value(unit=calc_units.acceleration),
-            self.dt,
+        return eval_zvl_from_accel_series(
+            self,
             freq_range=freq_range,
             weight_type=weight_type,
             time_windows=time_windows,
-            accel_unit=calc_units.acceleration,
-            calc_unit_system=calc_units,
+            calc_unit_system=calc_unit_system,
             output_unit_system=output_unit_system,
         )
-        from .vibration_evaluation import ZVLEval
-
-        return ZVLEval.from_compute_result(result)
 
     def eval_otovl(
         self,
@@ -973,19 +785,13 @@ class AccelSeries(TimeSeries):
     ) -> "OTOVLEval":
         """根据加速度数据计算三分之一倍频程振级。"""
 
-        calc_units = calc_unit_system or get_default_unit_system()
-        result = otovl_from_accel(
-            self.get_value(unit=calc_units.acceleration),
-            self.dt,
+        return eval_otovl_from_accel_series(
+            self,
             freq_range=freq_range,
             time_windows=time_windows,
-            accel_unit=calc_units.acceleration,
-            calc_unit_system=calc_units,
+            calc_unit_system=calc_unit_system,
             output_unit_system=output_unit_system,
         )
-        from .vibration_evaluation import OTOVLEval
-
-        return OTOVLEval.from_compute_result(result)
 
     def eval_fpvdv(
         self,
@@ -997,19 +803,13 @@ class AccelSeries(TimeSeries):
     ) -> "FPVDVEval":
         """根据加速度数据计算 FPVDV。"""
 
-        calc_units = calc_unit_system or get_default_unit_system()
-        result = fpvdv_from_accel(
-            self.get_value(unit=calc_units.acceleration),
-            self.dt,
+        return eval_fpvdv_from_accel_series(
+            self,
             freq_range=freq_range,
             nsup=nsup,
-            accel_unit=calc_units.acceleration,
-            calc_unit_system=calc_units,
+            calc_unit_system=calc_unit_system,
             output_unit_system=output_unit_system,
         )
-        from .vibration_evaluation import FPVDVEval
-
-        return FPVDVEval.from_compute_result(result)
 
     def eval_fdmvl(
         self,
@@ -1020,18 +820,12 @@ class AccelSeries(TimeSeries):
     ) -> "FDMVLEval":
         """根据加速度数据计算 FDMVL。"""
 
-        calc_units = calc_unit_system or get_default_unit_system()
-        result = fdmvl_from_accel(
-            self.get_value(unit=calc_units.acceleration),
-            self.dt,
+        return eval_fdmvl_from_accel_series(
+            self,
             freq_range=freq_range,
-            accel_unit=calc_units.acceleration,
-            calc_unit_system=calc_units,
+            calc_unit_system=calc_unit_system,
             output_unit_system=output_unit_system,
         )
-        from .vibration_evaluation import FDMVLEval
-
-        return FDMVLEval.from_compute_result(result)
 
 
 class VelSeries(TimeSeries):
@@ -1059,23 +853,13 @@ class VelSeries(TimeSeries):
     ) -> "DispSeries":
         """按固定基准单位规则将速度积分为位移。"""
 
-        calc_units = calc_unit_system or get_default_unit_system()
-        out_units = output_unit_system or get_default_unit_system()
-        disp_array = Integration(
-            y=self.get_value(unit=calc_units.velocity),
-            dx=self.dt,
-        ).integ1d(method=method, **options)
-        target_value_unit = output_unit or out_units.displacement
-        units = {"time": out_units.time, "value": target_value_unit}
-        return DispSeries._from_base_data(
-            convert_array(
-                disp_array,
-                from_unit=calc_units.displacement,
-                to_unit=target_value_unit,
-            ),
-            time=self.get_axis(unit=out_units.time),
-            units=units,
-            unit_system=out_units,
+        return integrate_vel_series_to_disp(
+            self,
+            method=method,
+            calc_unit_system=calc_unit_system,
+            output_unit=output_unit,
+            output_unit_system=output_unit_system,
+            **options,
         )
 
     def calc_accel(
@@ -1089,23 +873,13 @@ class VelSeries(TimeSeries):
     ) -> AccelSeries:
         """按固定基准单位规则将速度微分为加速度。"""
 
-        calc_units = calc_unit_system or get_default_unit_system()
-        out_units = output_unit_system or get_default_unit_system()
-        accel_array = Differentiation(
-            y=self.get_value(unit=calc_units.velocity),
-            dx=self.dt,
-        ).diff1d(method=method, **options)
-        target_value_unit = output_unit or out_units.acceleration
-        units = {"time": out_units.time, "value": target_value_unit}
-        return AccelSeries._from_base_data(
-            convert_array(
-                accel_array,
-                from_unit=calc_units.acceleration,
-                to_unit=target_value_unit,
-            ),
-            time=self.get_axis(unit=out_units.time),
-            units=units,
-            unit_system=out_units,
+        return differentiate_vel_series_to_accel(
+            self,
+            method=method,
+            calc_unit_system=calc_unit_system,
+            output_unit=output_unit,
+            output_unit_system=output_unit_system,
+            **options,
         )
 
     def pgv(self) -> float:
@@ -1154,23 +928,13 @@ class DispSeries(TimeSeries):
     ) -> VelSeries:
         """按固定基准单位规则将位移微分为速度。"""
 
-        calc_units = calc_unit_system or get_default_unit_system()
-        out_units = output_unit_system or get_default_unit_system()
-        vel_array = Differentiation(
-            y=self.get_value(unit=calc_units.displacement),
-            dx=self.dt,
-        ).diff1d(method=method, **options)
-        target_value_unit = output_unit or out_units.velocity
-        units = {"time": out_units.time, "value": target_value_unit}
-        return VelSeries._from_base_data(
-            convert_array(
-                vel_array,
-                from_unit=calc_units.velocity,
-                to_unit=target_value_unit,
-            ),
-            time=self.get_axis(unit=out_units.time),
-            units=units,
-            unit_system=out_units,
+        return differentiate_disp_series_to_vel(
+            self,
+            method=method,
+            calc_unit_system=calc_unit_system,
+            output_unit=output_unit,
+            output_unit_system=output_unit_system,
+            **options,
         )
 
     def calc_accel(

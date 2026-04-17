@@ -6,11 +6,12 @@ import json
 import shutil
 from typing import TYPE_CHECKING, Any
 
+import h5py
 import numpy as np
 import pandas as pd
 
-from .sample_storage_strategy_base import _StorageStrategy, _StorageWriteSession
-from .sample_storage_sqlite_h5 import _SetSqliteH5Strategy
+from .sample_storage_strategy_base import _StorageReadSession, _StorageStrategy, _StorageWriteSession
+from .sample_storage_sqlite_h5_strategy import _SetSqliteH5Strategy
 from .storage_constants import (
     DATA_NPZ_FILENAME,
     H5_ATTR_ALIAS,
@@ -349,6 +350,9 @@ class _SetH5Strategy(_SampleH5Strategy):
     def write_session(self) -> _StorageWriteSession:
         return _SetH5WriteSession(self)
 
+    def read_session(self) -> _StorageReadSession:
+        return _SetH5ReadSession(self)
+
     def sample_presence(
         self,
         uid: str,
@@ -639,6 +643,105 @@ class _SetH5WriteSession(_StorageWriteSession):
         grp.attrs[H5_ATTR_METADATA_JSON] = json.dumps(sample.metadata.model_dump(), ensure_ascii=False, default=str)
         for category, data in data_dict.items():
             self._strategy._write_group(grp, category, data)
+
+
+class _SetH5ReadSession(_StorageReadSession):
+    def __init__(self, strategy: _SetH5Strategy) -> None:
+        super().__init__(strategy)
+        self._strategy = strategy
+        self._file: Any | None = None
+
+    def __enter__(self) -> "_SetH5ReadSession":
+        import h5py
+
+        self._file = h5py.File(self._strategy.ctx.set_h5_path(), "r")
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+        del exc_type, exc, tb
+        if self._file is not None:
+            self._file.close()
+            self._file = None
+
+    def load_sample(
+        self,
+        uid: str,
+        name: str,
+        categories: list[str] | None = None,
+    ) -> SampleBaseModel:
+        del name
+        if self._file is None:
+            raise RuntimeError("SET_H5 读取会话尚未打开")
+        grp = self._file[uid]
+        if not isinstance(grp, h5py.Group):
+            raise TypeError(f"set_h5 中 UID 节点不是 Group: {uid}")
+        metadata_json = grp.attrs.get(H5_ATTR_METADATA_JSON, "{}")
+        if isinstance(metadata_json, bytes):
+            metadata_json = metadata_json.decode("utf-8")
+        sample = self._strategy.ctx.sampleset.sample_type(
+            metadata=self._strategy.ctx.metadata_from_dict(json.loads(metadata_json))
+        )
+        alias = grp.attrs.get(H5_ATTR_ALIAS, uid)
+        sample._restore_alias_internal(alias.decode("utf-8") if isinstance(alias, bytes) else str(alias))
+        selected_categories = set(self._strategy.resolve_load_categories(categories))
+        for category in grp.keys():
+            if category not in selected_categories:
+                continue
+            cat_grp = grp[category]
+            if not isinstance(cat_grp, h5py.Group):
+                continue
+            sample.update(
+                **{
+                    category: self._strategy.ctx.deserialize_container(
+                        category, self._strategy._read_group_payload(cat_grp)
+                    )
+                }
+            )
+        return sample
+
+    def load_sample_fields(
+        self,
+        uid: str,
+        name: str,
+        categories: list[str],
+    ) -> dict[str, object]:
+        del name
+        loaded: dict[str, object] = {}
+        if self._file is None:
+            raise RuntimeError("SET_H5 读取会话尚未打开")
+        if not categories:
+            return loaded
+        grp = self._file[uid]
+        if not isinstance(grp, h5py.Group):
+            raise TypeError(f"set_h5 中 UID 节点不是 Group: {uid}")
+        for category in self._strategy.resolve_load_categories(categories):
+            if category not in grp:
+                continue
+            cat_grp = grp[category]
+            if not isinstance(cat_grp, h5py.Group):
+                continue
+            loaded[category] = self._strategy.ctx.deserialize_container(
+                category, self._strategy._read_group_payload(cat_grp)
+            )
+        return loaded
+
+    def sample_presence(
+        self,
+        uid: str,
+        name: str,
+    ) -> dict[str, bool]:
+        del name
+        if self._file is None:
+            raise RuntimeError("SET_H5 读取会话尚未打开")
+        if uid not in self._file:
+            return {}
+        grp = self._file[uid]
+        if not isinstance(grp, h5py.Group):
+            return {}
+        return {
+            category: category in grp and isinstance(grp[category], h5py.Group)
+            for category in self._strategy.ctx.category_fields()
+        }
 
 
 __all__ = [
