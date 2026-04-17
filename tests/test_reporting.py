@@ -219,6 +219,30 @@ def test_export_report_package_generates_complete_project_bundle(tmp_path: Path)
     assert any(item["theme"] == "plot_theme_one_third_octave.toml" for item in manifest["figures"])
 
 
+def test_export_report_package_skips_peak_tables_when_no_peaks_exist(tmp_path: Path) -> None:
+    axis = np.linspace(0.0, 20.47, 2048, dtype=float)
+    sample = _make_sample(
+        case="case-flat",
+        point="P1",
+        record="R1",
+        values=np.full_like(axis, 0.01),
+    )
+    sample_set = VibrationTestSampleSet({sample.uid: sample})
+    package_dir = tmp_path / "report_package_no_peaks"
+
+    returned_dir = dt_reporting.export_report_package(
+        sample_set,
+        package_dir,
+        peak_sources=["accel"],
+        include_plots=False,
+    )
+
+    assert returned_dir == package_dir
+    assert not (package_dir / "tables" / "peaks_accel.csv").exists()
+    workbook = pd.read_excel(package_dir / "report.xlsx", sheet_name=None)
+    assert "peaks_accel" not in workbook
+
+
 def test_export_scalar_frame_uses_sqlite_h5_summary_fast_path(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

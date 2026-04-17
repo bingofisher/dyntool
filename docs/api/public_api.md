@@ -6,7 +6,7 @@
 
 ## 正式入口
 
-- 顶层对象 API：`AccelSeries`、`Metadata`、`VibrationTestMetadata`、`DefaultSample`、`DefaultSampleSet`、`SampleSetBase`
+- 顶层对象 API：`AccelSeries`、`Metadata`、`VibrationTestMetadata`、`DefaultSample`、`DefaultSampleSet`
 - 结果对象：`OperationResult`、`BatchOperationReport`
 - 模块 API：`dyntool.storage`、`dyntool.plotting`、`dyntool.logging`、`dyntool.reporting`
 - 支持模块：`dyntool.config`、`dyntool.resources`
@@ -122,7 +122,7 @@ print(result.ax is not None)
 
 稳定性：`Public API`
 
-`dyntool.reporting` 负责样本集统计导出和报告包导出。`SampleSetBase` 只保留对象级稳定入口，具体导出实现通过薄委托进入该模块。
+`dyntool.reporting` 负责样本集统计导出和报告包导出。样本集对象的对象级稳定入口由 `SampleSetBase` 这一实现基类承载，具体导出实现通过薄委托进入该模块。
 
 第一版正式函数包括：
 
@@ -132,7 +132,7 @@ print(result.ax is not None)
 - `export_compare_report(...)`
 - `export_report_package(...)`
 
-推荐入口仍然是 `SampleSetBase` 对象方法：
+推荐入口仍然是正式样本集对象方法：
 
 - `sample_set.export_scalar_frame(...)`
 - `sample_set.export_series_frame(...)`
@@ -150,4 +150,3 @@ print(result.ax is not None)
 稳定性：`Public API`
 
 `dyntool.resources` 负责仓库内置资源读取。
-

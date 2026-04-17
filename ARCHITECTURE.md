@@ -39,6 +39,7 @@ AdvDynTool 以数值结果正确、单位一致和结果可追溯为第一优先
 - `dyntool.storage`
 - `dyntool.plotting`
 - `dyntool.logging`
+- `dyntool.reporting`
 
 ### 支持模块层
 - `dyntool.config`
@@ -59,6 +60,7 @@ AdvDynTool 以数值结果正确、单位一致和结果可追溯为第一优先
 - `src/dyntool/application/runtime_binding.py`
 - `src/dyntool/domain/runtime/*`
 - `src/dyntool/storage/runtime.py`
+- `src/dyntool/reporting/__init__.py`
 
 存储相关的当前实现约束补充如下：
 
@@ -69,7 +71,7 @@ AdvDynTool 以数值结果正确、单位一致和结果可追溯为第一优先
 - 样本集批量读写与 `convert_storage()` 的默认进度显示，按当前 logging 是否输出到控制台判定；实现兼容 `stdlib` 与 `loguru`
 - `connect_storage()` / `dyntool.storage.connect_sample_set()` 保持原参数形状，但参数优先级、详细连接日志和正式枚举约束已收紧
 
-这条链路负责把对象级 `save/load/connect_storage` 委托到正式存储实现，不再维护第二套平行门面。
+这条链路负责把对象级 `save/load/connect_storage` 以及统计导出、报告包导出委托到正式实现，不再维护第二套平行门面。
 
 样本 payload 恢复当前接受的正式类别名包括 `DefaultSample`、`DefaultSampleSet`、
 `VibrationTestSample`、`VibrationTestSampleSet`；旧 payload 中的历史兼容类别名

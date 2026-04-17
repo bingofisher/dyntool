@@ -17,6 +17,6 @@
 - `dyntool.config`
 - `dyntool.resources`
 
-其中 `SampleSetBase` 仍属于正式顶层对象，并通过薄委托把统计导出和报告包导出交给 `dyntool.reporting`。
+正式样本集对象通过 `SampleSetBase` 这一实现基类上的薄委托，把统计导出和报告包导出交给 `dyntool.reporting`。
 
 内部模块如 `application.runtime_binding`、`domain.runtime` 和 schema/helper 路径归入 `Internal API`。

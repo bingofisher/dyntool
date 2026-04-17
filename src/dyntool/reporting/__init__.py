@@ -198,7 +198,10 @@ def export_report_package(
 
     peaks_frames: dict[str, pd.DataFrame] = {}
     for source in requested_peak_sources:
-        frame = sample_set.peaks_frame(source=source, strict=False)
+        try:
+            frame = sample_set.peaks_frame(source=source, strict=False)
+        except ValueError:
+            continue
         if frame.empty:
             continue
         sheet_name = f"peaks_{source}"
