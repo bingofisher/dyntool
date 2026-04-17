@@ -284,6 +284,13 @@ uv run python -B scripts/benchmark_set_sqlite_h5_io.py
 - `load_all(..., load_mode=EAGER, categories=["accel"])`
 - `save_all()`
 
+这组基线用于证明两个结论：
+
+- `connect -> save_all -> load_all -> summary_frame` 的阶段链仍然存在
+- `scalar_frame()` / `compare_with()` 依赖的摘要路径不会回退到 payload 直读
+
+当前 proof 层只要求阶段命中和功能一致，不要求固定毫秒阈值；性能优劣应由基准脚本输出和真实仓库 A/B 结果判断。
+
 脚本会输出：
 
 - 基准样本规模

@@ -69,10 +69,16 @@ title = "绘图并导出"
 primary_task = "用正式 plotting 模块绘制原始数据和对象结果"
 topic = "docs/usage/05_plotting_logging_resources.md"
 featured = true
-covers = ["plot_series", "plot_model", "plot_sample_set"]
-snippet_ids = ["plotting_minimal"]
-inputs = ["plot_dataset"]
-outputs = ["plot_png"]
+covers = [
+  "plot_theme_from_file",
+  "plot_dataset_axis_value",
+  "plot_dataset_from_model",
+  "box_plotter_stats",
+  "plot_result_ax",
+]
+snippet_ids = []
+inputs = ["accel_model", "plot_theme_report"]
+outputs = ["raw_time_png", "model_time_png", "box_zvl_png"]
 script = "examples/10_scenarios/05_plot_and_export/main.py"
 readme = "examples/10_scenarios/05_plot_and_export/README.md"
 doc = "docs/usage/05_plotting_logging_resources.md"
@@ -261,10 +267,16 @@ title = "绘图数据集与 plotter"
 primary_task = "演示绘图数据集与 plotter-first 用法"
 topic = "docs/usage/05_plotting_logging_resources.md"
 featured = false
-covers = ["plot_series", "plot_curves", "plot_model"]
-snippet_ids = ["plotting_minimal"]
-inputs = ["plot_dataset"]
-outputs = ["plot_png"]
+covers = [
+  "plot_theme_from_file",
+  "plot_dataset_axis_value",
+  "plot_dataset_from_model",
+  "frame_and_box_plotters",
+  "plot_result_ax",
+]
+snippet_ids = []
+inputs = ["accel_model", "plot_theme_report"]
+outputs = ["raw_time_png", "model_time_png", "box_zvl_png"]
 script = "examples/90_recipes/plot_dataset_and_plotters/main.py"
 readme = "examples/90_recipes/plot_dataset_and_plotters/README.md"
 doc = "docs/usage/05_plotting_logging_resources.md"
@@ -317,3 +329,34 @@ script = "examples/90_recipes/structured_payload_roundtrip/main.py"
 readme = "examples/90_recipes/structured_payload_roundtrip/README.md"
 doc = "docs/developer/custom_extension.md"
 test = "tests/test_examples_workflows.py::test_recipe_structured_payload_roundtrip"
+[[example]]
+id = "statistics_export"
+kind = "recipe"
+title = "统计导出"
+primary_task = "通过 SampleSetBase 薄委托导出统计结果"
+topic = "docs/workflows/07_statistics_export.md"
+featured = false
+covers = ["sample_set_statistics", "reporting_delegate", "export_table"]
+snippet_ids = []
+inputs = ["sample_set"]
+outputs = ["statistics_table"]
+script = "examples/90_recipes/statistics_export/main.py"
+readme = "examples/90_recipes/statistics_export/README.md"
+doc = "docs/workflows/07_statistics_export.md"
+test = "tests/test_examples_workflows.py::test_recipe_statistics_export"
+
+[[example]]
+id = "report_package_export"
+kind = "recipe"
+title = "报告包导出"
+primary_task = "通过 SampleSetBase 薄委托导出报告包"
+topic = "docs/workflows/08_report_package_export.md"
+featured = false
+covers = ["report_package", "reporting_delegate", "export_bundle"]
+snippet_ids = []
+inputs = ["sample_set"]
+outputs = ["report_package_dir"]
+script = "examples/90_recipes/report_package_export/main.py"
+readme = "examples/90_recipes/report_package_export/README.md"
+doc = "docs/workflows/08_report_package_export.md"
+test = "tests/test_examples_workflows.py::test_recipe_report_package_export"

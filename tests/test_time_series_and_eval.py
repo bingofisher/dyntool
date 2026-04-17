@@ -4,6 +4,7 @@ from pathlib import Path
 import tempfile
 
 import numpy as np
+import pytest
 
 from dyntool.compute.features import (
     absmax_feature,
@@ -22,6 +23,8 @@ from dyntool.compute.pipelines import freq_eval_template
 from dyntool.compute.signals import fft_with_phase
 from dyntool.domain.constants import resolve_unit_system
 from dyntool.domain.metadata import Metadata
+from dyntool.domain.models import _time_series_transforms as time_series_transforms_module
+from dyntool.domain.models import time_series as time_series_module
 from dyntool.domain.models import AccelSeries, DispSeries, RespSpec, SpecAccelSeries, ZVLEval
 from dyntool.domain.samples import DefaultSample, DefaultSampleSet
 from dyntool import UnitSystem
@@ -374,6 +377,81 @@ class TestTimeSeries:
         assert hasattr(result, "zvl")
         assert hasattr(result, "aw")
         assert result.zvl is not None or result.aw is not None
+
+    def test_time_series_io_methods_delegate_to_internal_helpers(self, monkeypatch) -> None:
+        accel = AccelSeries.from_data([0.0, 1.0, 0.0], dt=0.1)
+
+        def _to_pandas(*args: object, **kwargs: object) -> object:
+            del args, kwargs
+            raise RuntimeError("delegated-to-pandas")
+
+        def _to_dict(*args: object, **kwargs: object) -> object:
+            del args, kwargs
+            raise RuntimeError("delegated-to-dict")
+
+        monkeypatch.setattr(time_series_module, "time_series_to_pandas", _to_pandas, raising=False)
+        monkeypatch.setattr(time_series_module, "time_series_to_dict", _to_dict, raising=False)
+
+        with pytest.raises(RuntimeError, match="delegated-to-pandas"):
+            accel.to_pandas()
+        with pytest.raises(RuntimeError, match="delegated-to-dict"):
+            accel.to_dict()
+
+    def test_time_series_compute_methods_delegate_to_internal_helpers(self, monkeypatch) -> None:
+        accel = AccelSeries.from_data(np.random.randn(32) * 0.01, dt=0.01)
+
+        def _fft(*args: object, **kwargs: object) -> object:
+            del args, kwargs
+            raise RuntimeError("delegated-fft")
+
+        def _zvl(*args: object, **kwargs: object) -> object:
+            del args, kwargs
+            raise RuntimeError("delegated-zvl")
+
+        monkeypatch.setattr(time_series_module, "calc_fft_with_phase_time_series", _fft, raising=False)
+        monkeypatch.setattr(time_series_module, "eval_zvl_from_accel_series", _zvl, raising=False)
+
+        with pytest.raises(RuntimeError, match="delegated-fft"):
+            accel.calc_fft_with_phase()
+        with pytest.raises(RuntimeError, match="delegated-zvl"):
+            accel.eval_zvl()
+
+    def test_time_series_motion_methods_delegate_to_internal_helpers(self, monkeypatch) -> None:
+        accel = AccelSeries.from_data(np.random.randn(32) * 0.01, dt=0.01)
+        disp = DispSeries.from_data(np.random.randn(32) * 0.01, dt=0.01)
+
+        def _accel_to_vel(*args: object, **kwargs: object) -> object:
+            del args, kwargs
+            raise RuntimeError("delegated-accel-to-vel")
+
+        def _disp_to_vel(*args: object, **kwargs: object) -> object:
+            del args, kwargs
+            raise RuntimeError("delegated-disp-to-vel")
+
+        monkeypatch.setattr(time_series_module, "integrate_accel_series_to_vel", _accel_to_vel, raising=False)
+        monkeypatch.setattr(time_series_module, "differentiate_disp_series_to_vel", _disp_to_vel, raising=False)
+
+        with pytest.raises(RuntimeError, match="delegated-accel-to-vel"):
+            accel.calc_vel()
+        with pytest.raises(RuntimeError, match="delegated-disp-to-vel"):
+            disp.calc_vel()
+
+    def test_time_series_transforms_module_keeps_only_transform_helpers(self) -> None:
+        """`_time_series_transforms` 不再暴露重复 helper。"""
+
+        duplicate_names = {
+            "calc_fft_with_phase_time_series",
+            "differentiate_disp_series_to_vel",
+            "eval_zvl_from_accel_series",
+            "integrate_accel_series_to_vel",
+            "time_series_to_dict",
+            "time_series_to_pandas",
+        }
+
+        exported = set(getattr(time_series_transforms_module, "__all__", ()))
+        assert duplicate_names.isdisjoint(exported)
+        for name in duplicate_names:
+            assert not hasattr(time_series_transforms_module, name)
 
     def test_to_array_places_axis_before_single_value_column(self) -> None:
         """`to_array()` 应返回轴列在前、值列在后的二维数组。"""

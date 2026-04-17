@@ -50,6 +50,7 @@ top_level_exports_allowed = [
   "storage",
   "config",
   "resources",
+  "reporting",
   "PlotKind",
   "plotting",
 ]
@@ -101,6 +102,49 @@ storage_module_exports_allowed = [
   "save_model",
   "save_sample",
   "save_sample_set",
+]
+
+plotting_module_exports_allowed = [
+  "BoxPlotter",
+  "FramePlotter",
+  "OneThirdOctavePlotter",
+  "PlotCategory",
+  "PlotDataset",
+  "PlotKind",
+  "PlotResult",
+  "PlotStatMetric",
+  "PlotTheme",
+  "StoryValuePlotter",
+]
+
+plotting_plotters_module_exports_allowed = [
+  "BoxPlotter",
+  "FramePlotter",
+  "OneThirdOctavePlotter",
+  "StoryValuePlotter",
+]
+
+reporting_module_exports_allowed = [
+  "export_compare_report",
+  "export_peaks_frame",
+  "export_report_package",
+  "export_scalar_frame",
+  "export_series_frame",
+]
+
+# v1.2.0 已删除的 plotting compat / legacy 顶层导出
+plotting_module_exports_removed = [
+  "AxisFrame",
+  "AxisHelper",
+  "AxisNumberFormatter",
+  "DiscreteAxisFormatter",
+  "GridFrame",
+  "LegendHelper",
+  "OctaveBandSpec",
+  "PlotterBase",
+  "PlotterKind",
+  "ZhPlotConfig",
+  "configure_zh",
 ]
 
 forbidden_tokens = [

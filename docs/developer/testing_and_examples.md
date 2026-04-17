@@ -10,3 +10,5 @@
 - 正式文档页必须给出对应示例与测试
 - `docs/examples_manifest.toml` 是示例映射的事实源
 - smoke 测试覆盖关键使用路径
+- `SET_H5` / `SET_SQLITE_H5` 的证明层回归要优先覆盖 `connect -> save_all -> load_all -> summary_frame`，以及 `scalar_frame()` / `compare_with()` 的摘要快路径
+- 性能证明只验证阶段存在、快路径命中和功能一致，不使用脆弱的固定毫秒断言

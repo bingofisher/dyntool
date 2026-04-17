@@ -8,6 +8,8 @@ import dyntool
 import dyntool.config as dt_config
 import dyntool.logging as dt_logging
 import dyntool.plotting as dt_plotting
+import dyntool.plotting.plotters as dt_plotters_module
+import dyntool.reporting as dt_reporting
 import dyntool.resources as dt_resource
 import dyntool.storage as dt_storage
 from dyntool import (
@@ -55,6 +57,7 @@ from dyntool import (
     config,
     logging,
     plotting,
+    reporting,
     resources,
     storage,
 )
@@ -124,6 +127,7 @@ def test_top_level_exports_match_current_public_surface() -> None:
         "storage",
         "config",
         "resources",
+        "reporting",
         "PlotKind",
         "plotting",
     }
@@ -209,7 +213,34 @@ def test_formal_modules_are_available() -> None:
     assert storage is dt_storage
     assert config is dt_config
     assert resources is dt_resource
+    assert reporting is dt_reporting
     assert plotting is dt_plotting
+
+
+def test_reporting_module_exports_formal_table_and_package_helpers(tmp_path: Path) -> None:
+    sample = DefaultSample.from_accel_data(
+        [0.0, 0.1, -0.02, 0.03],
+        dt=0.01,
+        sample_domain=SampleDomain.VIBRATION_TEST,
+        metadata_cls=VibrationTestMetadata,
+        **_make_vibration_kwargs(),
+    )
+    sample_set = DefaultSampleSet.from_samples([sample], sample_domain=SampleDomain.VIBRATION_TEST)
+
+    scalar_path = dt_reporting.export_scalar_frame(
+        sample_set,
+        tmp_path / "scalar_frame.xlsx",
+        features=["pga", "rms"],
+    )
+    report_dir = dt_reporting.export_report_package(
+        sample_set,
+        tmp_path / "report_package",
+        include_plots=False,
+    )
+
+    assert scalar_path.exists()
+    assert report_dir.exists()
+    assert (report_dir / "report.xlsx").exists()
 
 
 def test_storage_module_exports_connect_options_contract() -> None:
@@ -286,3 +317,57 @@ def test_config_module_keeps_generic_loader() -> None:
 def test_plotting_module_no_longer_exposes_backend_tokens() -> None:
     assert not hasattr(dt_plotting, "PlotBackend")
     assert "PlotBackend" not in getattr(dyntool, "__all__", ())
+
+
+def test_plotting_module_exports_match_stage_c_public_surface() -> None:
+    assert set(dt_plotting.__all__) == {
+        "BoxPlotter",
+        "FramePlotter",
+        "OneThirdOctavePlotter",
+        "PlotCategory",
+        "PlotDataset",
+        "PlotKind",
+        "PlotResult",
+        "PlotStatMetric",
+        "PlotTheme",
+        "StoryValuePlotter",
+    }
+
+
+def test_plotting_public_objects_keep_expected_module_locations() -> None:
+    assert dt_plotting.PlotDataset.__module__ == "dyntool.plotting.dataset"
+    assert dt_plotting.PlotTheme.__module__ == "dyntool.plotting.config"
+    assert dt_plotting.PlotResult.__module__ == "dyntool.plotting.types"
+    assert dt_plotting.FramePlotter.__module__ == "dyntool.plotting.plotters"
+    assert dt_plotting.BoxPlotter.__module__ == "dyntool.plotting.plotters"
+    assert dt_plotting.OneThirdOctavePlotter.__module__ == "dyntool.plotting.plotters"
+    assert dt_plotting.StoryValuePlotter.__module__ == "dyntool.plotting.plotters"
+
+
+def test_plotting_module_no_longer_exports_internal_helpers_and_compat_entries() -> None:
+    # v1.2.0 起，这些 plotting compat / legacy 顶层入口应保持删除状态。
+    for name in (
+        "AxisFrame",
+        "AxisHelper",
+        "AxisNumberFormatter",
+        "DiscreteAxisFormatter",
+        "GridFrame",
+        "LegendHelper",
+        "OctaveBandSpec",
+        "PlotterBase",
+        "PlotterKind",
+        "ZhPlotConfig",
+        "configure_zh",
+    ):
+        assert not hasattr(dt_plotting, name)
+
+
+def test_plotters_submodule_only_exposes_formal_concrete_plotters() -> None:
+    assert set(dt_plotters_module.__all__) == {
+        "BoxPlotter",
+        "FramePlotter",
+        "OneThirdOctavePlotter",
+        "StoryValuePlotter",
+    }
+    assert not hasattr(dt_plotters_module, "PlotterBase")
+    assert not hasattr(dt_plotters_module, "OctaveBandSpec")

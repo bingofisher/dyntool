@@ -263,6 +263,72 @@ class SampleSetStorage:
         )
         return self
 
+    def _connect_resolved(
+        self,
+        *,
+        base_dir: Path,
+        mode: StorageMode,
+        storage_scheme: StorageScheme,
+        data_options: dict[str, Any] | None,
+        name_resolver: NameResolver | None,
+        set_filename: str | None,
+    ) -> Self:
+        actual_set_filename = set_filename or DEFAULT_SET_H5_FILENAME
+        _log_info(
+            "connect sample-set storage request: path=%s, mode=%s, storage_scheme=%s, set_filename=%s, "
+            "name_resolver=%s, data_options=%s",
+            base_dir,
+            mode.value,
+            _scheme_label(storage_scheme),
+            actual_set_filename,
+            "enabled" if name_resolver is not None else "disabled",
+            _summarize_data_options(data_options),
+        )
+        if mode is StorageMode.RECREATE:
+            if base_dir.exists():
+                if base_dir.is_dir():
+                    shutil.rmtree(base_dir)
+                else:
+                    base_dir.unlink()
+            base_dir.mkdir(parents=True, exist_ok=True)
+        elif mode is StorageMode.CREATE:
+            base_dir.mkdir(parents=True, exist_ok=True)
+        elif mode is StorageMode.OPEN:
+            if not base_dir.exists():
+                raise FileNotFoundError(f"存储目录不存在: {base_dir}")
+            if not base_dir.is_dir():
+                raise NotADirectoryError(f"目标路径不是目录: {base_dir}")
+        else:
+            raise ValueError("mode 必须是 StorageMode.OPEN、StorageMode.CREATE 或 StorageMode.RECREATE。")
+
+        self.base_dir = base_dir
+        self._connected = True
+        self.storage_scheme = storage_scheme
+        self.name_resolver = name_resolver
+        self.set_filename = actual_set_filename
+        self._ctx = StorageContext(
+            self.sampleset,
+            base_dir=base_dir,
+            storage_scheme=storage_scheme,
+            data_options=data_options,
+            name_resolver=name_resolver,
+            set_filename=actual_set_filename,
+            data_storage=self.data_storage,
+        )
+        self.data_options = self._ctx.data_options.copy()
+        self._sample_storage = SampleStorage(self._ctx)
+        _log_info(
+            "connect sample-set storage ready: path=%s, mode=%s, storage_scheme=%s, set_filename=%s, "
+            "name_resolver=%s, data_options=%s",
+            base_dir,
+            mode.value,
+            _scheme_label(storage_scheme),
+            actual_set_filename,
+            "enabled" if name_resolver is not None else "disabled",
+            _summarize_data_options(self.data_options),
+        )
+        return self
+
     @staticmethod
     def ensure_connected(method: Callable[..., Any]) -> Callable[..., Any]:
         """为要求已连接状态的方法添加连接校验。"""
@@ -279,6 +345,18 @@ class SampleSetStorage:
         if self._sample_storage is None:
             raise RuntimeError("样本集存储尚未连接，请先调用 connect()")
         return self._sample_storage
+
+    @staticmethod
+    def _load_sample_from_entry(
+        sample_storage: SampleStorage,
+        uid: str,
+        name: str,
+        categories: list[str] | None,
+    ) -> SampleBaseModel:
+        with sample_storage.read_session() as session:
+            sample = session.load_sample(uid, name, categories)
+            sample._set_storage_presence_internal(session.sample_presence(uid, name))
+        return sample
 
     @ensure_connected
     def metadata_frame(self, *, uids: list[str] | None = None) -> pd.DataFrame:
@@ -362,7 +440,9 @@ class SampleSetStorage:
             raise ValueError("workers 必须大于等于 1")
         if chunk_size < 1:
             raise ValueError("chunk_size 必须大于等于 1")
+        sample_storage = self._require_sample_storage()
         selected_items = self._selected_items(filter)
+        resolved_categories = sample_storage.ctx.resolve_storage_categories(categories)
         total = len(selected_items)
         _log_info(
             "start saving samples: total=%s, workers=%s, chunk_size=%s, strict=%s, storage_scheme=%s, categories=%s",
@@ -388,10 +468,10 @@ class SampleSetStorage:
                 StorageScheme.SET_SQLITE_H5,
             }
             if use_write_session:
-                with self._require_sample_storage().write_session() as session:
+                with sample_storage.write_session() as session:
                     for completed_count, (uid, sample) in enumerate(selected_items, start=1):
                         try:
-                            session.save_sample(sample, categories)
+                            session.save_sample(sample, resolved_categories)
                             ok += 1
                         except Exception as error:  # noqa: BLE001
                             logger.error("保存样本失败 (UID=%s): %s", uid, error)
@@ -404,13 +484,18 @@ class SampleSetStorage:
                 completed_count = 0
                 in_flight_limit = max(workers, chunk_size)
                 tasks_iter = iter(selected_items)
+
+                def save_selected_sample(sample: SampleBaseModel) -> None:
+                    # 保持批量入口与单样本入口的行为契约一致，同时复用已解析好的分类列表。
+                    self.save_sample(sample, resolved_categories)
+
                 with ThreadPoolExecutor(max_workers=workers) as executor:
                     pending: dict[Future[Any], str] = {}
                     submit_until_limit(
                         executor,
                         pending,
                         tasks_iter,
-                        lambda sample: self.save_sample(sample, categories),
+                        save_selected_sample,
                         limit=in_flight_limit,
                     )
                     while pending:
@@ -433,7 +518,7 @@ class SampleSetStorage:
                             executor,
                             pending,
                             tasks_iter,
-                            lambda sample: self.save_sample(sample, categories),
+                            save_selected_sample,
                             limit=in_flight_limit,
                         )
         finally:
@@ -476,7 +561,8 @@ class SampleSetStorage:
     ) -> pd.DataFrame:
         """直接从底层摘要层构建标量表。"""
 
-        return self._require_sample_storage().summary_frame(
+        strategy = self._require_sample_storage().strategy
+        return strategy.summary_frame(
             uids=uids,
             metadata_fields=metadata_fields,
             data_vars=data_vars,
@@ -525,7 +611,9 @@ class SampleSetStorage:
 
         sample_storage = self._require_sample_storage()
         index = sample_storage.index()
-        total = len(index)
+        index_items = tuple(index.items())
+        resolved_categories = sample_storage.ctx.resolve_storage_categories(categories)
+        total = len(index_items)
         _log_info(
             "start loading samples: total=%s, workers=%s, chunk_size=%s, strict=%s, storage_scheme=%s, categories=%s",
             total,
@@ -581,11 +669,13 @@ class SampleSetStorage:
             ok += 1
 
         try:
-            if self.storage_scheme is StorageScheme.SET_SQLITE_H5:
+            if self.storage_scheme in {StorageScheme.SET_SQLITE_H5, StorageScheme.SET_H5}:
                 with sample_storage.read_session() as session:
-                    for completed_count, uid in enumerate(index.keys(), start=1):
+                    for completed_count, (uid, name) in enumerate(index_items, start=1):
                         try:
-                            accept_loaded_sample(session.load_sample(uid, index[uid], categories))
+                            sample = session.load_sample(uid, name, resolved_categories)
+                            sample._set_storage_presence_internal(session.sample_presence(uid, name))
+                            accept_loaded_sample(sample)
                         except RecoverableIOError:
                             raise
                         except Exception as error:  # noqa: BLE001
@@ -593,26 +683,38 @@ class SampleSetStorage:
                             self._raise_or_collect_load_error(uid, error, strict=strict, errors=errors)
                         progress.advance_to(completed_count)
             elif workers == 1:
-                for completed_count, uid in enumerate(index.keys(), start=1):
-                    try:
-                        accept_loaded_sample(sample_storage.load(uid, categories))
-                    except RecoverableIOError:
-                        raise
-                    except Exception as error:  # noqa: BLE001
-                        fail += 1
-                        self._raise_or_collect_load_error(uid, error, strict=strict, errors=errors)
-                    progress.advance_to(completed_count)
+                with sample_storage.read_session() as session:
+                    for completed_count, (uid, name) in enumerate(index_items, start=1):
+                        try:
+                            sample = session.load_sample(uid, name, resolved_categories)
+                            sample._set_storage_presence_internal(session.sample_presence(uid, name))
+                            accept_loaded_sample(sample)
+                        except RecoverableIOError:
+                            raise
+                        except Exception as error:  # noqa: BLE001
+                            fail += 1
+                            self._raise_or_collect_load_error(uid, error, strict=strict, errors=errors)
+                        progress.advance_to(completed_count)
             else:
                 completed_count = 0
                 in_flight_limit = max(workers, chunk_size)
-                tasks_iter = ((uid, uid) for uid in index.keys())
+                tasks_iter = ((uid, (uid, name)) for uid, name in index_items)
+
+                def load_selected_sample(item: tuple[str, str]) -> SampleBaseModel:
+                    return self._load_sample_from_entry(
+                        sample_storage,
+                        item[0],
+                        item[1],
+                        resolved_categories,
+                    )
+
                 with ThreadPoolExecutor(max_workers=workers) as executor:
                     pending: dict[Future[Any], str] = {}
                     submit_until_limit(
                         executor,
                         pending,
                         tasks_iter,
-                        lambda uid: sample_storage.load(uid, categories),
+                        load_selected_sample,
                         limit=in_flight_limit,
                     )
                     while pending:
@@ -637,7 +739,7 @@ class SampleSetStorage:
                             executor,
                             pending,
                             tasks_iter,
-                            lambda uid: sample_storage.load(uid, categories),
+                            load_selected_sample,
                             limit=in_flight_limit,
                         )
         finally:

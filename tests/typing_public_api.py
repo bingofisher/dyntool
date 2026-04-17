@@ -13,6 +13,11 @@ import dyntool.compute as dt_compute
 import dyntool.domain as dt_domain
 import dyntool.logging as dt_logging
 import dyntool.plotting as dt_plotting
+import dyntool.reporting as dt_reporting
+import dyntool.plotting.config as dt_plotting_config
+import dyntool.plotting.dataset as dt_plotting_dataset
+import dyntool.plotting.plotters as dt_plotters_module
+import dyntool.plotting.types as dt_plotting_types
 import dyntool.resources as dt_resource
 import dyntool.storage as dt_storage
 from matplotlib.artist import Artist
@@ -37,6 +42,7 @@ from dyntool import (
     VibrationTestSample,
     VibrationTestSampleSet,
     ZVLLimit,
+    reporting,
 )
 
 if TYPE_CHECKING:
@@ -142,6 +148,36 @@ if TYPE_CHECKING:
     )
     assert_type(vib_sample_set.series_frame("accel", metadata_fields=["case"]), pd.DataFrame)
     assert_type(vib_sample_set.peaks_frame(source="accel"), pd.DataFrame)
+    assert_type(
+        vib_sample_set.export_scalar_frame(
+            "out/scalar_frame.xlsx",
+            features=["pga", "rms"],
+        ),
+        Path,
+    )
+    assert_type(
+        vib_sample_set.export_series_frame(
+            "out/series_frame.csv",
+            data_var="accel",
+            format="csv",
+        ),
+        Path,
+    )
+    assert_type(
+        vib_sample_set.export_peaks_frame(
+            "out/peaks_frame.xlsx",
+            source="accel",
+        ),
+        Path,
+    )
+    assert_type(
+        vib_sample_set.export_report_package(
+            "out/report_package",
+            features=["pga"],
+            include_plots=False,
+        ),
+        Path,
+    )
     assert_type(dt_compute.metrics.zvl_from_accel([0.0, 0.1, -0.1], 0.01), dict[str, object])
     assert_type(dt_compute.features.rms_feature([0.0, 0.1, -0.1]), dict[str, float])
     assert_type(dt_domain.models.AccelSeries, type[AccelSeries])
@@ -170,6 +206,7 @@ if TYPE_CHECKING:
     assert_type(freqs, object)
     assert_type(freq_index, pd.Index)
 
+    # 新正式主链固定为 PlotDataset -> PlotTheme -> plot_dataset -> PlotResult.ax
     dataset = dt_plotting.PlotDataset.from_axis_value(
         axis=[0.0, 0.1, 0.2],
         value=[0.0, 0.1, -0.05],
@@ -181,16 +218,18 @@ if TYPE_CHECKING:
     assert_type(result, dt_plotting.PlotResult)
     assert_type(result.figure, Figure | None)
     assert_type(result.axes, tuple[Axes, ...])
+    assert_type(result.ax, Axes | None)
     assert_type(result.artists, tuple[Artist, ...])
-    axis_helper = dt_plotting.AxisHelper(ax=Axes(Figure(), [0.0, 0.0, 1.0, 1.0]))
-    assert_type(axis_helper, dt_plotting.AxisHelper)
-    axis_helper.format_axis(
-        side="left",
-        mode="continuous",
-        data=[0.0, 0.1, -0.05],
-        baseline=0.0,
-        num_segments=4,
-    )
+    theme = dt_plotting.PlotTheme.default()
+    assert_type(theme, dt_plotting.PlotTheme)
+    assert_type(dt_plotting.PlotTheme.from_file("config/plot_theme.toml"), dt_plotting.PlotTheme)
+    assert_type(dt_plotting.PlotTheme, type[dt_plotting_config.PlotTheme])
+    assert_type(dt_plotting.PlotDataset, type[dt_plotting_dataset.PlotDataset])
+    assert_type(dt_plotting.PlotResult, type[dt_plotting_types.PlotResult])
+    assert_type(dt_plotting.FramePlotter, type[dt_plotters_module.FramePlotter])
+    assert_type(dt_plotting.BoxPlotter, type[dt_plotters_module.BoxPlotter])
+    assert_type(dt_plotting.OneThirdOctavePlotter, type[dt_plotters_module.OneThirdOctavePlotter])
+    assert_type(dt_plotting.StoryValuePlotter, type[dt_plotters_module.StoryValuePlotter])
 
     box_dataset = dt_plotting.PlotDataset.from_axis_value(
         axis=[0.0, 1.0, 2.0],
@@ -206,5 +245,68 @@ if TYPE_CHECKING:
     )
     assert_type(box_result, dt_plotting.PlotResult)
 
+    octave_dataset = dt_plotting.PlotDataset.from_axis_value(
+        axis=[2.0, 2.5, 3.15, 4.0, 5.0, 6.3, 8.0, 10.0],
+        value=[60.0, 61.0, 62.0, 63.0, 64.0, 65.0, 66.0, 67.0],
+        name="otovl-envelope",
+        category=dt_plotting.PlotCategory.SAMPLE,
+        axis_unit="hertz",
+        value_unit="decibel",
+    )
+    assert_type(dt_plotting.OneThirdOctavePlotter().plot_dataset(octave_dataset), dt_plotting.PlotResult)
+
+    story_dataset = dt_plotting.PlotDataset.from_axis_value(
+        axis=[-1.0, 0.0, 1.0, 2.0],
+        value=[0.001, 0.002, 0.003, 0.004],
+        name="story-response",
+        category=dt_plotting.PlotCategory.SAMPLE,
+        axis_unit="story",
+        value_unit="meter/second**2",
+    )
+    assert_type(dt_plotting.StoryValuePlotter().plot_dataset(story_dataset), dt_plotting.PlotResult)
+
     config_loader = dt_config.load_config("config/demo.toml")
     assert_type(config_loader, dt_config.Config)
+    assert_type(reporting, object)
+    assert_type(
+        dt_reporting.export_scalar_frame(
+            vib_sample_set,
+            "out/report_scalar.xlsx",
+            features=["pga"],
+        ),
+        Path,
+    )
+    assert_type(
+        dt_reporting.export_series_frame(
+            vib_sample_set,
+            "out/report_series.csv",
+            data_var="accel",
+            format="csv",
+        ),
+        Path,
+    )
+    assert_type(
+        dt_reporting.export_peaks_frame(
+            vib_sample_set,
+            "out/report_peaks.xlsx",
+            source="accel",
+        ),
+        Path,
+    )
+    assert_type(
+        dt_reporting.export_compare_report(
+            vib_sample_set,
+            vib_sample_set,
+            "out/report_compare.xlsx",
+            features=["pga"],
+        ),
+        Path,
+    )
+    assert_type(
+        dt_reporting.export_report_package(
+            vib_sample_set,
+            "out/report_package",
+            include_plots=False,
+        ),
+        Path,
+    )

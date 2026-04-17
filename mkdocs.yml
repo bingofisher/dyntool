@@ -89,16 +89,25 @@ nav:
       - 最小闭环: workflows/01_minimal_roundtrip.md
       - 真实文件导入: workflows/02_real_file_import.md
       - 样本集批处理: workflows/04_sample_set_batch.md
+      - 统计导出: workflows/07_statistics_export.md
+      - 报告包导出: workflows/08_report_package_export.md
       - 带日志运行: workflows/05_logged_run.md
       - 资源驱动评价: workflows/06_resource_driven_eval.md
   - 参考与附录:
       - 公开 API: api/public_api.md
       - API 总览: api/index.md
+      - 更新日志索引: reference/changelog.md
       - 示例附录: examples_overview.md
       - 进阶教程: workflows/03_model_analysis.md
       - 内部 API: api/internal_api.md
       - 自动模块参考: reference/index.md
       - 开发者总览: developer/index.md
+      - 版本线与迁移策略: developer/version_lines.md
+      - 工程项目迁移验证: developer/engineering_project_migration_validation.md
+      - 1.2.0 迁移说明: developer/migration_1_2_0.md
+      - 发布检查清单: developer/release_checklist.md
+      - plotting 架构（v1.2.0）: developer/plotting_architecture.md
+      - plotting 执行任务（v1.2.0）: developer/plotting_execution_tasks.md
       - API 设计: developer/api_design.md
       - Sample / Storage 流程: developer/sample_identity_and_storage.md
       - 文档规范: developer/doc_conventions.md

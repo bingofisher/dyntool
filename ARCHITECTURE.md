@@ -6,6 +6,14 @@
 
 AdvDynTool 以数值结果正确、单位一致和结果可追溯为第一优先级。公开面遵循“对象在顶层，动作在模块，实现下沉内部”的原则。
 
+## 当前版本线
+
+- 当前 worktree 是正式 `1.2.0` 版本线。
+- `1.2.0` 版本线承担 breaking 改动、compat 清理与结构收敛。
+- 主目录 `AdvDynTool` 保持稳定/兼容角色，不在该目录上直接推进 breaking 清理。
+- 迁移说明见 [docs/developer/migration_1_2_0.md](docs/developer/migration_1_2_0.md)。
+- 发布检查项见 [docs/developer/release_checklist.md](docs/developer/release_checklist.md)。
+
 ## 实现层结构
 
 - `domain`：对象、单位语义、样本与评价结果
@@ -31,6 +39,7 @@ AdvDynTool 以数值结果正确、单位一致和结果可追溯为第一优先
 - `dyntool.storage`
 - `dyntool.plotting`
 - `dyntool.logging`
+- `dyntool.reporting`
 
 ### 支持模块层
 - `dyntool.config`
@@ -51,6 +60,7 @@ AdvDynTool 以数值结果正确、单位一致和结果可追溯为第一优先
 - `src/dyntool/application/runtime_binding.py`
 - `src/dyntool/domain/runtime/*`
 - `src/dyntool/storage/runtime.py`
+- `src/dyntool/reporting/__init__.py`
 
 存储相关的当前实现约束补充如下：
 
@@ -61,7 +71,7 @@ AdvDynTool 以数值结果正确、单位一致和结果可追溯为第一优先
 - 样本集批量读写与 `convert_storage()` 的默认进度显示，按当前 logging 是否输出到控制台判定；实现兼容 `stdlib` 与 `loguru`
 - `connect_storage()` / `dyntool.storage.connect_sample_set()` 保持原参数形状，但参数优先级、详细连接日志和正式枚举约束已收紧
 
-这条链路负责把对象级 `save/load/connect_storage` 委托到正式存储实现，不再维护第二套平行门面。
+这条链路负责把对象级 `save/load/connect_storage` 以及统计导出、报告包导出委托到正式实现，不再维护第二套平行门面。
 
 样本 payload 恢复当前接受的正式类别名包括 `DefaultSample`、`DefaultSampleSet`、
 `VibrationTestSample`、`VibrationTestSampleSet`；旧 payload 中的历史兼容类别名

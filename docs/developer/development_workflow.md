@@ -130,9 +130,22 @@
 - 默认推送规则：
   - 当前分支推送到 `origin/<current-branch>`
   - 若当前分支是 `main`，则推送到 `origin/main`
-- 当前阶段的特殊例外：
-  - 允许在当前主目录的 `main` 上完成一次补丁收口
-  - 此例外只用于收口当前单一集成主题，不作为长期默认模式
+- 当前阶段不再允许在主目录 `main` 上直接收口 breaking 主题。
+- 会影响迁移路径、公开 API 或结构边界的工作，必须在匹配分支的独立 worktree 中完成。
+
+## 版本文档最小集合
+
+每条正式版本线至少维护以下材料：
+
+- 根级 `CHANGELOG.md`
+- 对应版本的迁移说明
+- 发布检查清单
+
+对 `v1.2.0` 而言，当前固定入口是：
+
+- [更新日志索引](../reference/changelog.md)
+- [migration_1_2_0.md](migration_1_2_0.md)
+- [release_checklist.md](release_checklist.md)
 
 ## 实施建议
 

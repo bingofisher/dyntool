@@ -55,6 +55,12 @@ class PlotResult:
     axes: tuple[Axes, ...] = field(default_factory=tuple)
     artists: tuple[Artist, ...] = field(default_factory=tuple)
 
+    @property
+    def ax(self) -> Axes | None:
+        """返回首个 ``Axes``，作为最终微调出口。"""
+
+        return self.axes[0] if self.axes else None
+
     @classmethod
     def from_raw(cls, raw: Figure | Axes | tuple[Axes, ...] | list[Axes]) -> "PlotResult":
         """从底层返回值构造标准绘图结果。"""
@@ -82,4 +88,4 @@ class PlotResult:
         return getattr(target, name)
 
 
-__all__ = ["PlotKind", "PlotResult", "PlotStatMetric", "PlotterKind"]
+__all__ = ["PlotKind", "PlotResult", "PlotStatMetric"]

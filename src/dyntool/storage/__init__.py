@@ -12,7 +12,7 @@ from ..domain.models import DataModelBase
 from ..domain.samples import SampleBaseModel, SampleSetBase
 from ..domain.samples.types import SampleLoadMode, SampleSetViewOptions, StorageAccessMode
 from ._repository import detect_storage_scheme, inspect_storage_repository
-from .runtime import StorageRuntime
+from . import runtime as _runtime_module
 from .types import (
     AttrDataFormat,
     ContainerFormat,
@@ -38,10 +38,10 @@ def save_model(
 ) -> Path:
     """保存单个数据模型。"""
 
-    return StorageRuntime().save_model_runtime(
+    return _runtime_module.StorageRuntime().save_model_runtime(
         model,
         path,
-        fmt=StorageRuntime.infer_model_format(path),
+        fmt=_runtime_module.StorageRuntime.infer_model_format(path),
         **dict(io_options or {}),
     )
 
@@ -54,10 +54,10 @@ def load_model(
 ) -> ModelT:
     """加载单个数据模型。"""
 
-    return StorageRuntime().load_model_runtime(
+    return _runtime_module.StorageRuntime().load_model_runtime(
         model_type,
         path,
-        fmt=StorageRuntime.infer_model_format(path),
+        fmt=_runtime_module.StorageRuntime.infer_model_format(path),
         **dict(io_options or {}),
     )
 
@@ -70,10 +70,10 @@ def inspect_model_units(
 ) -> dict[str, str]:
     """检查模型文件中的单位信息。"""
 
-    return StorageRuntime().inspect_model_units_runtime(
+    return _runtime_module.StorageRuntime().inspect_model_units_runtime(
         model_type,
         path,
-        fmt=StorageRuntime.infer_model_format(path),
+        fmt=_runtime_module.StorageRuntime.infer_model_format(path),
         **dict(io_options or {}),
     )
 
@@ -81,13 +81,13 @@ def inspect_model_units(
 def save_metadata(metadata: MetadataBase, path: str | Path) -> Path:
     """保存元数据文件。"""
 
-    return StorageRuntime.save_metadata(metadata, path)
+    return _runtime_module.StorageRuntime.save_metadata(metadata, path)
 
 
 def load_metadata(path: str | Path, metadata_type: type[MetadataT]) -> MetadataT:
     """加载元数据文件。"""
 
-    return StorageRuntime.load_metadata(path, metadata_type)
+    return _runtime_module.StorageRuntime.load_metadata(path, metadata_type)
 
 
 def save_sample(
@@ -98,7 +98,7 @@ def save_sample(
 ) -> SampleT:
     """保存单个样本。"""
 
-    return StorageRuntime().save_sample_runtime(
+    return _runtime_module.StorageRuntime().save_sample_runtime(
         sample,
         path=path,
         **dict(io_options or {}),
@@ -113,7 +113,7 @@ def load_sample(
 ) -> SampleT:
     """加载单个样本。"""
 
-    return StorageRuntime().load_sample_runtime(
+    return _runtime_module.StorageRuntime().load_sample_runtime(
         sample,
         path=path,
         **dict(io_options or {}),
@@ -137,7 +137,7 @@ def connect_sample_set(
         `gzip` 压缩，默认级别为 `4`。
     """
 
-    return StorageRuntime().connect_sample_set_runtime(
+    return _runtime_module.StorageRuntime().connect_sample_set_runtime(
         sample_set,
         base_dir,
         storage_scheme=scheme,
@@ -173,7 +173,7 @@ def save_sample_set(
         简洁进度条；`progress_callback` 始终接收 `(completed, total)`。
     """
 
-    StorageRuntime().save_sample_set_runtime(
+    _runtime_module.StorageRuntime().save_sample_set_runtime(
         sample_set,
         path=path,
         storage_scheme=scheme,
@@ -213,7 +213,7 @@ def load_sample_set(
         简洁进度条；`progress_callback` 始终接收 `(completed, total)`。
     """
 
-    return StorageRuntime().load(
+    return _runtime_module.StorageRuntime().load(
         path,
         domain=domain,
         scheme=scheme,

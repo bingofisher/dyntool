@@ -22,6 +22,7 @@ dependencies = [
     "pyyaml>=6.0",
     "tqdm>=4.65",
     "pint-pandas>=0.7.1",
+    "openpyxl>=3.1",
 ]
 
 [project.optional-dependencies]
@@ -77,8 +78,9 @@ path = "src/dyntool/_version.py"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
-addopts = "--ignore-glob=*冲突文件* -p no:cacheprovider"
+addopts = "--assert=plain --ignore-glob=*冲突文件* -p no:cacheprovider"
 norecursedirs = [".pytest_cache", "__pycache__", ".uv-cache"]
 
 [tool.ruff]
 line-length = 120
+cache-dir = ".pytest_tmp/ruff-cache"

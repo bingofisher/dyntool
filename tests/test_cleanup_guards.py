@@ -255,7 +255,12 @@ def test_repository_has_no_mkdocs_build_artifacts() -> None:
     assert not (PROJECT_ROOT / "site").exists()
     assert not (PROJECT_ROOT / ".ruff_cache").exists()
     assert not (PROJECT_ROOT / ".pytest_cache").exists()
-    cache_dirs = sorted(PROJECT_ROOT.rglob("__pycache__"))
+    protected_roots = {".git", ".venv", ".uv-cache", ".worktrees"}
+    cache_dirs = sorted(
+        path
+        for path in PROJECT_ROOT.rglob("__pycache__")
+        if protected_roots.isdisjoint(path.relative_to(PROJECT_ROOT).parts)
+    )
     assert not cache_dirs
 
 

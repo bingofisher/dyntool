@@ -2,6 +2,42 @@
 
 稳定性：`Public API`
 
+## v1.2.0 - Unreleased / RC
+
+### 版本线定位
+
+- `v1.2.0` 是当前 breaking / RC 版本线。
+- 主目录 `main` 继续承担 `1.1.x` 稳定线，不承接 `v1.2.0` 的 breaking 改动。
+- 当前 worktree `.worktrees/v1.2.0` 只对应 `codex/v1.2.0`，用于收口 `1.2.0` 的正式发布内容。
+
+### plotting 主链收敛
+
+- 正式 plotting 主链固定为 `PlotDataset -> PlotTheme -> concrete plotter -> PlotResult.ax`。
+- 删除旧的 plotting compat / legacy 主叙事，统一收口到正式公开面与模板主题入口。
+- plotting 配置边界固定为 `locale / figure / axes / artist / legend`。
+
+### reporting 正式纳入公开面
+
+- 新增正式模块 `dyntool.reporting`，提供统计表导出、比较报告导出和报告包导出。
+- `SampleSetBase` 新增薄对象方法，统一委托到 `dyntool.reporting`，保持对象主入口一致。
+- 报告图件统一复用正式 plotting 主链，不再引入独立报告绘图系统。
+
+### storage / infrastructure 收敛
+
+- `SET_SQLITE_H5` 默认布局正式固定为 `v2`。
+- 样本集读写、`summary_frame` 与报告导出链路已按当前正式实现收口。
+- `StorageRuntime` 保留为 `Internal API` bridge，但不再作为正式公开门面的一部分。
+
+### domain 内部收敛
+
+- `SampleSetBase`、`TimeSeries` 主文件继续瘦身，内部 helper 结构与运行时委托链已收口到当前实现事实。
+- 本轮收敛不改变对象类名、正式导入路径、单位语义与数值结果定义。
+
+### 配套材料
+
+- 迁移说明见 [docs/developer/migration_1_2_0.md](docs/developer/migration_1_2_0.md)
+- 发布检查清单见 [docs/developer/release_checklist.md](docs/developer/release_checklist.md)
+
 ## v1.1.2 - 2026-04-04
 
 ### 当前阶段收口

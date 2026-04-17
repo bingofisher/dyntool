@@ -21,9 +21,11 @@ from dyntool.domain.metadata import (
     VibrationTestMetadata,
 )
 from dyntool.domain.models import AccelSeries, FreqSpec, RespSpec, ZVLEval
+from dyntool.domain.samples import _sample_set_compare as sample_set_compare_module
 from dyntool.domain.samples import default as default_samples_module
 from dyntool.domain.samples import sets as sample_sets_module
 from dyntool.domain.samples import vibration_test as vibration_samples_module
+from dyntool.domain.samples.types import SampleSetComparisonReport
 from dyntool.domain.samples import (
     OperationResult,
     Sample,
@@ -37,6 +39,7 @@ from dyntool.domain.samples.factories import build_metadata
 from dyntool.infrastructure.persistence import RecoverableIOError
 from dyntool.infrastructure import sample_set_storage as sample_set_storage_module
 from dyntool.infrastructure import sample_storage_sqlite_h5 as sqlite_strategy_module
+from dyntool.infrastructure import sample_storage_sqlite_h5_types as sqlite_strategy_types_module
 from dyntool.infrastructure import sample_storage_strategy_impl as strategy_impl_module
 from dyntool.storage.types import AttrDataFormat, StorageMode, StorageScheme
 
@@ -84,11 +87,12 @@ with strategy.write_session():
     env = dict(os.environ)
     existing_pythonpath = env.get("PYTHONPATH", "")
     env["PYTHONPATH"] = str(repo_root / "src") + (os.pathsep + existing_pythonpath if existing_pythonpath else "")
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
     env["DYNSQL_STORE_DIR"] = str(store_dir)
     env["DYNSQL_READY_PATH"] = str(ready_path)
     env["DYNSQL_SLEEP_SECONDS"] = str(sleep_seconds)
     return subprocess.Popen(
-        [sys.executable, "-c", code],
+        [sys.executable, "-B", "-c", code],
         cwd=repo_root,
         env=env,
         text=True,
@@ -127,11 +131,12 @@ with strategy.read_session():
     env = dict(os.environ)
     existing_pythonpath = env.get("PYTHONPATH", "")
     env["PYTHONPATH"] = str(repo_root / "src") + (os.pathsep + existing_pythonpath if existing_pythonpath else "")
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
     env["DYNSQL_STORE_DIR"] = str(store_dir)
     env["DYNSQL_READY_PATH"] = str(ready_path)
     env["DYNSQL_SLEEP_SECONDS"] = str(sleep_seconds)
     return subprocess.Popen(
-        [sys.executable, "-c", code],
+        [sys.executable, "-B", "-c", code],
         cwd=repo_root,
         env=env,
         text=True,
@@ -1767,7 +1772,7 @@ class TestSetSqliteH5Storage:
             return original(self, conn, artifacts)
 
         monkeypatch.setattr(
-            sqlite_strategy_module,
+            sqlite_strategy_types_module,
             "_SQLITE_H5_WRITE_FLUSH_BATCH_SIZE",
             2,
         )
@@ -2033,6 +2038,73 @@ class TestSampleSetCompare:
         assert not report_missing.presence_diff.empty
         assert report_missing.scalar_diff.empty
 
+    def test_compare_with_delegates_to_internal_compare_helper(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        left_sample = self._make_sample("L", scale=1.0)
+        right_sample = self._make_sample("L", scale=1.1)
+        left = VibrationTestSampleSet({left_sample.uid: left_sample})
+        right = VibrationTestSampleSet({right_sample.uid: right_sample})
+
+        def _delegated(*args: object, **kwargs: object) -> SampleSetComparisonReport:
+            del args, kwargs
+            raise RuntimeError("delegated-compare")
+
+        monkeypatch.setattr(sample_sets_module, "compare_sample_sets", _delegated, raising=False)
+
+        with pytest.raises(RuntimeError, match="delegated-compare"):
+            left.compare_with(right, data_vars=["zvl"])
+
+    def test_compare_private_helpers_only_exist_in_internal_module(self) -> None:
+        helper_names = (
+            "_compare_metadata_rows",
+            "_sample_field_present",
+            "_compare_presence_rows",
+            "_compare_scalar_rows",
+        )
+
+        for helper_name in helper_names:
+            assert helper_name not in sample_sets_module.SampleSetBase.__dict__
+
+        exported_names = {
+            "compare_metadata_rows",
+            "sample_field_present",
+            "compare_presence_rows",
+            "compare_scalar_rows",
+        }
+        for helper_name in exported_names:
+            assert hasattr(sample_set_compare_module, helper_name)
+
+
+@pytest.mark.parametrize(
+    ("method_name", "helper_name", "args", "kwargs"),
+    [
+        ("scalar_frame", "build_scalar_frame", (), {"data_vars": ["zvl"]}),
+        ("series_frame", "build_series_frame", ("accel",), {}),
+        ("peaks_frame", "build_peaks_frame", (), {}),
+    ],
+)
+def test_sample_set_view_methods_delegate_to_internal_helpers(
+    monkeypatch: pytest.MonkeyPatch,
+    method_name: str,
+    helper_name: str,
+    args: tuple[object, ...],
+    kwargs: dict[str, object],
+) -> None:
+    sample = VibrationTestSample(
+        metadata=_make_vib_meta(),
+        accel=AccelSeries.from_data(np.random.randn(64) * 0.01, dt=0.002),
+        zvl=ZVLEval.from_data(zvl=65.0, aw=0.001),
+    )
+    sample_set = VibrationTestSampleSet({sample.uid: sample})
+
+    def _delegated(*inner_args: object, **inner_kwargs: object) -> object:
+        del inner_args, inner_kwargs
+        raise RuntimeError(f"delegated-{method_name}")
+
+    monkeypatch.setattr(sample_sets_module, helper_name, _delegated, raising=False)
+
+    with pytest.raises(RuntimeError, match=f"delegated-{method_name}"):
+        getattr(sample_set, method_name)(*args, **kwargs)
+
 
 @pytest.mark.parametrize(
     ("storage_scheme", "target_name"),
@@ -2221,6 +2293,49 @@ class TestSampleSetConvertStorage:
         assert sample.uid in converted
         assert converted[sample.uid].accel is not None
         assert converted[sample.uid].vel is not None
+
+    @pytest.mark.parametrize(
+        ("method_name", "helper_name", "args", "kwargs"),
+        [
+            (
+                "connect_storage",
+                "connect_storage_sample_set",
+                (Path("delegated-connect"),),
+                {"mode": StorageMode.CREATE, "storage_scheme": StorageScheme.SET_DIR},
+            ),
+            ("save", "save_sample_set", (Path("delegated-save"),), {"storage_scheme": StorageScheme.SET_DIR}),
+            ("load", "load_sample_set", (Path("delegated-load"),), {"storage_scheme": StorageScheme.SET_DIR}),
+            (
+                "convert_storage",
+                "convert_storage_sample_set",
+                (Path("delegated-convert"),),
+                {"storage_scheme": StorageScheme.SET_H5},
+            ),
+        ],
+    )
+    def test_storage_entrypoints_delegate_to_internal_helpers(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        method_name: str,
+        helper_name: str,
+        args: tuple[object, ...],
+        kwargs: dict[str, object],
+    ) -> None:
+        sample = self._make_sample("delegate-storage")
+        sample_set = SampleSet({sample.uid: sample})
+        relocated_args = tuple(
+            tmp_path / arg.name if isinstance(arg, Path) and not arg.is_absolute() else arg for arg in args
+        )
+
+        def _delegated(*inner_args: object, **inner_kwargs: object) -> SampleSet:
+            del inner_args, inner_kwargs
+            raise RuntimeError(f"delegated-{method_name}")
+
+        monkeypatch.setattr(sample_sets_module, helper_name, _delegated, raising=False)
+
+        with pytest.raises(RuntimeError, match=f"delegated-{method_name}"):
+            getattr(sample_set, method_name)(*relocated_args, **kwargs)
 
     def test_save_all_supports_progress_callback(self, tmp_path: Path) -> None:
         sample_a = self._make_sample("save-progress-a")

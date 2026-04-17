@@ -6,7 +6,6 @@ from collections import UserDict
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, ClassVar, Generic, Iterable, Mapping, Self, TypeVar, cast
 
-import numpy as np
 import pandas as pd
 from pydantic import ValidationError
 
@@ -23,13 +22,21 @@ from .batch import (
     BatchOperationReport,
     OperationResult,
     infer_batch_status,
-    make_operation_result,
     run_callable_batch,
     run_vibeval_batch,
     select_sample_items,
 )
 from .commands import VibEvalCommand
 from .namespaces import SampleSetEvaluationNamespace, SampleSetProcessingNamespace
+from ._sample_set_compare import compare_sample_sets
+from ._sample_set_storage import (
+    build_storage_report,
+    connect_storage_sample_set,
+    convert_storage_sample_set,
+    load_sample_set,
+    save_sample_set,
+)
+from ._sample_set_views import build_peaks_frame, build_scalar_frame, build_series_frame
 from .types import SampleField, SampleLoadMode, SampleSetComparisonReport
 
 if TYPE_CHECKING:
@@ -37,32 +44,6 @@ if TYPE_CHECKING:
 
 SampleType = TypeVar("SampleType", bound=SampleBase)
 logger = get_logger("samples")
-_H5_SUFFIXES = {".h5", ".hdf5", ".hdf"}
-_DEFAULT_SET_H5_FILENAME = "all_samples.h5"
-
-
-def _require_storage_mode(value: Any | None) -> None:
-    """校验公开 `mode` 参数必须使用正式枚举。"""
-
-    if value is None or type(value).__name__ == "StorageMode":
-        return
-    raise TypeError("mode 参数必须是 StorageMode 枚举")
-
-
-def _require_storage_scheme(value: Any | None) -> None:
-    """校验公开 `storage_scheme` 参数必须使用正式枚举。"""
-
-    if value is None or type(value).__name__ == "StorageScheme":
-        return
-    raise TypeError("storage_scheme 参数必须是 StorageScheme 枚举")
-
-
-def _require_name_resolver(value: Any | None) -> None:
-    """校验公开 `name_resolver` 参数。"""
-
-    if value is None or callable(value):
-        return
-    raise TypeError("name_resolver 参数必须是可调用对象")
 
 
 class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ignore[type-var]
@@ -95,16 +76,6 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
     def __setitem__(self, key: str, item: Any) -> None:
         _ = key
         self._bind_sample_internal(item)
-        return
-        normalized_key = key.strip()
-        expected_type = self.sample_type
-        if not isinstance(item, expected_type):
-            raise TypeError(f"类型错误: {self.__class__.__name__} 仅接受 {expected_type.__name__} 类型")
-        expected_key = item.uid.strip()
-        if normalized_key != expected_key:
-            normalized_key = expected_key
-        item._storage_set = self
-        super().__setitem__(normalized_key, item)
 
     def __getitem__(self, key: str) -> SampleType:
         return super().__getitem__(key.strip())
@@ -512,131 +483,6 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
 
         return self.get_metadatadf(flatten_sep=flatten_sep)
 
-    def _compare_metadata_rows(
-        self,
-        other: "SampleSetBase[Any]",
-        *,
-        common_uids: list[str],
-        metadata_fields: list[str] | None,
-    ) -> pd.DataFrame:
-        """构建 metadata 差异表。"""
-
-        rows: list[dict[str, Any]] = []
-        for uid in common_uids:
-            left_flat = self[uid].metadata.to_flatten_dict(sep="@")
-            right_flat = other[uid].metadata.to_flatten_dict(sep="@")
-            fields = metadata_fields or sorted(set(left_flat) | set(right_flat))
-            for field in fields:
-                left_value = left_flat.get(field)
-                right_value = right_flat.get(field)
-                if left_value != right_value:
-                    rows.append({"uid": uid, "field": field, "left": left_value, "right": right_value})
-        return pd.DataFrame(rows)
-
-    def _sample_field_present(self, sample: SampleType, field: SampleField) -> bool:
-        """判断样本在指定槽位上是否存在数据。"""
-
-        if sample.get_data_var(field) is not None:
-            return True
-        if getattr(sample, "_storage_set", None) is None or getattr(sample._storage_set, "storage", None) is None:
-            return False
-        return bool(getattr(sample, "_storage_presence", {}).get(field, False))
-
-    def _compare_presence_rows(
-        self,
-        other: "SampleSetBase[Any]",
-        *,
-        common_uids: list[str],
-        requested_data_vars: list[str] | None,
-    ) -> pd.DataFrame:
-        """构建槽位存在性差异表。"""
-
-        rows: list[dict[str, Any]] = []
-        requested_fields = (
-            [self.sample_schema.resolve_field(name) for name in requested_data_vars]
-            if requested_data_vars
-            else list(self.storable_fields())
-        )
-        for uid in common_uids:
-            left_sample = self[uid]
-            right_sample = other[uid]
-            for field in requested_fields:
-                left_present = self._sample_field_present(left_sample, field)
-                right_present = self._sample_field_present(right_sample, field)
-                if left_present != right_present:
-                    rows.append(
-                        {
-                            "uid": uid,
-                            "field": field.value,
-                            "left_present": left_present,
-                            "right_present": right_present,
-                        }
-                    )
-        return pd.DataFrame(rows)
-
-    def _compare_scalar_rows(
-        self,
-        other: "SampleSetBase[Any]",
-        *,
-        common_uids: list[str],
-        metadata_fields: list[str] | None,
-        data_vars: list[str] | None,
-        features: list[str] | None,
-        rtol: float,
-        atol: float,
-    ) -> pd.DataFrame:
-        """构建标量摘要差异表。"""
-
-        if not common_uids or (not data_vars and not features):
-            return pd.DataFrame()
-
-        left_frame = self.scalar_frame(
-            metadata_fields=metadata_fields,
-            data_vars=data_vars,
-            features=features,
-            uids=common_uids,
-            strict=False,
-        ).set_index("uid", drop=False)
-        right_frame = other.scalar_frame(
-            metadata_fields=metadata_fields,
-            data_vars=data_vars,
-            features=features,
-            uids=common_uids,
-            strict=False,
-        ).set_index("uid", drop=False)
-
-        reserved_columns = {"uid", "alias", *(metadata_fields or [])}
-        scalar_columns = sorted((set(left_frame.columns) & set(right_frame.columns)) - reserved_columns)
-        rows: list[dict[str, Any]] = []
-        for uid in common_uids:
-            if uid not in left_frame.index or uid not in right_frame.index:
-                continue
-            for column in scalar_columns:
-                left_value = left_frame.at[uid, column]
-                right_value = right_frame.at[uid, column]
-                if pd.isna(left_value) and pd.isna(right_value):
-                    continue
-                if pd.isna(left_value) or pd.isna(right_value):
-                    continue
-                if isinstance(left_value, (int, float, np.integer, np.floating)) and isinstance(
-                    right_value, (int, float, np.integer, np.floating)
-                ):
-                    if np.isclose(float(left_value), float(right_value), rtol=rtol, atol=atol):
-                        continue
-                elif left_value == right_value:
-                    continue
-                rows.append(
-                    {
-                        "uid": uid,
-                        "field": str(column),
-                        "left": left_value,
-                        "right": right_value,
-                        "rtol": rtol,
-                        "atol": atol,
-                    }
-                )
-        return pd.DataFrame(rows)
-
     def compare_with(
         self,
         other: "SampleSetBase[Any]",
@@ -650,44 +496,18 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
     ) -> SampleSetComparisonReport:
         """对比两个样本集的结构与标量摘要。"""
 
-        same_type = type(self) is type(other)
-        same_sample_type = self.sample_type is other.sample_type
-        if strict_types and not same_sample_type:
-            raise TypeError("compare_with() 要求两个样本集的 sample_type 一致")
-
-        left_only_uids = tuple(uid for uid in self.keys() if uid not in other)
-        right_only_uids = tuple(uid for uid in other.keys() if uid not in self)
-        common_uids = tuple(uid for uid in self.keys() if uid in other)
         requested_metadata = [str(field) for field in metadata_fields] if metadata_fields is not None else None
         requested_data_vars = [str(name) for name in data_vars] if data_vars is not None else None
         requested_features = [str(name) for name in features] if features is not None else None
-
-        return SampleSetComparisonReport(
-            same_type=same_type,
-            same_sample_type=same_sample_type,
-            same_size=len(self) == len(other),
-            left_only_uids=left_only_uids,
-            right_only_uids=right_only_uids,
-            common_uids=common_uids,
-            metadata_diff=self._compare_metadata_rows(
-                other,
-                common_uids=list(common_uids),
-                metadata_fields=requested_metadata,
-            ),
-            presence_diff=self._compare_presence_rows(
-                other,
-                common_uids=list(common_uids),
-                requested_data_vars=requested_data_vars,
-            ),
-            scalar_diff=self._compare_scalar_rows(
-                other,
-                common_uids=list(common_uids),
-                metadata_fields=requested_metadata,
-                data_vars=requested_data_vars,
-                features=requested_features,
-                rtol=rtol,
-                atol=atol,
-            ),
+        return compare_sample_sets(
+            self,
+            other,
+            metadata_fields=requested_metadata,
+            data_vars=requested_data_vars,
+            features=requested_features,
+            rtol=rtol,
+            atol=atol,
+            strict_types=strict_types,
         )
 
     def _normalize_requested_categories(
@@ -783,31 +603,6 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
 
         return self.get_data_dict(category)
 
-    def _metadata_value(self, sample: SampleType, field: str) -> str:
-        flattened = sample.metadata.to_flatten_dict(sep="@")
-        value = flattened.get(field)
-        return "" if value is None else str(value)
-
-    def _scalar_feature_value(self, sample: SampleType, feature: str) -> float:
-        normalized = str(feature).strip().lower()
-        if normalized == "pga":
-            return float(sample.pga())
-        if normalized == "pgv":
-            return float(sample.pgv())
-        if normalized == "pgd":
-            return float(sample.pgd())
-        if normalized == "absmax":
-            return float(sample.compute.feature.absmax())
-        if normalized == "rms":
-            return float(sample.compute.feature.rms())
-        if normalized == "mean":
-            return float(sample.compute.feature.mean())
-        if normalized == "std":
-            return float(sample.compute.feature.std())
-        if normalized == "crest_factor":
-            return float(sample.compute.feature.crest_factor())
-        raise KeyError(f"不支持的标量特征: {feature}")
-
     def scalar_frame(
         self,
         *,
@@ -824,88 +619,19 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
     ) -> pd.DataFrame:
         """组合 metadata、标量 data_var 与派生特征为表格。"""
 
-        requested_metadata = [str(field) for field in metadata_fields or ()]
-        requested_data_vars = [str(name) for name in data_vars or ()]
-        requested_features = [str(name) for name in features or ()]
-        if self.storage is not None and self.storage_dirty is False and filter is None and sort_by is None:
-            selected_uids = list(self.find(uids=uids, criteria=criteria).keys())
-            try:
-                frame = self.storage.summary_frame(
-                    uids=selected_uids,
-                    metadata_fields=requested_metadata,
-                    data_vars=requested_data_vars,
-                    features=requested_features,
-                )
-                if strict:
-                    data_var_columns = {
-                        data_var: [column for column in frame.columns if str(column).startswith(f"{data_var}.")]
-                        for data_var in requested_data_vars
-                    }
-                    required_columns = [
-                        *requested_metadata,
-                        *requested_features,
-                        *[column for columns in data_var_columns.values() for column in columns],
-                    ]
-                    missing_columns = [column for column in requested_features if column not in frame.columns]
-                    missing_data_vars = [data_var for data_var, columns in data_var_columns.items() if not columns]
-                    if missing_columns or missing_data_vars:
-                        raise RuntimeError("摘要层暂不支持当前标量字段")
-                    if required_columns:
-                        subset = frame[[column for column in required_columns if column in frame.columns]]
-                        if subset.isna().any(axis=None):
-                            first_missing = next(
-                                (column for column in subset.columns if subset[column].isna().any()),
-                                None,
-                            )
-                            if first_missing is not None:
-                                raise ValueError(f"摘要层缺少列 '{first_missing}' 的有效值")
-                if dropna and not frame.empty:
-                    reserved_columns = {"uid", "alias", *requested_metadata}
-                    value_columns = [column for column in frame.columns if column not in reserved_columns]
-                    if value_columns:
-                        frame = frame.dropna(axis=0, how="all", subset=value_columns)
-                return frame.reset_index(drop=True)
-            except RuntimeError:
-                pass
-
-        rows: list[dict[str, Any]] = []
-        selected = self.find_many(
+        return build_scalar_frame(
+            self,
+            metadata_fields=metadata_fields,
+            data_vars=data_vars,
+            features=features,
             uids=uids,
             criteria=criteria,
             filter=filter,
             sort_by=sort_by,
-            view_options=self._with_load_mode(view_options, load_mode=SampleLoadMode.EAGER),
+            dropna=dropna,
+            strict=strict,
+            view_options=view_options,
         )
-
-        for sample in selected.values():
-            row: dict[str, Any] = {"uid": sample.uid, "alias": sample.alias}
-            for field in requested_metadata:
-                row[field] = self._metadata_value(sample, field)
-            for data_var in requested_data_vars:
-                model = sample.get_data_var(data_var)
-                if model is None:
-                    if strict:
-                        raise ValueError(f"样本 '{sample.uid}' 缺少 data_var '{data_var}'")
-                    row[str(data_var)] = np.nan
-                    continue
-                for key, value in model.to_scalar_record().items():
-                    row[f"{data_var}.{key}"] = value
-            for feature in requested_features:
-                try:
-                    row[feature] = self._scalar_feature_value(sample, feature)
-                except Exception:
-                    if strict:
-                        raise
-                    row[feature] = np.nan
-            rows.append(row)
-
-        frame = pd.DataFrame(rows)
-        if dropna and not frame.empty:
-            reserved_columns = {"uid", "alias", *requested_metadata}
-            value_columns = [column for column in frame.columns if column not in reserved_columns]
-            if value_columns:
-                frame = frame.dropna(axis=0, how="all", subset=value_columns)
-        return frame.reset_index(drop=True)
 
     def series_frame(
         self,
@@ -921,61 +647,17 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
     ) -> pd.DataFrame:
         """按公共索引外连接同一 data_var 的多样本序列表。"""
 
-        from ..compute_api import ensure_multiindex_metadata, normalize_series_frame
-
-        field = self.sample_schema.resolve_field(data_var)
-        selected = self.find_many(
+        return build_series_frame(
+            self,
+            data_var,
+            metadata_fields=metadata_fields,
             uids=uids,
             criteria=criteria,
             filter=filter,
             sort_by=sort_by,
-            view_options=self._with_load_mode(view_options, load_mode=SampleLoadMode.EAGER),
+            strict=strict,
+            view_options=view_options,
         )
-        exported: list[tuple[SampleType, pd.DataFrame]] = []
-        model_type: type[DataModelBase] | None = None
-        for sample in selected.values():
-            model = sample.get_data_var(field)
-            if model is None:
-                if strict:
-                    raise ValueError(f"样本 '{sample.uid}' 缺少 data_var '{field.value}'")
-                continue
-            if model_type is None:
-                model_type = type(model)
-            elif type(model) is not model_type:
-                raise TypeError("series_frame() 要求所有样本的 data_var 类型一致")
-            exported.append((sample, normalize_series_frame(model)))
-
-        if not exported:
-            return pd.DataFrame()
-
-        template_columns = list(exported[0][1].columns)
-        union_index = exported[0][1].index
-        index_name = exported[0][1].index.name
-        for _, frame in exported[1:]:
-            if frame.index.name != index_name:
-                raise TypeError("series_frame() 要求所有序列表具有相同的索引名称")
-            union_index = union_index.union(frame.index)
-
-        output = pd.DataFrame(index=union_index)
-        output.index.name = index_name
-        requested_metadata = [str(field_name) for field_name in metadata_fields or ()]
-        for sample in selected.values():
-            model = sample.get_data_var(field)
-            if model is None:
-                sample_frame = pd.DataFrame(index=union_index, columns=template_columns, dtype=float)
-            else:
-                sample_frame = normalize_series_frame(model).reindex(union_index)
-            prefix = ensure_multiindex_metadata(sample, metadata_fields=requested_metadata)
-            sample_frame = sample_frame.rename(
-                columns={column: (*prefix, str(column)) for column in sample_frame.columns}
-            )
-            output = output.join(sample_frame, how="outer")
-
-        if output.columns.empty:
-            output.columns = pd.MultiIndex.from_arrays([[]])
-        else:
-            output.columns = pd.MultiIndex.from_tuples(list(output.columns))
-        return output
 
     def peaks_frame(
         self,
@@ -992,49 +674,130 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
     ) -> pd.DataFrame:
         """将多峰检测结果按峰序号展开为表。"""
 
-        from ..compute_api import ensure_multiindex_metadata
-
-        selected = self.find_many(
+        return build_peaks_frame(
+            self,
+            source=source,
+            metadata_fields=metadata_fields,
             uids=uids,
             criteria=criteria,
             filter=filter,
             sort_by=sort_by,
-            view_options=self._with_load_mode(view_options, load_mode=SampleLoadMode.EAGER),
+            strict=strict,
+            view_options=view_options,
+            **kwargs,
         )
-        requested_metadata = [str(field_name) for field_name in metadata_fields or ()]
-        payloads: list[tuple[SampleType, dict[str, Any]]] = []
-        max_peaks = 0
-        for sample in selected.values():
-            try:
-                payload = sample.compute.feature.peaks(source=source, **kwargs)
-            except Exception:
-                if strict:
-                    raise
-                payload = {"peak_indices": np.asarray([], dtype=float), "peak_values": np.asarray([], dtype=float)}
-            payloads.append((sample, payload))
-            max_peaks = max(max_peaks, int(len(np.asarray(payload.get("peak_indices", [])))))
 
-        if max_peaks == 0:
-            raise ValueError("没有可导出的峰值结果")
+    def export_scalar_frame(
+        self,
+        output_path: str | Path,
+        *,
+        features: Iterable[str],
+        strict: bool = False,
+        format: str = "xlsx",
+        metadata_fields: Iterable[str] | None = None,
+        data_vars: Iterable[str] | None = None,
+    ) -> Path:
+        """导出样本集标量统计表。"""
+        return cast(
+            Path,
+            resolve_sample_set_runtime(
+                self,
+                action="export_scalar_frame",
+            ).export_scalar_frame(
+                self,
+                output_path,
+                features=features,
+                strict=strict,
+                format=format,
+                metadata_fields=metadata_fields,
+                data_vars=data_vars,
+            ),
+        )
 
-        output = pd.DataFrame(index=pd.Index(range(max_peaks), name="peak_rank"))
-        for sample, payload in payloads:
-            peak_indices = np.asarray(payload.get("peak_indices", []), dtype=float)
-            peak_values = np.asarray(payload.get("peak_values", []), dtype=float)
-            sample_frame = pd.DataFrame(
-                {
-                    "peak_index": pd.Series(peak_indices, dtype=float),
-                    "peak_value": pd.Series(peak_values, dtype=float),
-                }
-            ).reindex(output.index)
-            prefix = ensure_multiindex_metadata(sample, metadata_fields=requested_metadata)
-            sample_frame = sample_frame.rename(
-                columns={column: (*prefix, str(column)) for column in sample_frame.columns}
-            )
-            output = output.join(sample_frame, how="outer")
+    def export_series_frame(
+        self,
+        output_path: str | Path,
+        *,
+        data_var: str,
+        metadata_fields: Iterable[str] | None = None,
+        strict: bool = False,
+        format: str = "xlsx",
+    ) -> Path:
+        """导出样本集序列表。"""
+        return cast(
+            Path,
+            resolve_sample_set_runtime(
+                self,
+                action="export_series_frame",
+            ).export_series_frame(
+                self,
+                output_path,
+                data_var=data_var,
+                metadata_fields=metadata_fields,
+                strict=strict,
+                format=format,
+            ),
+        )
 
-        output.columns = pd.MultiIndex.from_tuples(list(output.columns))
-        return output
+    def export_peaks_frame(
+        self,
+        output_path: str | Path,
+        *,
+        source: str = "accel",
+        format: str = "xlsx",
+        metadata_fields: Iterable[str] | None = None,
+        strict: bool = False,
+        **peak_options: Any,
+    ) -> Path:
+        """导出峰值统计表。"""
+        return cast(
+            Path,
+            resolve_sample_set_runtime(
+                self,
+                action="export_peaks_frame",
+            ).export_peaks_frame(
+                self,
+                output_path,
+                source=source,
+                format=format,
+                metadata_fields=metadata_fields,
+                strict=strict,
+                **peak_options,
+            ),
+        )
+
+    def export_report_package(
+        self,
+        output_dir: str | Path,
+        *,
+        compare_to: "SampleSetBase[Any]" | None = None,
+        features: Iterable[str] | None = None,
+        series_vars: Iterable[str] | None = None,
+        peak_sources: Iterable[str] | None = None,
+        include_plots: bool = True,
+        plot_theme: object | str | Path | None = None,
+        include_eval_summary: bool = True,
+        csv_encoding: str = "utf-8-sig",
+    ) -> Path:
+        """导出完整项目报告数据包。"""
+        return cast(
+            Path,
+            resolve_sample_set_runtime(
+                self,
+                action="export_report_package",
+            ).export_report_package(
+                self,
+                output_dir,
+                compare_to=compare_to,
+                features=features,
+                series_vars=series_vars,
+                peak_sources=peak_sources,
+                include_plots=include_plots,
+                plot_theme=plot_theme,
+                include_eval_summary=include_eval_summary,
+                csv_encoding=csv_encoding,
+            ),
+        )
 
     def current_units(self) -> dict[str, dict[str, dict[str, str]]]:
         """返回样本集内所有样本的当前单位。"""
@@ -1321,158 +1084,7 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
             当前样本集对象本身。
         """
 
-        _require_storage_mode(kwargs.get("mode"))
-        _require_storage_scheme(kwargs.get("storage_scheme"))
-        _require_name_resolver(kwargs.get("name_resolver"))
-
-        result = cast(
-            Self,
-            resolve_sample_set_runtime(self, action="connect_storage").connect_sample_set_storage(
-                self,
-                str(base_dir),
-                **kwargs,
-            ),
-        )
-        if strict is not None:
-            result.strict = strict
-        return result
-
-    def _conversion_fields(
-        self,
-        categories: list[DataCategory | str] | None,
-    ) -> list[SampleField]:
-        """返回转换前需要保证可用的内部槽位列表。"""
-
-        resolved = self._categories_to_fields(categories)
-        if resolved is not None:
-            return resolved
-        return list(self.storable_fields())
-
-    def _resolve_conversion_target(
-        self,
-        path: str | Path,
-        *,
-        storage_scheme: Any,
-        set_filename: str | None,
-    ) -> tuple[Path, str | None]:
-        """解析转换目标的规范根路径与集合文件名。"""
-
-        resolved_path = Path(path).resolve()
-        scheme_value = str(getattr(storage_scheme, "value", storage_scheme))
-        if scheme_value == "set_h5":
-            if resolved_path.suffix.lower() in _H5_SUFFIXES:
-                return resolved_path.parent, resolved_path.name
-            return resolved_path, set_filename or _DEFAULT_SET_H5_FILENAME
-        return resolved_path, set_filename
-
-    def _matches_current_storage_target(
-        self,
-        *,
-        target_base_dir: Path,
-        storage_scheme: Any,
-        target_set_filename: str | None,
-    ) -> bool:
-        """判断转换目标是否与当前已连接存储等价。"""
-
-        if self.storage is None or getattr(self.storage, "base_dir", None) is None:
-            return False
-
-        current_scheme = getattr(self.storage, "storage_scheme", None)
-        current_scheme_value = str(getattr(current_scheme, "value", current_scheme))
-        target_scheme_value = str(getattr(storage_scheme, "value", storage_scheme))
-        current_base_dir = Path(self.storage.base_dir).resolve()
-        if current_scheme_value != target_scheme_value or current_base_dir != target_base_dir:
-            return False
-        if target_scheme_value != "set_h5":
-            return True
-
-        current_set_filename = str(getattr(self.storage, "set_filename", _DEFAULT_SET_H5_FILENAME))
-        resolved_target_set_filename = str(target_set_filename or _DEFAULT_SET_H5_FILENAME)
-        return current_set_filename == resolved_target_set_filename
-
-    def _ensure_conversion_source_ready(
-        self,
-        *,
-        items: list[tuple[str, SampleType]],
-        required_fields: list[SampleField],
-    ) -> None:
-        """确保转换前所需槽位已在内存中可用。"""
-
-        pending_uids: list[str] = []
-        for uid, sample in items:
-            pending_fields = [field for field in required_fields if not sample.is_loaded(field)]
-            if not pending_fields:
-                continue
-            source_storage = getattr(getattr(sample, "_storage_set", None), "storage", None)
-            if source_storage is None:
-                if sample.load_mode in {SampleLoadMode.LAZY, SampleLoadMode.METADATA_ONLY}:
-                    raise RuntimeError(
-                        "当前样本集存在未完全加载的样本，且缺少可用于补载的源存储连接，无法转换储存模式。"
-                    )
-                continue
-            pending_uids.append(uid)
-
-        if not pending_uids or self.storage is None:
-            return
-
-        loaded_map = self.storage.load_many_fields(pending_uids, [str(field) for field in required_fields])
-        for uid, sample in items:
-            if uid not in loaded_map:
-                continue
-            for field in required_fields:
-                if sample.is_loaded(field):
-                    continue
-                payload = loaded_map.get(uid, {}).get(str(field))
-                sample._replace_data_var_internal(field, cast(DataModelBase | None, payload))
-                sample._storage_presence[field] = payload is not None
-            if sample.load_mode is SampleLoadMode.METADATA_ONLY:
-                sample._set_load_mode_internal(SampleLoadMode.LAZY)
-
-    def _is_full_storage_conversion(
-        self,
-        *,
-        categories: list[DataCategory | str] | None,
-        filter: Callable[[SampleType], bool] | None,
-    ) -> bool:
-        """判断当前转换是否覆盖整个样本集及全部可存储槽位。"""
-
-        if filter is not None:
-            return False
-        if categories is None:
-            return True
-        return set(self._conversion_fields(categories)) == set(self.storable_fields())
-
-    def _build_transfer_sample(
-        self,
-        *,
-        sample: SampleType,
-        required_fields: list[SampleField],
-        strict: bool,
-    ) -> SampleType:
-        """基于当前样本状态构建用于落盘的独立快照。"""
-
-        data_vars: dict[SampleField, DataModelBase] = {}
-        for field in required_fields:
-            data = sample.get_data_var(field)
-            if data is None:
-                continue
-            data_vars[field] = data
-
-        transfer = cast(
-            SampleType,
-            sample.__class__(
-                alias=sample.alias,
-                metadata=sample.metadata.model_copy(deep=False),
-                strict=strict,
-                data_vars=data_vars,
-            ),
-        )
-        transfer._set_load_mode_internal(SampleLoadMode.EAGER)
-        transfer._loaded_categories = set(data_vars)
-        transfer._storage_presence = {field: True for field in data_vars}
-        transfer._storage_set = None
-        transfer._storage_payload_id = None
-        return transfer
+        return cast(Self, connect_storage_sample_set(self, base_dir, strict=strict, **kwargs))
 
     def convert_storage(
         self,
@@ -1516,66 +1128,25 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
             若使用了 `filter` 或仅转换部分 `categories`，则当前实例保持原存储绑定不变。
         """
 
-        _require_storage_mode(mode)
-        _require_storage_scheme(storage_scheme)
-        _require_name_resolver(name_resolver)
-
-        target_base_dir, target_set_filename = self._resolve_conversion_target(
-            path,
-            storage_scheme=storage_scheme,
-            set_filename=set_filename,
-        )
-        if self._matches_current_storage_target(
-            target_base_dir=target_base_dir,
-            storage_scheme=storage_scheme,
-            target_set_filename=target_set_filename,
-        ):
-            raise ValueError("convert_storage() 的目标路径与当前存储等价，请提供不同的目标路径或存储方案。")
-
-        effective_strict = self.strict if strict is None else strict
-        selected_items = self._filtered_items(filter=filter)
-        required_fields = self._conversion_fields(categories)
-        self._ensure_conversion_source_ready(items=selected_items, required_fields=required_fields)
-
-        snapshot = self.__class__()
-        snapshot.strict = effective_strict
-        for _, sample in selected_items:
-            transfer = self._build_transfer_sample(
-                sample=sample,
-                required_fields=required_fields,
-                strict=effective_strict,
-            )
-            snapshot[transfer.uid] = transfer
-        cast(
+        return cast(
             Self,
-            resolve_sample_set_runtime(snapshot, action="save").save_sample_set(
-                snapshot,
-                path=str(path),
+            convert_storage_sample_set(
+                self,
+                path,
                 mode=mode,
                 storage_scheme=storage_scheme,
                 data_options=data_options,
                 progress_callback=progress_callback,
                 show_progress=show_progress,
-                categories=required_fields,
-                strict=effective_strict,
+                categories=categories,
+                strict=strict,
+                filter=filter,
                 workers=workers,
                 chunk_size=chunk_size,
                 name_resolver=name_resolver,
                 set_filename=set_filename,
             ),
         )
-
-        if self._is_full_storage_conversion(categories=categories, filter=filter):
-            self.connect_storage(
-                target_base_dir,
-                strict=effective_strict,
-                storage_scheme=storage_scheme,
-                data_options=data_options,
-                name_resolver=name_resolver,
-                set_filename=target_set_filename,
-            )
-            self.storage_dirty = False
-        return self
 
     def save(
         self,
@@ -1614,21 +1185,16 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
             `categories` 会先统一映射到内部 `SampleField`，再参与后续存储路由。
         """
 
-        _require_storage_mode(mode)
-        _require_storage_scheme(storage_scheme)
-        _require_name_resolver(name_resolver)
-        resolved_categories = self._categories_to_fields(categories)
-
-        result = cast(
+        return cast(
             Self,
-            resolve_sample_set_runtime(self, action="save").save_sample_set(
+            save_sample_set(
                 self,
-                path=str(path) if path is not None else None,
+                path,
                 mode=mode,
                 storage_scheme=storage_scheme,
                 data_options=data_options,
-                categories=resolved_categories,
-                strict=self.strict if strict is None else strict,
+                categories=categories,
+                strict=strict,
                 filter=filter,
                 workers=workers,
                 chunk_size=chunk_size,
@@ -1636,8 +1202,6 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
                 set_filename=set_filename,
             ),
         )
-        result.storage_dirty = False
-        return result
 
     def load(
         self,
@@ -1674,22 +1238,16 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
             当前样本集对象本身。
         """
 
-        _require_storage_mode(mode)
-        _require_storage_scheme(storage_scheme)
-        normalized_fields = self._categories_to_fields(categories, load_mode=load_mode)
-        runtime_categories = (
-            [] if load_mode in {SampleLoadMode.METADATA_ONLY, SampleLoadMode.LAZY} else normalized_fields
-        )
-
-        result = cast(
+        return cast(
             Self,
-            resolve_sample_set_runtime(self, action="load").load_sample_set(
+            load_sample_set(
                 self,
-                path=str(path) if path is not None else None,
+                path,
                 mode=mode,
                 storage_scheme=storage_scheme,
                 data_options=data_options,
-                categories=runtime_categories,
+                categories=categories,
+                load_mode=load_mode,
                 strict=strict,
                 filter=filter,
                 workers=workers,
@@ -1697,10 +1255,6 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
                 set_filename=set_filename,
             ),
         )
-        for sample in result.values():
-            sample._set_load_mode_internal(load_mode)
-        result.storage_dirty = False
-        return result
 
     def _build_storage_report(
         self,
@@ -1712,28 +1266,10 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
     ) -> BatchOperationReport[Self]:
         """根据底层存储错误映射构造正式批量报告。"""
 
-        report = BatchOperationReport[Self](action=action, strict=strict)
-        report.stats.valid_samples = len(items)
-        for item_uid, _ in items:
-            error = errors.get(item_uid)
-            if error is None:
-                report.add(
-                    item_uid,
-                    make_operation_result(action=action, success=True, message="完成", value=self),
-                )
-                continue
-            report.add(
-                item_uid,
-                make_operation_result(
-                    action=action,
-                    success=False,
-                    message=str(error),
-                    value=self,
-                    error=error,
-                ),
-            )
-        self._last_operation_report = report
-        return report
+        return cast(
+            BatchOperationReport[Self],
+            build_storage_report(self, action=action, strict=strict, items=items, errors=errors),
+        )
 
     def save_all(
         self,

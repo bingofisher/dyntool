@@ -11,6 +11,7 @@ import numpy as np
 
 import dyntool.logging as dt_logging
 import dyntool.plotting as dt_plotting
+import dyntool.reporting as dt_reporting
 import dyntool.resources as dt_resource
 import dyntool.storage as dt_storage
 from dyntool import (
@@ -33,6 +34,7 @@ matplotlib.use("Agg")
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 INPUT_DATA_DIR = PROJECT_ROOT / "examples" / "input_data"
+PLOT_THEME_REPORT = PROJECT_ROOT / "src" / "dyntool" / "plotting" / "assets" / "plot_theme_report.toml"
 
 
 def _ensure_output_dir(output_dir: Path | None, name: str) -> Path:
@@ -60,6 +62,26 @@ def _make_vibration_sample(*, suffix: str, values: list[float] | np.ndarray) -> 
         metadata_cls=VibrationTestMetadata,
         **_make_vibration_kwargs(suffix=suffix),
     )
+
+
+def _make_reporting_sample_set(*, suffix: str, with_eval: bool = False) -> Any:
+    axis = np.linspace(0.0, 20.47, 2048, dtype=float)
+    sample_a = _make_vibration_sample(
+        suffix=f"{suffix}-a",
+        values=np.sin(axis * 2.0 * np.pi * 1.5) * 0.08,
+    )
+    sample_b = _make_vibration_sample(
+        suffix=f"{suffix}-b",
+        values=np.cos(axis * 2.0 * np.pi * 0.75) * 0.05,
+    )
+    sample_set = DefaultSampleSet.from_samples(
+        [sample_a, sample_b],
+        sample_domain=SampleDomain.VIBRATION_TEST,
+    )
+    if with_eval:
+        sample_set.eval_zvl(overwrite=True, freq_range=(2.0, 60.0))
+        sample_set.eval_otovl(overwrite=True, freq_range=(2.0, 80.0))
+    return sample_set
 
 
 def _scenario_import_and_normalize(output_dir: Path | None = None) -> dict[str, object]:
@@ -146,13 +168,13 @@ def _scenario_store_and_reload(output_dir: Path | None = None) -> dict[str, obje
         sample_domain=SampleDomain.VIBRATION_TEST,
         storage_scheme=StorageScheme.SET_H5,
     )
-    plotter = dt_plotting.FramePlotter()
-    plotter.add(
+    theme = dt_plotting.PlotTheme.from_file(PLOT_THEME_REPORT)
+    dataset = dt_plotting.PlotDataset.from_model(
         loaded[sample.uid].accel,  # type: ignore[arg-type]
         name="stored-accel",
         category=dt_plotting.PlotCategory.SAMPLE,
     )
-    result = plotter.plot()
+    result = dt_plotting.FramePlotter(theme=theme).plot_dataset(dataset)
     assert result.figure is not None
     result.figure.savefig(plot_path, dpi=120)
 
@@ -171,7 +193,7 @@ def _scenario_plot_and_export(output_dir: Path | None = None) -> dict[str, objec
     model_plot = output_root / "model_time.png"
     box_plot = output_root / "box_zvl.png"
 
-    dt_plotting.configure_zh()
+    theme = dt_plotting.PlotTheme.from_file(PLOT_THEME_REPORT)
     accel = AccelSeries.from_data([0.0, 0.12, -0.03, 0.01], dt=0.01)
     raw_dataset = dt_plotting.PlotDataset.from_axis_value(
         axis=accel.get_axis(),
@@ -181,10 +203,13 @@ def _scenario_plot_and_export(output_dir: Path | None = None) -> dict[str, objec
         axis_unit=accel.axis_unit,
         value_unit=accel.value_unit,
     )
-    raw_result = dt_plotting.FramePlotter().plot_dataset(raw_dataset)
-    model_plotter = dt_plotting.FramePlotter()
-    model_plotter.add(accel, name="model-accel", category=dt_plotting.PlotCategory.SAMPLE)
-    model_result = model_plotter.plot()
+    raw_result = dt_plotting.FramePlotter(theme=theme).plot_dataset(raw_dataset)
+    model_dataset = dt_plotting.PlotDataset.from_model(
+        accel,
+        name="model-accel",
+        category=dt_plotting.PlotCategory.SAMPLE,
+    )
+    model_result = dt_plotting.FramePlotter(theme=theme).plot_dataset(model_dataset)
     box_dataset = dt_plotting.PlotDataset.from_axis_value(
         axis=[0.0, 1.0, 2.0],
         value=[64.0, 66.0, 65.0],
@@ -223,6 +248,7 @@ def _scenario_plot_and_export(output_dir: Path | None = None) -> dict[str, objec
         "raw_plot": str(raw_plot),
         "model_plot": str(model_plot),
         "box_plot": str(box_plot),
+        "theme_path": str(PLOT_THEME_REPORT),
     }
 
 
@@ -390,7 +416,7 @@ def _scenario_custom_extension(output_dir: Path | None = None) -> dict[str, obje
             values,
             dt=0.01,
             metadata_cls=ExternalVibrationMetadata,
-            **_make_vibration_kwargs(suffix="custom-ext-compat"),
+            **_make_vibration_kwargs(suffix="custom-ext"),
         )
         convenience_result = convenience_sample.eval_zvl(overwrite=True, freq_range=(2.0, 60.0))
         vib_sample.compute.evaluate.zvl(overwrite=True, freq_range=(2.0, 60.0))
@@ -707,6 +733,66 @@ def _recipe_peaks_frame(output_dir: Path | None = None) -> dict[str, object]:
     }
 
 
+def _recipe_statistics_export(output_dir: Path | None = None) -> dict[str, object]:
+    output_root = _ensure_output_dir(output_dir, "statistics_export")
+    sample_set = _make_reporting_sample_set(suffix="statistics", with_eval=True)
+
+    scalar_path = sample_set.export_scalar_frame(
+        output_root / "scalar_frame.xlsx",
+        features=["pga", "rms"],
+    )
+    series_path = sample_set.export_series_frame(
+        output_root / "series_frame.csv",
+        data_var="accel",
+        format="csv",
+    )
+    peaks_path = sample_set.export_peaks_frame(
+        output_root / "peaks_frame.xlsx",
+        source="accel",
+    )
+    compare_path = dt_reporting.export_compare_report(
+        sample_set,
+        _make_reporting_sample_set(suffix="statistics-compare", with_eval=True),
+        output_root / "compare_report.xlsx",
+        features=["pga", "rms"],
+    )
+
+    scalar_frame = sample_set.scalar_frame(features=["pga", "rms"], strict=False)
+    return {
+        "sample_count": len(sample_set),
+        "scalar_path": str(scalar_path),
+        "series_path": str(series_path),
+        "peaks_path": str(peaks_path),
+        "compare_path": str(compare_path),
+        "scalar_columns": [str(column) for column in scalar_frame.columns],
+    }
+
+
+def _recipe_report_package_export(output_dir: Path | None = None) -> dict[str, object]:
+    output_root = _ensure_output_dir(output_dir, "report_package_export")
+    sample_set = _make_reporting_sample_set(suffix="report", with_eval=True)
+    compare_to = _make_reporting_sample_set(suffix="report-compare", with_eval=True)
+
+    package_dir = sample_set.export_report_package(
+        output_root / "report_package",
+        compare_to=compare_to,
+        features=["pga", "rms"],
+        series_vars=["accel"],
+        peak_sources=["accel"],
+        include_plots=True,
+        include_eval_summary=True,
+    )
+
+    return {
+        "package_dir": str(package_dir),
+        "report_workbook": str(package_dir / "report.xlsx"),
+        "manifest_path": str(package_dir / "manifest.json"),
+        "metadata_summary_path": str(package_dir / "metadata_summary.json"),
+        "tables_dir": str(package_dir / "tables"),
+        "figures_dir": str(package_dir / "figures"),
+    }
+
+
 __all__ = [
     "_scenario_import_and_normalize",
     "_scenario_build_and_manage_samples",
@@ -727,4 +813,6 @@ __all__ = [
     "_recipe_scalar_frame_features",
     "_recipe_series_frame_alignment",
     "_recipe_peaks_frame",
+    "_recipe_statistics_export",
+    "_recipe_report_package_export",
 ]
