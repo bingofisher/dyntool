@@ -121,12 +121,42 @@ def _check_storage_module_exports(allowed: list[str]) -> list[str]:
     return ["src/dyntool/storage/__init__.py: __all__ does not match storage_module_exports_allowed"]
 
 
-def _check_public_api_docs(storage_module_exports_allowed: list[str]) -> list[str]:
+def _check_plotting_module_exports(allowed: list[str], removed: list[str]) -> list[str]:
+    exported = _extract_module_all(PROJECT_ROOT / "src" / "dyntool" / "plotting" / "__init__.py")
+    violations: list[str] = []
+    if sorted(exported) != sorted(allowed):
+        violations.append("src/dyntool/plotting/__init__.py: __all__ does not match plotting_module_exports_allowed")
+    for name in removed:
+        if name in exported:
+            violations.append(f"src/dyntool/plotting/__init__.py: removed export still exists: {name}")
+    return violations
+
+
+def _check_plotting_plotters_module_exports(allowed: list[str]) -> list[str]:
+    exported = _extract_module_all(PROJECT_ROOT / "src" / "dyntool" / "plotting" / "plotters.py")
+    if sorted(exported) == sorted(allowed):
+        return []
+    return ["src/dyntool/plotting/plotters.py: __all__ does not match plotting_plotters_module_exports_allowed"]
+
+
+def _check_reporting_module_exports(allowed: list[str]) -> list[str]:
+    exported = _extract_module_all(PROJECT_ROOT / "src" / "dyntool" / "reporting" / "__init__.py")
+    if sorted(exported) == sorted(allowed):
+        return []
+    return ["src/dyntool/reporting/__init__.py: __all__ does not match reporting_module_exports_allowed"]
+
+
+def _check_public_api_docs(
+    storage_module_exports_allowed: list[str],
+    plotting_module_exports_allowed: list[str],
+    reporting_module_exports_allowed: list[str],
+) -> list[str]:
     path = PROJECT_ROOT / "docs" / "api" / "public_api.md"
     text = path.read_text(encoding="utf-8")
     required_tokens = (
         "dyntool.storage",
         "dyntool.plotting",
+        "dyntool.reporting",
         "dyntool.logging",
         "dyntool.config",
         "dyntool.resources",
@@ -140,6 +170,13 @@ def _check_public_api_docs(storage_module_exports_allowed: list[str]) -> list[st
     for token in storage_contract_tokens:
         if token not in text:
             violations.append(f"docs/api/public_api.md: missing storage contract token {token!r}")
+    plotting_contract_tokens = [token for token in plotting_module_exports_allowed if token[:1].isupper()]
+    for token in plotting_contract_tokens:
+        if token not in text:
+            violations.append(f"docs/api/public_api.md: missing plotting contract token {token!r}")
+    for token in reporting_module_exports_allowed:
+        if token not in text:
+            violations.append(f"docs/api/public_api.md: missing reporting contract token {token!r}")
     return violations
 
 
@@ -149,12 +186,30 @@ def main() -> int:
     top_level_exports_allowed = list(baseline["top_level_exports_allowed"])
     top_level_exports_removed = list(baseline["top_level_exports_removed"])
     storage_module_exports_allowed = list(baseline.get("storage_module_exports_allowed", []))
+    plotting_module_exports_allowed = list(baseline.get("plotting_module_exports_allowed", []))
+    plotting_plotters_module_exports_allowed = list(baseline.get("plotting_plotters_module_exports_allowed", []))
+    plotting_module_exports_removed = list(baseline.get("plotting_module_exports_removed", []))
+    reporting_module_exports_allowed = list(baseline.get("reporting_module_exports_allowed", []))
 
     violations = _scan_forbidden_tokens(forbidden_tokens)
     violations.extend(_check_package_exports(top_level_exports_allowed, top_level_exports_removed))
     if storage_module_exports_allowed:
         violations.extend(_check_storage_module_exports(storage_module_exports_allowed))
-    violations.extend(_check_public_api_docs(storage_module_exports_allowed))
+    if plotting_module_exports_allowed or plotting_module_exports_removed:
+        violations.extend(
+            _check_plotting_module_exports(plotting_module_exports_allowed, plotting_module_exports_removed)
+        )
+    if plotting_plotters_module_exports_allowed:
+        violations.extend(_check_plotting_plotters_module_exports(plotting_plotters_module_exports_allowed))
+    if reporting_module_exports_allowed:
+        violations.extend(_check_reporting_module_exports(reporting_module_exports_allowed))
+    violations.extend(
+        _check_public_api_docs(
+            storage_module_exports_allowed,
+            plotting_module_exports_allowed,
+            reporting_module_exports_allowed,
+        )
+    )
 
     if violations:
         print("Public API baseline check failed:")

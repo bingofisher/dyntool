@@ -135,6 +135,33 @@ def test_recipe_peaks_frame(tmp_path: Path) -> None:
     assert result["value_columns"] == ["peak_index", "peak_value"]
 
 
+def test_recipe_statistics_export(tmp_path: Path) -> None:
+    result = run_example(
+        "examples/90_recipes/statistics_export/main.py",
+        output_dir=tmp_path / "statistics_export",
+    )
+    assert result["sample_count"] == 2
+    assert Path(result["scalar_path"]).exists()
+    assert Path(result["series_path"]).exists()
+    assert Path(result["peaks_path"]).exists()
+    assert Path(result["compare_path"]).exists()
+    assert "pga" in result["scalar_columns"]
+    assert "rms" in result["scalar_columns"]
+
+
+def test_recipe_report_package_export(tmp_path: Path) -> None:
+    result = run_example(
+        "examples/90_recipes/report_package_export/main.py",
+        output_dir=tmp_path / "report_package_export",
+    )
+    assert Path(result["package_dir"]).exists()
+    assert Path(result["report_workbook"]).exists()
+    assert Path(result["manifest_path"]).exists()
+    assert Path(result["metadata_summary_path"]).exists()
+    assert Path(result["tables_dir"]).exists()
+    assert Path(result["figures_dir"]).exists()
+
+
 def test_internal_custom_extension_compare_with_vibtest(tmp_path: Path) -> None:
     result = run_example(
         "examples/10_scenarios/08_custom_extension/main.py",

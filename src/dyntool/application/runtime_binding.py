@@ -38,6 +38,10 @@ class _StorageRuntimeService(Protocol):
     def save_all_samples_runtime(self, sample_set: Any, **options: Any) -> dict[str, Exception]: ...
     def load_all_samples_runtime(self, sample_set: Any, **options: Any) -> dict[str, Exception]: ...
     def organize_sample_set_storage_runtime(self, sample_set: Any) -> Any: ...
+    def export_scalar_frame_runtime(self, sample_set: Any, output_path: Path, **options: Any) -> Any: ...
+    def export_series_frame_runtime(self, sample_set: Any, output_path: Path, **options: Any) -> Any: ...
+    def export_peaks_frame_runtime(self, sample_set: Any, output_path: Path, **options: Any) -> Any: ...
+    def export_report_package_runtime(self, sample_set: Any, output_dir: Path, **options: Any) -> Any: ...
 
 
 _storage_runtime_factory: _StorageRuntimeFactory | None = None
@@ -144,6 +148,18 @@ class _DefaultObjectRuntime:
 
     def organize_sample_set_storage(self, sample_set: Any) -> Any:
         return self._storage_service.organize_sample_set_storage_runtime(sample_set)
+
+    def export_scalar_frame(self, sample_set: Any, output_path: str | Path, **options: Any) -> Any:
+        return self._storage_service.export_scalar_frame_runtime(sample_set, Path(output_path), **options)
+
+    def export_series_frame(self, sample_set: Any, output_path: str | Path, **options: Any) -> Any:
+        return self._storage_service.export_series_frame_runtime(sample_set, Path(output_path), **options)
+
+    def export_peaks_frame(self, sample_set: Any, output_path: str | Path, **options: Any) -> Any:
+        return self._storage_service.export_peaks_frame_runtime(sample_set, Path(output_path), **options)
+
+    def export_report_package(self, sample_set: Any, output_dir: str | Path, **options: Any) -> Any:
+        return self._storage_service.export_report_package_runtime(sample_set, Path(output_dir), **options)
 
 
 def bind_default_runtimes(*, force_recreate: bool = False) -> None:

@@ -27,6 +27,8 @@
 - `examples/90_recipes/plot_dataset_and_plotters/main.py`
 - `examples/90_recipes/logging_providers_and_modes/main.py`
 - `examples/90_recipes/storage_scheme_selection/main.py`
+- `examples/90_recipes/statistics_export/main.py`
+- `examples/90_recipes/report_package_export/main.py`
 
 ## 内部示例
 

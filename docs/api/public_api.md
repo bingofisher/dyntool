@@ -2,26 +2,26 @@
 
 稳定性：`Public API`
 
-本文定义 AdvDynTool 当前正式公开面，并给出推荐的调用方式。
+本文只描述 AdvDynTool 当前正式公开面。v1.2.0 起，`configure_zh`、`ZhPlotConfig`、`AxisFrame`、`GridFrame`、`AxisHelper`、`LegendHelper`、`PlotterBase`、`PlotterKind`、`axes.py` facade 以及 `add()+plot()` 旧路径已删除，不再作为正式依赖。
 
 ## 正式入口
 
-- 顶层对象 API：`AccelSeries`、`Metadata`、`VibrationTestMetadata`、`DefaultSample`、`DefaultSampleSet`
+- 顶层对象 API：`AccelSeries`、`Metadata`、`VibrationTestMetadata`、`DefaultSample`、`DefaultSampleSet`、`SampleSetBase`
 - 结果对象：`OperationResult`、`BatchOperationReport`
-- 模块 API：`dyntool.storage`、`dyntool.plotting`、`dyntool.logging`
+- 模块 API：`dyntool.storage`、`dyntool.plotting`、`dyntool.logging`、`dyntool.reporting`
 - 支持模块：`dyntool.config`、`dyntool.resources`
 
-### 样本类名口径
+### 样本类命名
 
-- `DefaultSample / DefaultSampleSet` 是当前唯一正式顶层样本对象名
+- `DefaultSample / DefaultSampleSet` 是当前唯一正式顶层样本对象
 - `Sample / SampleSet` 顶层导入已移除
-- 内部实现仍可保留 `Sample` / `SampleSet` 命名，但不再属于正式公开面
+- 内部实现仍可能保留旧命名，但不再属于正式公开面
 
-### structured payload 类别名迁移说明
+### structured payload 命名迁移
 
-- 当前样本 payload 恢复接受的正式类别名包括 `DefaultSample`、`DefaultSampleSet`、`VibrationTestSample`、`VibrationTestSampleSet`
-- 旧 payload 中的历史兼容类别名 `Sample`、`SampleSet` 已移除
-- 读取旧 payload 时会抛出中文错误，并明确提示迁移到 `DefaultSample` / `DefaultSampleSet`
+- 当前接受的正式类名包括 `DefaultSample`、`DefaultSampleSet`、`VibrationTestSample`、`VibrationTestSampleSet`
+- 旧 payload 兼容类名 `Sample`、`SampleSet` 已移除
+- 读取旧 payload 时会给出中文错误，并提示迁移到正式类名
 
 ## 推荐闭环
 
@@ -50,123 +50,104 @@ print(freqs[:3])
 
 ## 模块 API
 
-- `dyntool.storage`：模型、样本、样本集存储
-- `dyntool.plotting`：静态绘图
-- `dyntool.logging`：日志配置与 logger 获取
-- `dyntool.config`：通用配置加载
-- `dyntool.resources`：内置资源读取
+### `dyntool.plotting`
 
-### `dyntool.storage` 正式参数类型
+稳定性：`Public API`
 
-以下名称属于 `dyntool.storage` 正式公开契约，允许在业务代码中直接导入并作为参数类型使用：
+`dyntool.plotting` 的正式公开对象只保留新主链：
 
-- 存储方案与容器类型：`StorageScheme`、`StorageMode`、`ContainerFormat`、`AttrDataFormat`
-- 连接参数类型：`StorageConnectOptions`
-- 仓库检查与自动识别：`StorageRepositoryReport`、`detect_storage_scheme(...)`、`inspect_storage_repository(...)`
-- 样本集读取 / 视图配置：`SampleLoadMode`、`StorageAccessMode`、`SampleSetViewOptions`
-- 领域 / 分类与命名解析：`SampleDomain`、`DataCategory`、`NameResolver`
+- `PlotDataset`
+- `PlotTheme`
+- `PlotResult`
+- `PlotCategory`
+- `PlotStatMetric`
+- `PlotKind`
+- `FramePlotter`
+- `BoxPlotter`
+- `OneThirdOctavePlotter`
+- `StoryValuePlotter`
 
-推荐导入方式：
+v1.2.0 起正式主链固定为：
+
+1. `PlotDataset.from_* (...)`
+2. `PlotTheme.from_file(path)` 或 `PlotTheme.default()`
+3. `ConcretePlotter(...).plot_dataset(dataset, ax=ax, ...)`
+4. `PlotResult.ax`
+
+示例：
 
 ```python
-from dyntool.storage import (
-    DataCategory,
-    NameResolver,
-    SampleDomain,
-    SampleLoadMode,
-    SampleSetViewOptions,
-    StorageRepositoryReport,
-    StorageConnectOptions,
-    StorageAccessMode,
-    detect_storage_scheme,
-    inspect_storage_repository,
-    StorageMode,
-    StorageScheme,
+from pathlib import Path
+import dyntool.plotting as dt_plotting
+
+theme_path = Path(dt_plotting.__file__).resolve().parent / "assets" / "plot_theme_report.toml"
+theme = dt_plotting.PlotTheme.from_file(theme_path)
+dataset = dt_plotting.PlotDataset.from_axis_value(
+    axis=[0.0, 0.1, 0.2],
+    value=[0.0, 0.1, -0.05],
+    name="demo",
+    category=dt_plotting.PlotCategory.SAMPLE,
 )
+result = dt_plotting.FramePlotter(theme=theme).plot_dataset(dataset)
+print(result.ax is not None)
 ```
 
-### `dyntool.storage` 批量进度与连接日志
+### `dyntool.storage`
 
-- `DefaultSampleSet.load_all(...)`、`save_all(...)`、`convert_storage(...)` 支持 `show_progress` 和 `progress_callback`
-- 默认是否显示进度条，按当前 logging 是否输出到控制台判定
-- 该规则同时兼容 `stdlib` 与 `loguru`
-- `connect_storage(...)` 与 `dyntool.storage.connect_sample_set(...)` 保持原参数形状，但现在会记录更详细的连接开始/完成日志，并严格要求 `mode` / `storage_scheme` 使用正式枚举
+稳定性：`Public API`
 
-## 计算主线与保留快捷方法
+`dyntool.storage` 负责模型、样本、样本集持久化，公开的连接、检测与读取接口可直接在业务代码中使用。
 
-- 正式主线是 `sample.compute.*` 与 `sample_set.compute.*`
-- 为兼顾高频闭环，保留 `eval_*` / `calc_*` 快捷方法
-- 以下历史重复入口不再属于正式公开面：
-  - `processing` / `evaluation`
-  - `get_sample` / `get_samples`
-  - `get_data_dict` / `get_uid_by_alias`
-  - `update_metadata`
+正式契约名包括：
 
-## 存储默认行为
+- `DataCategory`
+- `SampleLoadMode`
+- `SampleSetViewOptions`
+- `StorageAccessMode`
+- `AttrDataFormat`
+- `ContainerFormat`
+- `NameResolver`
+- `StorageConnectOptions`
+- `StorageMode`
+- `StorageRepositoryReport`
+- `StorageScheme`
 
-- `dyntool.storage` 的公开调用方式保持不变
-- 单模型 H5、单样本 H5、样本集 H5 默认启用 `gzip`
-- 默认压缩级别为 `4`
-- 样本/样本集 `data_options` 现在是正式契约，未知键和错用范围会立即报错
+### `dyntool.logging`
 
-## 自动参考
+稳定性：`Public API`
 
-## 大数据加载说明
+`dyntool.logging` 负责日志配置和 logger 获取。
 
-- `SampleLoadMode` 的公开语义没有变化，但样本集内部已经统一到三层加载架构：
-  - 索引层：`uid`、`alias`、扁平 `metadata`、槽位存在性、payload 定位信息
-  - 摘要层：高价值标量与采样摘要
-  - payload 层：真实数组与复合对象
-- 因此在 `SET_SQLITE_H5` 下：
-  - `metadata_frame()` 直接走索引层
-  - `scalar_frame()` 在可回答时优先走摘要层
-  - `LAZY` 首次访问只补载目标槽位，不再回退为整样本重建
-- `SET_H5` 与 `SET_DIR` 也已经支持槽位级补载；这属于实现优化，不改变公开 API 形状。
+### `dyntool.reporting`
 
-::: dyntool
-    options:
-      show_root_heading: true
-      show_source: false
+稳定性：`Public API`
 
-::: dyntool.storage
-    options:
-      show_root_heading: true
-      show_source: false
+`dyntool.reporting` 负责样本集统计导出和报告包导出。`SampleSetBase` 只保留对象级稳定入口，具体导出实现通过薄委托进入该模块。
 
-::: dyntool.plotting
-    options:
-      show_root_heading: true
-      show_source: false
+第一版正式函数包括：
 
-::: dyntool.logging
-    options:
-      show_root_heading: true
-      show_source: false
+- `export_scalar_frame(...)`
+- `export_series_frame(...)`
+- `export_peaks_frame(...)`
+- `export_compare_report(...)`
+- `export_report_package(...)`
 
-::: dyntool.config
-    options:
-      show_root_heading: true
-      show_source: false
+推荐入口仍然是 `SampleSetBase` 对象方法：
 
-::: dyntool.resources
-    options:
-      show_root_heading: true
-      show_source: false
+- `sample_set.export_scalar_frame(...)`
+- `sample_set.export_series_frame(...)`
+- `sample_set.export_peaks_frame(...)`
+- `sample_set.export_report_package(...)`
 
-## StorageScheme 命名迁移
+### `dyntool.config`
 
-- 正式推荐名称：`SET_DIR`、`SET_ATTR_TABLE`
-- 旧名字 `SAMPLE_DIR`、`ATTR_TABLE` 已移除。
-## 存储自动识别与完整性验证
+稳定性：`Public API`
 
-- `detect_storage_scheme(...)`：按存储签名自动识别单样本或样本集存储方案
-- `inspect_storage_repository(...)`：按 `quick / deep` 两层做仓库完整性验证
-- `StorageRepositoryReport`：承载检测方案、校验层级、问题列表、告警和样本计数
-- 这些能力默认服务于读路径、连接和迁移后的自检闭环，不改变现有保存接口形状
+`dyntool.config` 负责通用配置加载。
 
-## DefaultSampleSet 对比
+### `dyntool.resources`
 
-- `DefaultSampleSet.compare_with(...)`：提供结构与摘要级对比
-- 默认比较 UID、metadata、槽位存在性和标量摘要
-- 浮点标量比较通过 `rtol` 与 `atol` 控制容差
-- 本轮不包含时间历程、频谱等 payload 的逐点差异比对
+稳定性：`Public API`
+
+`dyntool.resources` 负责仓库内置资源读取。
+

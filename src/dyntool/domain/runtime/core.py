@@ -231,6 +231,18 @@ class SampleSetRuntimePort(Protocol):
             具体实现可根据当前存储方案重建目录或文件布局。
         """
 
+    def export_scalar_frame(self, sample_set: Any, output_path: str, **options: Any) -> Any:
+        """导出样本集标量统计表。"""
+
+    def export_series_frame(self, sample_set: Any, output_path: str, **options: Any) -> Any:
+        """导出样本集序列表。"""
+
+    def export_peaks_frame(self, sample_set: Any, output_path: str, **options: Any) -> Any:
+        """导出样本集峰值统计表。"""
+
+    def export_report_package(self, sample_set: Any, output_dir: str, **options: Any) -> Any:
+        """导出样本集完整报告包。"""
+
 
 _default_runtime_initializer: Callable[[], None] | None = None
 _initializer_running = False

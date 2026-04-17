@@ -57,10 +57,10 @@ from .domain.plot_types import PlotKind
 from .storage.types import AttrDataFormat, ContainerFormat, StorageConnectOptions, StorageMode, StorageScheme
 
 if TYPE_CHECKING:
-    from . import config, logging, plotting, resources, storage
+    from . import config, logging, plotting, reporting, resources, storage
 
 
-_LAZY_MODULE_EXPORTS = {"config", "logging", "plotting", "resources", "storage"}
+_LAZY_MODULE_EXPORTS = {"config", "logging", "plotting", "reporting", "resources", "storage"}
 
 
 def _initialize_default_bindings() -> None:
@@ -135,6 +135,7 @@ __all__ = [
     "storage",
     "config",
     "resources",
+    "reporting",
     "PlotKind",
     "plotting",
 ]

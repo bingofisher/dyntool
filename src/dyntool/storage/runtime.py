@@ -254,6 +254,54 @@ class StorageRuntime(
             set_filename=set_filename,
         )
 
+    def export_scalar_frame_runtime(
+        self,
+        sample_set: SampleSetBase[Any],
+        output_path: str | Path,
+        **options: Any,
+    ) -> Path:
+        """导出样本集标量统计表。"""
+
+        from ..reporting import export_scalar_frame
+
+        return export_scalar_frame(sample_set, output_path, **options)
+
+    def export_series_frame_runtime(
+        self,
+        sample_set: SampleSetBase[Any],
+        output_path: str | Path,
+        **options: Any,
+    ) -> Path:
+        """导出样本集序列表。"""
+
+        from ..reporting import export_series_frame
+
+        return export_series_frame(sample_set, output_path, **options)
+
+    def export_peaks_frame_runtime(
+        self,
+        sample_set: SampleSetBase[Any],
+        output_path: str | Path,
+        **options: Any,
+    ) -> Path:
+        """导出样本集峰值统计表。"""
+
+        from ..reporting import export_peaks_frame
+
+        return export_peaks_frame(sample_set, output_path, **options)
+
+    def export_report_package_runtime(
+        self,
+        sample_set: SampleSetBase[Any],
+        output_dir: str | Path,
+        **options: Any,
+    ) -> Path:
+        """导出样本集完整报告包。"""
+
+        from ..reporting import export_report_package
+
+        return export_report_package(sample_set, output_dir, **options)
+
     def save_all_samples_runtime(
         self,
         sample_set: SampleSetBase[Any],
