@@ -4,20 +4,20 @@
 
 ## 说明
 
-文档站内的本页用于提供版本变更索引与阅读入口。
+文档站内的本页用于提供版本变更索引与阅读入口。正式版本记录的真源仍然是仓库根级 `CHANGELOG.md`；发布时以仓库文件和对应 git tag 为准。
 
-正式版本记录的真源仍然是仓库根级 `CHANGELOG.md`，发布时应以仓库文件和对应 git tag 为准。
+## 当前状态
 
-## 当前版本线
-
-- 稳定发布线：`1.1.2`
-- 当前 breaking / RC 版本线：`1.2.0`
+- 当前稳定发布线：`1.2.x`
+- 当前候选补丁线：`codex/v1.2.0-postmerge`
+- 已发布 RC：`v1.2.0-rc.1`
+- 当前正式发布内容：`v1.2.0`
 
 ## 主要版本节点
 
-### `v1.2.0` - Unreleased / RC
+### `v1.2.0`
 
-- plotting 正式主链收口到 `PlotDataset -> PlotTheme -> concrete plotter -> PlotResult.ax`
+- plotting 正式主链固定为 `PlotDataset -> PlotTheme -> concrete plotter -> PlotResult.ax`
 - `dyntool.reporting` 正式纳入公开面
 - storage / runtime 内部边界进一步收紧
 - domain helper 结构继续收口，但不改变正式对象 API
@@ -30,7 +30,7 @@
 ### `v1.1.1`
 
 - 公开口径回正，统一 `DefaultSample / DefaultSampleSet`
-- 补齐 storage 主线说明与文档规则修正
+- 补齐 storage 主链说明与文档规则修正
 
 ### `v1.1.0`
 

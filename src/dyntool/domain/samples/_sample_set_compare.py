@@ -7,6 +7,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from ._sample_set_views import validate_scalar_data_vars
 from .types import SampleSetComparisonReport
 
 
@@ -89,6 +90,9 @@ def compare_scalar_rows(
 ) -> pd.DataFrame:
     """构建标量摘要差异表。"""
 
+    if data_vars:
+        validate_scalar_data_vars(sample_set, data_vars)
+        validate_scalar_data_vars(other, data_vars)
     if not common_uids or (not data_vars and not features):
         return pd.DataFrame()
 
@@ -157,6 +161,10 @@ def compare_sample_sets(
     same_sample_type = sample_set.sample_type is other.sample_type
     if strict_types and not same_sample_type:
         raise TypeError("compare_with() 要求两个样本集的 sample_type 一致")
+
+    if data_vars:
+        validate_scalar_data_vars(sample_set, data_vars)
+        validate_scalar_data_vars(other, data_vars)
 
     left_only_uids = tuple(uid for uid in sample_set.keys() if uid not in other)
     right_only_uids = tuple(uid for uid in other.keys() if uid not in sample_set)
