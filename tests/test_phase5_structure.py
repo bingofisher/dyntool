@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dyntool.domain.samples import VibrationTestSample, VibrationTestSampleSet
 from dyntool.logging import LogProvider, LoggingConfig, LoggingMode
-from dyntool.plotting import configure_zh
+from dyntool.plotting import PlotDataset, PlotResult, PlotTheme
 from dyntool.storage import StorageMode, StorageScheme
 
 
@@ -20,7 +20,9 @@ def test_logging_symbols_are_defined_in_logging_module() -> None:
 
 
 def test_plotting_config_symbols_are_defined_in_plotting_module() -> None:
-    assert configure_zh.__module__ == "dyntool.plotting.config"
+    assert PlotDataset.__module__ == "dyntool.plotting.dataset"
+    assert PlotTheme.__module__ == "dyntool.plotting.config"
+    assert PlotResult.__module__ == "dyntool.plotting.types"
 
 
 def test_storage_enums_are_defined_in_storage_module() -> None:

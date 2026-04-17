@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 
 from dyntool import AccelSeries, DefaultSample, DefaultSampleSet, SampleDomain, TransferFunctionAnalyzer
-from dyntool.plotting import FramePlotter
+from dyntool.plotting import FramePlotter, PlotCategory, PlotDataset, PlotTheme
 
 
 def _build_sample(*, suffix: str, phase: float) -> DefaultSample:
@@ -48,9 +48,13 @@ def main(output_dir: Path | None = None) -> dict[str, object]:
     # docs:begin plotting_transfer_minimal
     sample_list = list(sample_set.values())
     transfer_result = TransferFunctionAnalyzer.from_samples(sample_list[0], sample_list[1]).solve()
-    plotter = FramePlotter()
-    plotter.add(first_sample.accel, name="first-sample-accel")
-    plot_result = plotter.plot()
+    theme = PlotTheme.default()
+    dataset = PlotDataset.from_model(
+        first_sample.accel,
+        name="first-sample-accel",
+        category=PlotCategory.SAMPLE,
+    )
+    plot_result = FramePlotter(theme=theme).plot_dataset(dataset)
     # docs:end plotting_transfer_minimal
 
     return {

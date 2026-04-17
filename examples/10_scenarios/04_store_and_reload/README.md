@@ -24,8 +24,9 @@ python examples/10_scenarios/04_store_and_reload/main.py
 - `DefaultSample.calc_respspec()`
 - `DefaultSampleSet.save()`
 - `DefaultSampleSet.from_storage()`
-- `FramePlotter.add(...)`
-- `FramePlotter.plot()`
+- `PlotTheme.default()`
+- `PlotDataset.from_model(...)`
+- `FramePlotter(theme=theme).plot_dataset(dataset)`
 
 ## 预期结果
 - 生成样本集 H5 文件

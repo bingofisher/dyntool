@@ -77,13 +77,13 @@ def test_phase7_minimal_closed_loop_covers_log_storage_and_plot(
         sample_domain=SampleDomain.VIBRATION_TEST,
         storage_scheme=StorageScheme.SET_H5,
     )
-    plotter = dt_plotting.FramePlotter()
-    plotter.add(
+    theme = dt_plotting.PlotTheme.default()
+    dataset = dt_plotting.PlotDataset.from_model(
         loaded[sample.uid].accel,  # type: ignore[arg-type]
         name="workflow-accel",
         category=dt_plotting.PlotCategory.SAMPLE,
     )
-    result = plotter.plot()
+    result = dt_plotting.FramePlotter(theme=theme).plot_dataset(dataset)
     assert result.figure is not None
     result.figure.savefig(plot_path, dpi=120)
     dt_logging.get_logger("evaluation").info("phase7 closed loop complete")

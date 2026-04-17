@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
 import numpy as np
@@ -13,7 +12,6 @@ from numpy.typing import ArrayLike
 
 from ._axes_common import AxisFormatMode, AxisSide
 from ._axes_formatters import AxisNumberFormatter, DiscreteAxisFormatter, TickPlanner
-from .config import load_plotting_section
 
 
 class LegendHelper:
@@ -22,18 +20,6 @@ class LegendHelper:
     def __init__(self, ax: Axes | None = None, *, params: Mapping[str, Any] | None = None) -> None:
         self._ax = ax
         self._params = dict(params or {})
-
-    @classmethod
-    def from_file(
-        cls,
-        path: str | Path,
-        *,
-        ax: Axes | None = None,
-    ) -> "LegendHelper":
-        """从统一 plotting 配置文件读取 legend 配置。"""
-
-        payload = load_plotting_section(path, section="legend", fallback_root=False)
-        return cls(ax=ax, params=payload)
 
     @property
     def base_options(self) -> dict[str, Any]:

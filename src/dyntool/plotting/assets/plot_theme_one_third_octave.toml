@@ -1,0 +1,56 @@
+[locale]
+font_family = "sans-serif"
+sans_serif = ["SongTNR", "Microsoft YaHei", "SimHei"]
+math_fontset = "stix"
+unicode_minus = false
+
+[figure]
+width_cm = 15.0
+height_cm = 8.5
+dpi = 150
+add_axes_rect = [0.10, 0.16, 0.84, 0.74]
+
+[axes]
+spine_top = false
+spine_bottom = true
+spine_left = true
+spine_right = false
+spine_linewidth = 0.9
+tick_length = 3.2
+tick_width = 0.8
+minor_tick_length = 2.2
+minor_tick_width = 0.6
+tick_direction = "in"
+grid_linewidth = 0.5
+
+[artist.plot]
+linewidth = 1.4
+linestyle = "-"
+markersize = 5.0
+color = "#1f77b4"
+marker = "o"
+alpha = 0.95
+
+[artist.scatter]
+s = 18
+color = "#1f77b4"
+marker = "o"
+alpha = 0.95
+
+[artist.axhline]
+linestyle = "--"
+linewidth = 1.0
+color = "darkorange"
+alpha = 1.0
+
+[artist.fill_between]
+color = "#1f77b4"
+alpha = 0.15
+linewidth = 0.0
+linestyle = "-"
+
+[legend]
+loc = "upper right"
+fontsize = 9
+frameon = false
+ncol = 1

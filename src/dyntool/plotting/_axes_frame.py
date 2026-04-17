@@ -3,12 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any, Literal, Mapping
 
 from matplotlib.axes import Axes
-
-from .config import load_plotting_section
 
 
 @dataclass(slots=True)
@@ -23,13 +20,6 @@ class AxisFrame:
     """
 
     params: dict[str, Any] = field(default_factory=dict)
-
-    @classmethod
-    def from_file(cls, path: str | Path) -> "AxisFrame":
-        """从统一 plotting 配置文件读取轴样式。"""
-
-        payload = load_plotting_section(path, section="axis_frame", fallback_root=True)
-        return cls(params=cls._normalize_params(payload))
 
     @classmethod
     def default(cls) -> "AxisFrame":
@@ -121,13 +111,6 @@ class GridFrame:
     """坐标轴网格样式配置。"""
 
     params: dict[str, Any] = field(default_factory=dict)
-
-    @classmethod
-    def from_file(cls, path: str | Path) -> "GridFrame":
-        """从统一 plotting 配置文件读取网格样式。"""
-
-        payload = load_plotting_section(path, section="grid_frame", fallback_root=True)
-        return cls(params=cls._normalize_params(payload))
 
     def apply(self, ax: Axes) -> None:
         """将网格样式应用到目标 ``Axes``。"""

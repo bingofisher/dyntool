@@ -42,6 +42,31 @@ def test_legacy_resource_package_is_removed_from_source_tree() -> None:
 def test_plot_backend_and_backend_parameter_are_removed() -> None:
     assert "PlotBackend" not in dyntool.__all__
     assert not hasattr(dt_plotting, "PlotBackend")
-    assert "backend" not in inspect.signature(dt_plotting.FramePlotter.plot).parameters
+    assert not hasattr(dt_plotting.FramePlotter, "plot")
     assert "backend" not in inspect.signature(dt_plotting.FramePlotter.plot_dataset).parameters
     assert "backend" not in getattr(dt_plotting.PlotResult, "__annotations__", {})
+
+
+def test_concrete_plotter_public_signatures_only_expose_ax_and_theme() -> None:
+    for plotter in (
+        dt_plotting.FramePlotter,
+        dt_plotting.BoxPlotter,
+        dt_plotting.OneThirdOctavePlotter,
+        dt_plotting.StoryValuePlotter,
+    ):
+        params = tuple(inspect.signature(plotter).parameters)
+        assert params == ("ax", "theme")
+
+
+def test_plotting_public_bridge_helpers_stay_hidden() -> None:
+    theme = dt_plotting.PlotTheme.default()
+    assert not hasattr(theme, "axis_frame")
+    assert not hasattr(theme, "grid_frame")
+
+    frame_plotter = dt_plotting.FramePlotter()
+    assert not hasattr(frame_plotter, "axis_frame")
+    assert not hasattr(frame_plotter, "grid_frame")
+
+    octave_plotter = dt_plotting.OneThirdOctavePlotter()
+    assert "band_spec" not in inspect.signature(dt_plotting.OneThirdOctavePlotter).parameters
+    assert not hasattr(octave_plotter, "band_spec")
