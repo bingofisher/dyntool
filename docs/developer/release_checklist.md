@@ -8,14 +8,14 @@
 
 默认规则：
 
-- 主目录 `AdvDynTool` 默认对应 `main`；执行已批准的合并后审查时可临时切到 `codex/v1.2.0-postmerge`
-- `codex/v1.2.0-postmerge` 只处理合并后审查发现的问题
+- 主目录 `AdvDynTool` 默认对应 `main`；执行正式 tag 前的最后收口时可临时切到 `codex/v1.2.0-finalize-tag`
+- `codex/v1.2.0-finalize-tag` 只处理正式 tag 前发现的问题
 - `v1.2.0` 的正式 tag 只能打在通过合并后审查的 `main` 提交上
 
 ## 一、版本线确认
 
 - [ ] 当前工作目录是主目录 `AdvDynTool`
-- [ ] 当前分支是 `main` 或 `codex/v1.2.0-postmerge`
+- [ ] 当前分支是 `main` 或 `codex/v1.2.0-finalize-tag`
 - [ ] `src/dyntool/_version.py` 已与目标发布版本一致
 - [ ] `v1.2.0-rc.1` 已存在，且正式发布前不再引入新功能
 
@@ -58,7 +58,7 @@
 - [ ] `python -B scripts/check_public_api_baseline.py`
 - [ ] `python -B scripts/check_resource_consistency.py`
 - [ ] `python -B scripts/check_mkdocs_site.py`
-- [ ] `uv run python -B -m mkdocs build --strict --site-dir .pytest_tmp/mkdocs-site`
+- [ ] `$env:PYTHONDONTWRITEBYTECODE='1'; uv run python -B -m mkdocs build --strict --site-dir .pytest_tmp/mkdocs-site`
 - [ ] `pyright src/dyntool tests/typing_public_api.py`
 - [ ] `uv run python -B -m pytest -q --basetemp .pytest_tmp/pytest -p no:cacheprovider`
 

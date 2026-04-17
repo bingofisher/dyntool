@@ -4,6 +4,7 @@ import argparse
 from dataclasses import dataclass
 from datetime import date
 import fnmatch
+import os
 from pathlib import Path
 import re
 import shutil
@@ -129,6 +130,9 @@ def _run(command: tuple[str, ...], *, capture_output: bool = False) -> subproces
     effective_command = list(command)
     if effective_command and effective_command[0] == "git":
         effective_command[1:1] = ["-c", "core.quotePath=false"]
+    env = os.environ.copy()
+    if tuple(command[:6]) == ("uv", "run", "python", "-B", "-m", "mkdocs"):
+        env.setdefault("PYTHONDONTWRITEBYTECODE", "1")
     return subprocess.run(
         effective_command,
         cwd=PROJECT_ROOT,
@@ -136,6 +140,7 @@ def _run(command: tuple[str, ...], *, capture_output: bool = False) -> subproces
         text=True,
         capture_output=capture_output,
         encoding="utf-8",
+        env=env,
     )
 
 
