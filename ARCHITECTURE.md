@@ -6,6 +6,14 @@
 
 AdvDynTool 以数值结果正确、单位一致和结果可追溯为第一优先级。公开面遵循“对象在顶层，动作在模块，实现下沉内部”的原则。
 
+## 当前版本线
+
+- 当前 worktree 是正式 `1.2.0` 版本线。
+- `1.2.0` 版本线承担 breaking 改动、compat 清理与结构收敛。
+- 主目录 `AdvDynTool` 保持稳定/兼容角色，不在该目录上直接推进 breaking 清理。
+- 迁移说明见 [docs/developer/migration_1_2_0.md](docs/developer/migration_1_2_0.md)。
+- 发布检查项见 [docs/developer/release_checklist.md](docs/developer/release_checklist.md)。
+
 ## 实现层结构
 
 - `domain`：对象、单位语义、样本与评价结果
