@@ -8,14 +8,14 @@
 
 ## 当前状态
 
-- 当前稳定发布线：`1.2.x`
-- 当前候选补丁线：`codex/v1.2.0-postmerge`
+- 当前主线状态：`main` 已合入 `v1.2.0` 候选内容，正在做正式 tag 前的最终审查
+- 当前候选补丁线：`codex/v1.2.0-finalize-tag`
 - 已发布 RC：`v1.2.0-rc.1`
-- 当前正式发布内容：`v1.2.0`
+- 待发布正式 tag：`v1.2.0`
 
 ## 主要版本节点
 
-### `v1.2.0`
+### `v1.2.0`（待打正式 tag）
 
 - plotting 正式主链固定为 `PlotDataset -> PlotTheme -> concrete plotter -> PlotResult.ax`
 - `dyntool.reporting` 正式纳入公开面

@@ -98,7 +98,7 @@
   - `python -B scripts/check_public_api_baseline.py`
   - `python -B scripts/check_resource_consistency.py`
   - `python -B scripts/check_mkdocs_site.py`
-  - `uv run python -B -m mkdocs build --strict --site-dir .pytest_tmp/mkdocs-site`
+  - `$env:PYTHONDONTWRITEBYTECODE='1'; uv run python -B -m mkdocs build --strict --site-dir .pytest_tmp/mkdocs-site`
   - `pyright src/dyntool tests/typing_public_api.py`
   - `uv run python -B -m pytest -q --basetemp .pytest_tmp/pytest -p no:cacheprovider`
 - 关键行为必须有测试：
@@ -156,5 +156,5 @@
 - 生成物治理优先从命令源头解决，不依赖“生成后再循环删除”：
   - Python 入口统一禁用 bytecode 写入
   - `ruff` 统一使用 `--no-cache`
-  - `mkdocs build` 统一输出到已忽略目录
+  - `mkdocs build` 统一输出到已忽略目录，并在 shell 级显式设置 `PYTHONDONTWRITEBYTECODE=1`
   - `pytest` 临时目录统一落到已忽略路径，并关闭 `cacheprovider`

@@ -7,7 +7,7 @@
 - 版本线与迁移策略
 - 工程项目迁移验证
 - 版本迁移说明与发布清单
-- plotting breaking 收敛
+- plotting 收口记录
 - API 设计与公开面约束
 - DefaultSample / DefaultSampleSet 与 storage 主链
 - 文档规范与示例映射

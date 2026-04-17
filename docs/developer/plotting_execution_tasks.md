@@ -4,13 +4,13 @@
 
 ## 说明
 
-本页记录 `v1.2.0` 版本线中 plotting breaking 收敛任务。
+本页记录 `v1.2.0` 中 plotting 收口任务的完成形态，保留给维护者回溯设计决策和测试边界使用。
 
-这一版与主目录不同：
+这些任务已经在当前 `main` 上落地：
 
-- 直接删除 compat facade
-- 直接删除 `add()+plot()` 旧路径
-- plotter 只接受 `PlotDataset`
+- compat facade 已删除
+- `add()+plot()` 旧路径已删除
+- plotter 正式输入统一为 `PlotDataset`
 
 ## 当前任务
 

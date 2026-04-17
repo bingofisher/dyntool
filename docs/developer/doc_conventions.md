@@ -78,7 +78,7 @@
 - `uv run python -B scripts/check_text_quality.py`
 - `uv run python -B scripts/check_docstring_coverage.py`
 - `uv run python -B scripts/check_mkdocs_site.py`
-- `uv run python -B -m mkdocs build --strict --site-dir .pytest_tmp/mkdocs-site`
+- `$env:PYTHONDONTWRITEBYTECODE='1'; uv run python -B -m mkdocs build --strict --site-dir .pytest_tmp/mkdocs-site`
 
 若改动涉及公开 API、示例或文档结构，还必须同步验证：
 
