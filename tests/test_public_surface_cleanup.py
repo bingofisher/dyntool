@@ -47,15 +47,19 @@ def test_plot_backend_and_backend_parameter_are_removed() -> None:
     assert "backend" not in getattr(dt_plotting.PlotResult, "__annotations__", {})
 
 
-def test_concrete_plotter_public_signatures_only_expose_ax_and_theme() -> None:
-    for plotter in (
-        dt_plotting.FramePlotter,
-        dt_plotting.BoxPlotter,
-        dt_plotting.OneThirdOctavePlotter,
-        dt_plotting.StoryValuePlotter,
-    ):
-        params = tuple(inspect.signature(plotter).parameters)
-        assert params == ("ax", "theme")
+def test_concrete_plotter_public_signatures_match_current_public_surface() -> None:
+    assert tuple(inspect.signature(dt_plotting.FramePlotter).parameters) == ("ax", "theme", "axis_config")
+    assert tuple(inspect.signature(dt_plotting.BoxPlotter).parameters) == ("ax", "theme")
+    assert tuple(inspect.signature(dt_plotting.OneThirdOctavePlotter).parameters) == (
+        "ax",
+        "theme",
+        "axis_config",
+    )
+    assert tuple(inspect.signature(dt_plotting.StoryValuePlotter).parameters) == (
+        "ax",
+        "theme",
+        "axis_config",
+    )
 
 
 def test_plotting_public_bridge_helpers_stay_hidden() -> None:

@@ -7,7 +7,7 @@ from typing import Any, Callable, Iterable, Mapping, Sequence
 import numpy as np
 from matplotlib.axes import Axes
 from matplotlib.legend import Legend
-from matplotlib.ticker import FixedFormatter, FixedLocator
+from matplotlib.ticker import FixedFormatter, FixedLocator, MultipleLocator
 from numpy.typing import ArrayLike
 
 from ._axes_common import AxisFormatMode, AxisSide
@@ -169,9 +169,11 @@ class AxisHelper:
         mode: AxisFormatMode,
         data: ArrayLike | None = None,
         ticks: Sequence[float] | None = None,
+        major_step: float | None = None,
         num_segments: int | None = None,
         tick_min: float | None = None,
         tick_max: float | None = None,
+        minor_step: float | None = None,
         include_zero: bool | None = None,
         baseline: float | None = None,
         height_ratio: float | None = None,
@@ -180,6 +182,8 @@ class AxisHelper:
         scientific: bool | None = None,
         scientific_fontsize: float | None = None,
         scientific_exponent: int | None = None,
+        scientific_offset_x: float | None = None,
+        scientific_offset_y: float | None = None,
         positions: Sequence[float] | None = None,
         labels: Sequence[str] | None = None,
         rotation: float | None = None,
@@ -193,9 +197,11 @@ class AxisHelper:
                 side=side,
                 data=data,
                 ticks=ticks,
+                major_step=major_step,
                 num_segments=num_segments,
                 tick_min=tick_min,
                 tick_max=tick_max,
+                minor_step=minor_step,
                 include_zero=include_zero,
                 baseline=baseline,
                 height_ratio=height_ratio,
@@ -204,6 +210,8 @@ class AxisHelper:
                 scientific=scientific,
                 scientific_fontsize=scientific_fontsize,
                 scientific_exponent=scientific_exponent,
+                scientific_offset_x=scientific_offset_x,
+                scientific_offset_y=scientific_offset_y,
             )
             return
         if mode == "discrete":
@@ -254,9 +262,11 @@ class AxisHelper:
         side: AxisSide,
         data: ArrayLike | None,
         ticks: Sequence[float] | None,
+        major_step: float | None,
         num_segments: int | None,
         tick_min: float | None,
         tick_max: float | None,
+        minor_step: float | None,
         include_zero: bool | None,
         baseline: float | None,
         height_ratio: float | None,
@@ -265,6 +275,8 @@ class AxisHelper:
         scientific: bool | None,
         scientific_fontsize: float | None,
         scientific_exponent: int | None,
+        scientific_offset_x: float | None,
+        scientific_offset_y: float | None,
     ) -> None:
         lower_bound, upper_bound = self._resolve_continuous_bounds(
             side=side,
@@ -280,9 +292,12 @@ class AxisHelper:
             side=side,
             data=data,
             ticks=ticks,
+            major_step=major_step,
             num_segments=num_segments,
-            tick_min=lower_bound,
-            tick_max=upper_bound,
+            tick_min=tick_min,
+            tick_max=tick_max,
+            resolved_tick_min=lower_bound,
+            resolved_tick_max=upper_bound,
             include_zero=include_zero,
         )
         display_lower, display_upper = self._resolve_display_bounds(
@@ -303,6 +318,8 @@ class AxisHelper:
         axis = self._target_axis(side)
         axis.set_major_locator(FixedLocator(resolved_ticks.tolist()))
         axis.set_major_formatter(formatter)
+        if minor_step is not None:
+            axis.set_minor_locator(MultipleLocator(float(minor_step)))
         self._set_axis_side_visibility(side)
         self._set_offset_position(side)
         axis.get_offset_text().set_visible(not np.isclose(scale_factor, 1.0))
@@ -312,6 +329,12 @@ class AxisHelper:
             offset_fontsize = self._tick_label_size(side)
         if offset_fontsize is not None:
             axis.get_offset_text().set_fontsize(offset_fontsize)
+        if scientific_offset_x is not None or scientific_offset_y is not None:
+            self._bind_offset_text_position(
+                axis=axis,
+                x=scientific_offset_x,
+                y=scientific_offset_y,
+            )
 
     def _format_discrete_side(
         self,
@@ -340,9 +363,12 @@ class AxisHelper:
         side: AxisSide,
         data: ArrayLike | None,
         ticks: Sequence[float] | None,
+        major_step: float | None,
         num_segments: int | None,
         tick_min: float | None,
         tick_max: float | None,
+        resolved_tick_min: float | None,
+        resolved_tick_max: float | None,
         include_zero: bool | None,
     ) -> np.ndarray:
         if ticks is not None:
@@ -350,6 +376,18 @@ class AxisHelper:
             if values.ndim != 1 or values.size == 0:
                 raise ValueError("ticks 必须是一维非空数值序列。")
             return values
+        if major_step is not None:
+            if major_step <= 0.0:
+                raise ValueError("major_step 必须大于 0。")
+            return self._build_step_ticks(
+                lower=float(tick_min) if tick_min is not None else None,
+                upper=float(tick_max) if tick_max is not None else None,
+                resolved_lower=float(resolved_tick_min) if resolved_tick_min is not None else None,
+                resolved_upper=float(resolved_tick_max) if resolved_tick_max is not None else None,
+                data=self._coerce_data_or_axis_data(side=side, data=data),
+                step=float(major_step),
+                include_zero=bool(include_zero),
+            )
 
         source_values = self._coerce_data_or_axis_data(side=side, data=data)
         if source_values.size == 0:
@@ -374,6 +412,41 @@ class AxisHelper:
         if num_segments is not None:
             return planner.plan_segments()
         return planner.plan()
+
+    @staticmethod
+    def _build_step_ticks(
+        *,
+        lower: float | None,
+        upper: float | None,
+        resolved_lower: float | None,
+        resolved_upper: float | None,
+        data: np.ndarray,
+        step: float,
+        include_zero: bool,
+    ) -> np.ndarray:
+        if data.size == 0 and (resolved_lower is None or resolved_upper is None):
+            raise ValueError("无法在缺少有效数据和显式边界时按 major_step 规划刻度。")
+        computed_lower = float(np.nanmin(data)) if resolved_lower is None else float(resolved_lower)
+        computed_upper = float(np.nanmax(data)) if resolved_upper is None else float(resolved_upper)
+        if include_zero:
+            computed_lower = min(computed_lower, 0.0)
+            computed_upper = max(computed_upper, 0.0)
+        if computed_lower == computed_upper:
+            margin = max(abs(computed_lower) * 0.1, step)
+            computed_lower -= margin
+            computed_upper += margin
+        if computed_lower > computed_upper:
+            computed_lower, computed_upper = computed_upper, computed_lower
+
+        start = float(lower) if lower is not None else np.floor(computed_lower / step) * step
+        end = float(upper) if upper is not None else np.ceil(computed_upper / step) * step
+        values = np.arange(start, end + step * 0.5, step, dtype=float)
+        if values.size == 0:
+            return np.asarray([start, end], dtype=float)
+        if upper is not None and not np.isclose(values[-1], end):
+            values = values[values < end]
+            values = np.append(values, end)
+        return values
 
     def _resolve_continuous_bounds(
         self,
@@ -505,3 +578,32 @@ class AxisHelper:
             axis.set_offset_position(side)
         except AttributeError:
             return
+
+    def _bind_offset_text_position(
+        self,
+        *,
+        axis: Any,
+        x: float | None,
+        y: float | None,
+    ) -> None:
+        text = axis.get_offset_text()
+
+        def _apply_position() -> None:
+            current_x, current_y = text.get_position()
+            text.set_position(
+                (
+                    float(x) if x is not None else float(current_x),
+                    float(y) if y is not None else float(current_y),
+                )
+            )
+
+        _apply_position()
+        canvas = self._ax.figure.canvas
+        existing_cid = getattr(text, "_dyntool_offset_draw_cid", None)
+        if existing_cid is not None:
+            try:
+                canvas.mpl_disconnect(existing_cid)
+            except ValueError:
+                pass
+        cid = canvas.mpl_connect("draw_event", lambda _event: _apply_position())
+        setattr(text, "_dyntool_offset_draw_cid", cid)

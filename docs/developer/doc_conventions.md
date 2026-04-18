@@ -4,7 +4,7 @@
 
 本页定义 AdvDynTool 的正式文档写法、docstring 结构、示例映射和文档门禁规则。目标不是堆砌文字，而是保证 README、正式文档站、示例、测试和源码说明始终使用同一套事实。
 
-## 正式文档栈
+## 正式文档结构
 
 - 正式文档站统一使用 `MkDocs + Material + mkdocstrings`
 - `README.md` 只负责仓库首页摘要，不承担完整手册
@@ -71,6 +71,27 @@
 - 正式用户页必须至少给出一个对应示例
 - 公开 API 变更时，至少同步一个示例和一个测试覆盖点
 
+## 模块布局说明
+
+文档在解释内部实现时，应与仓库的模块组织规则保持一致，避免把“公开入口”和“底层细节”混写成一段无序清单。
+
+推荐的模块内定义顺序为：
+
+1. 模块常量、类型别名、模块级配置
+2. 私有聚合对象或私有 dataclass
+3. 对外公开类
+4. 对外公开函数
+5. 私有薄包装
+6. 底层转换与校验细节
+7. `__all__`
+
+补充约束如下：
+
+- 私有 parser / runtime / adapter / resolver 如果是公开入口的直接依赖，应放在公开入口之前。
+- 公开类和公开函数应尽量连续、集中出现，不要在它们之间夹一组无关私有 helper。
+- 底层 `coerce`、`normalize`、`validate` 一类实现细节应尽量后置，避免读者为了看公开入口而横跳多个小函数。
+- 这条规则用于解决布局和阅读路径问题，不替代 helper 聚合规则；helper 是否应收进私有对象，仍由仓库的内部 helper 规则约束。
+
 ## 文档门禁
 
 提交前至少验证：
@@ -78,6 +99,8 @@
 - `uv run python -B scripts/check_text_quality.py`
 - `uv run python -B scripts/check_docstring_coverage.py`
 - `uv run python -B scripts/check_mkdocs_site.py`
+- `uv run python -B scripts/check_repository_governance.py`
+- `uv run python -B scripts/check_helper_structure.py`
 - `$env:PYTHONDONTWRITEBYTECODE='1'; uv run python -B -m mkdocs build --strict --site-dir .pytest_tmp/mkdocs-site`
 
 若改动涉及公开 API、示例或文档结构，还必须同步验证：
@@ -87,6 +110,6 @@
 
 ## 禁止项
 
-- 不再引入旧文档栈和旧 API 页入口
+- 不再引入旧文档栏和旧 API 页入口
 - 不在正式页面里只写“见某文件”，而不给最小代码片段
-- 不在公开文档中把 `Internal API` 包装成正式主用法
+- 不在公开文档里把 `Internal API` 包装成正式主用法

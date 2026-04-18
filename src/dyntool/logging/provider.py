@@ -344,14 +344,7 @@ _DEFAULT_PROVIDER_FALLBACK_WARNED = False
 def _normalize_logger_name(name: str | None = None) -> str:
     """规范化 dyntool logger 名称。"""
 
-    if not name:
-        return "dyntool"
-    text = str(name).strip()
-    if not text:
-        return "dyntool"
-    if text == "dyntool" or text.startswith("dyntool."):
-        return text
-    return f"dyntool.{text}"
+    return _RUNTIME.normalize_logger_name(name)
 
 
 def _feature_name(logger_name: str) -> str:
@@ -461,13 +454,82 @@ def _instantiate_provider(name: str, config: LoggingConfig | None = None) -> Log
     raise KeyError(f"未知日志 provider: {name}")
 
 
-_PROVIDER_REGISTRY: dict[str, ProviderFactory] = {"stdlib": _build_stdlib_provider}
-_OPTIONAL_PROVIDER_REGISTRY: dict[str, ProviderFactory] = {"loguru": _build_loguru_provider}
-_ACTIVE_PROVIDER_NAME = _resolve_default_provider_name(emit_warning=True)
-_GLOBAL_PROVIDER = _instantiate_provider(
-    _ACTIVE_PROVIDER_NAME,
-    LoggingConfig(provider=_ACTIVE_PROVIDER_NAME),
-)
+class _ProviderRegistryRuntime:
+    """管理 provider 注册表、回退逻辑与当前全局 provider。"""
+
+    def __init__(self) -> None:
+        self._providers: dict[str, ProviderFactory] = {"stdlib": _build_stdlib_provider}
+        self._optional_providers: dict[str, ProviderFactory] = {"loguru": _build_loguru_provider}
+        active_name = _resolve_default_provider_name(emit_warning=True)
+        self._active_provider_name = active_name
+        self._global_provider = self.instantiate_provider(
+            active_name,
+            LoggingConfig(provider=active_name),
+        )
+
+    @staticmethod
+    def normalize_logger_name(name: str | None = None) -> str:
+        """规范 dyntool logger 名称。"""
+
+        if not name:
+            return "dyntool"
+        text = str(name).strip()
+        if not text:
+            return "dyntool"
+        if text == "dyntool" or text.startswith("dyntool."):
+            return text
+        return f"dyntool.{text}"
+
+    def instantiate_provider(self, name: str, config: LoggingConfig | None = None) -> LogProvider:
+        """根据名称构造 provider。"""
+
+        if name in self._providers:
+            return self._providers[name](config)
+        if name in self._optional_providers:
+            if _load_loguru_logger() is None:
+                raise RuntimeError("未安装可选依赖 loguru，请先安装后再切换到 loguru provider")
+            return self._optional_providers[name](config)
+        raise KeyError(f"未知日志 provider: {name}")
+
+    def register(self, name: str, factory: ProviderFactory) -> None:
+        """注册 provider 工厂。"""
+
+        self._providers[name] = factory
+
+    def available(self) -> tuple[str, ...]:
+        """返回当前可用 provider 名称。"""
+
+        names = set(self._providers)
+        if _load_loguru_logger() is not None:
+            names.update(self._optional_providers)
+        return tuple(sorted(names))
+
+    def use(self, name: str, *, config: LoggingConfig | None = None) -> LogProvider:
+        """切换当前全局 provider。"""
+
+        current_provider = self._global_provider
+        current_provider.close()
+        provider = self.instantiate_provider(name, config)
+        self._global_provider = provider
+        self._active_provider_name = name
+        return provider
+
+    def active_provider_name(self) -> str:
+        """返回当前启用 provider 名称。"""
+
+        return self._active_provider_name
+
+    def get_provider(self) -> LogProvider:
+        """返回当前全局 provider。"""
+
+        return self._global_provider
+
+
+_RUNTIME = _ProviderRegistryRuntime()
+_PROVIDER_REGISTRY = _RUNTIME._providers
+_OPTIONAL_PROVIDER_REGISTRY = _RUNTIME._optional_providers
+_ACTIVE_PROVIDER_NAME = _RUNTIME.active_provider_name()
+_GLOBAL_PROVIDER = _RUNTIME.get_provider()
 
 
 def register_log_provider(name: str, factory: ProviderFactory) -> None:
@@ -476,16 +538,14 @@ def register_log_provider(name: str, factory: ProviderFactory) -> None:
     normalized = str(name).strip().lower()
     if not normalized:
         raise ValueError("日志 provider 名称不能为空")
-    _PROVIDER_REGISTRY[normalized] = factory
+    _RUNTIME.register(normalized, factory)
+    globals()["_PROVIDER_REGISTRY"] = _RUNTIME._providers
 
 
 def available_providers() -> tuple[str, ...]:
     """返回当前可用 provider 名称。"""
 
-    names = set(_PROVIDER_REGISTRY)
-    if _load_loguru_logger() is not None:
-        names.update(_OPTIONAL_PROVIDER_REGISTRY)
-    return tuple(sorted(names))
+    return _RUNTIME.available()
 
 
 def use_log_provider(
@@ -496,24 +556,22 @@ def use_log_provider(
     """切换全局日志 provider。"""
 
     normalized = str(name).strip().lower()
-    current_provider = _GLOBAL_PROVIDER
-    current_provider.close()
-    provider = _instantiate_provider(normalized, config)
-    globals()["_GLOBAL_PROVIDER"] = provider
-    globals()["_ACTIVE_PROVIDER_NAME"] = normalized
+    provider = _RUNTIME.use(normalized, config=config)
+    globals()["_GLOBAL_PROVIDER"] = _RUNTIME.get_provider()
+    globals()["_ACTIVE_PROVIDER_NAME"] = _RUNTIME.active_provider_name()
     return provider
 
 
 def get_active_provider_name() -> str:
     """返回当前启用的 provider 名称。"""
 
-    return _ACTIVE_PROVIDER_NAME
+    return _RUNTIME.active_provider_name()
 
 
 def get_log_provider() -> LogProvider:
     """返回当前全局 provider。"""
 
-    return _GLOBAL_PROVIDER
+    return _RUNTIME.get_provider()
 
 
 def get_logger(
@@ -523,7 +581,7 @@ def get_logger(
 ) -> logging.Logger | logging.LoggerAdapter[logging.Logger]:
     """从当前 provider 获取 logger。"""
 
-    return _GLOBAL_PROVIDER.get(name, context=context)
+    return _RUNTIME.get_provider().get(name, context=context)
 
 
 __all__ = [

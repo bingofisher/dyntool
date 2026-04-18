@@ -12,6 +12,11 @@ from dyntool.domain.models import AccelSeries
 from dyntool.infrastructure.sample_storage_sqlite_h5_payload import _collect_payload_path_refs
 from dyntool.infrastructure.sample_storage_sqlite_h5_projection import _build_summary_rows
 from dyntool.infrastructure.sample_storage_sqlite_h5_types import _SqlitePresenceRow
+from dyntool.storage._sample_set_request_summary import (
+    summarize_sample_set_categories,
+    summarize_sample_set_data_options,
+    summarize_sample_set_scheme,
+)
 from dyntool.storage._sample_set_runtime import _resolve_sample_set_path_request
 from dyntool.storage.runtime import StorageRuntime
 from dyntool.storage.types import StorageMode, StorageScheme
@@ -81,6 +86,24 @@ def test_build_summary_rows_extracts_sampling_metrics_and_peak_value() -> None:
     assert rows["accel@dt"]["unit"] == "second"
     assert rows["accel@duration"]["value_real"] == 0.03
     assert rows["pga"]["value_real"] == accel.pga()
+
+
+def test_sample_set_request_summary_formats_categories_data_options_and_scheme() -> None:
+    assert summarize_sample_set_categories(None) == "all"
+    assert summarize_sample_set_categories(["accel", "vel"]) == "accel,vel"
+    assert summarize_sample_set_data_options(None) == "none"
+    assert (
+        summarize_sample_set_data_options(
+            {
+                "h5_compression": "gzip",
+                "h5_compression_level": 4,
+                "float_dtype": "float32",
+            }
+        )
+        == "keys=float_dtype,h5_compression,h5_compression_level; float_dtype=float32; h5_compression=gzip; h5_compression_level=4"
+    )
+    assert summarize_sample_set_scheme(StorageScheme.SET_SQLITE_H5) == "SET_SQLITE_H5"
+    assert summarize_sample_set_scheme(None) is None
 
 
 def test_resolve_sample_set_path_request_extracts_set_filename_for_set_h5(tmp_path: Path) -> None:

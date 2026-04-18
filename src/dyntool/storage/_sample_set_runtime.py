@@ -19,36 +19,12 @@ from ._runtime_common import (
     resolve_sample_set_connect_target,
     resolve_sample_set_scheme_for_read,
 )
+from ._sample_set_request_summary import (
+    summarize_sample_set_categories,
+    summarize_sample_set_data_options,
+    summarize_sample_set_scheme,
+)
 from .types import NameResolver, StorageConnectOptions, StorageMode, StorageScheme
-
-
-def _summarize_categories(categories: list[str] | None) -> str:
-    if not categories:
-        return "all"
-    return ",".join(str(item) for item in categories)
-
-
-def _summarize_data_options(data_options: dict[str, Any] | None) -> str:
-    if not data_options:
-        return "none"
-    keys = ",".join(sorted(str(key) for key in data_options))
-    summary_parts = [f"keys={keys}"]
-    for key in (
-        "attr_data_format",
-        "decimal_round",
-        "float_dtype",
-        "h5_compression",
-        "h5_compression_level",
-    ):
-        if key in data_options:
-            summary_parts.append(f"{key}={data_options[key]}")
-    return "; ".join(summary_parts)
-
-
-def _scheme_label(scheme: StorageScheme | None) -> str | None:
-    if scheme is None:
-        return None
-    return scheme.name
 
 
 @dataclass(slots=True)
@@ -286,13 +262,13 @@ class _SampleSetStorageRuntimeMixin:
             "categories=%s, set_filename=%s, data_options=%s",
             path_obj,
             resolved_domain.value,
-            _scheme_label(actual_scheme),
+            summarize_sample_set_scheme(actual_scheme),
             workers,
             chunk_size,
             strict,
-            _summarize_categories(categories),
+            summarize_sample_set_categories(categories),
             set_filename,
-            _summarize_data_options(data_options),
+            summarize_sample_set_data_options(data_options),
         )
         try:
             result = sample_set_cls.from_samples(
@@ -358,7 +334,7 @@ class _SampleSetStorageRuntimeMixin:
             request.storage_scheme.name,
             request.set_filename,
             "enabled" if request.name_resolver is not None else "disabled",
-            _summarize_data_options(request.data_options),
+            summarize_sample_set_data_options(request.data_options),
         )
         try:
             self._connect_resolved_sample_set_storage(sample_set, request)
@@ -399,13 +375,15 @@ class _SampleSetStorageRuntimeMixin:
             "categories=%s, set_filename=%s, data_options=%s",
             path,
             getattr(mode, "value", mode),
-            _scheme_label(storage_scheme) if isinstance(storage_scheme, StorageScheme) else storage_scheme,
+            summarize_sample_set_scheme(storage_scheme)
+            if isinstance(storage_scheme, StorageScheme)
+            else storage_scheme,
             workers,
             chunk_size,
             strict,
-            _summarize_categories(categories),
+            summarize_sample_set_categories(categories),
             set_filename,
-            _summarize_data_options(data_options),
+            summarize_sample_set_data_options(data_options),
         )
         try:
             request = self._resolve_storage_request_for_path(
@@ -461,13 +439,15 @@ class _SampleSetStorageRuntimeMixin:
             "categories=%s, set_filename=%s, data_options=%s",
             path,
             getattr(mode, "value", mode),
-            _scheme_label(storage_scheme) if isinstance(storage_scheme, StorageScheme) else storage_scheme,
+            summarize_sample_set_scheme(storage_scheme)
+            if isinstance(storage_scheme, StorageScheme)
+            else storage_scheme,
             workers,
             chunk_size,
             strict,
-            _summarize_categories(categories),
+            summarize_sample_set_categories(categories),
             set_filename,
-            _summarize_data_options(data_options),
+            summarize_sample_set_data_options(data_options),
         )
         try:
             request = self._resolve_storage_request_for_path(
@@ -513,8 +493,8 @@ class _SampleSetStorageRuntimeMixin:
             kwargs.get("workers", 1),
             kwargs.get("chunk_size", 256),
             kwargs.get("strict"),
-            _scheme_label(getattr(sample_set.storage, "storage_scheme", None)),
-            _summarize_categories(kwargs.get("categories")),
+            summarize_sample_set_scheme(getattr(sample_set.storage, "storage_scheme", None)),
+            summarize_sample_set_categories(kwargs.get("categories")),
         )
         try:
             result = cast(
@@ -546,8 +526,8 @@ class _SampleSetStorageRuntimeMixin:
             kwargs.get("workers", 1),
             kwargs.get("chunk_size", 256),
             kwargs.get("strict", sample_set.strict),
-            _scheme_label(getattr(sample_set.storage, "storage_scheme", None)),
-            _summarize_categories(kwargs.get("categories")),
+            summarize_sample_set_scheme(getattr(sample_set.storage, "storage_scheme", None)),
+            summarize_sample_set_categories(kwargs.get("categories")),
         )
         try:
             if kwargs.get("strict") is None:

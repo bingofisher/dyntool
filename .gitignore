@@ -25,7 +25,9 @@ docs/_build/
 .venv/
 .vscode/
 .worktrees/
-.agents/
+.agents/*
+!.agents/skills/
+!.agents/skills/**
 
 # Example/generated artifacts
 /examples/output/

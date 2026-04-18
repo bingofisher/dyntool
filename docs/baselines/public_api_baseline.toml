@@ -105,8 +105,11 @@ storage_module_exports_allowed = [
 ]
 
 plotting_module_exports_allowed = [
+  "AxisConfig",
   "BoxPlotter",
+  "ContinuousAxisSpec",
   "FramePlotter",
+  "OctaveAxisSpec",
   "OneThirdOctavePlotter",
   "PlotCategory",
   "PlotDataset",

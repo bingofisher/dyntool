@@ -89,18 +89,20 @@
 
 ## 9) 质量门禁
 - 提交前至少执行：
-  - `python -B scripts/check_codex_assets.py`
-  - `ruff check --no-cache src/dyntool tests examples`
-  - `ruff format --check src/dyntool tests examples`
-  - `python -B scripts/check_layer_imports.py`
-  - `python -B scripts/check_text_quality.py`
-  - `python -B scripts/check_docstring_coverage.py`
-  - `python -B scripts/check_public_api_baseline.py`
-  - `python -B scripts/check_resource_consistency.py`
-  - `python -B scripts/check_mkdocs_site.py`
+  - `uv run python -B scripts/check_codex_assets.py`
+  - `uv run ruff check --no-cache src/dyntool tests examples`
+  - `uv run ruff format --check src/dyntool tests examples`
+  - `uv run python -B scripts/check_layer_imports.py`
+  - `uv run python -B scripts/check_text_quality.py`
+  - `uv run python -B scripts/check_docstring_coverage.py`
+  - `uv run python -B scripts/check_public_api_baseline.py`
+  - `uv run python -B scripts/check_resource_consistency.py`
+  - `uv run python -B scripts/check_mkdocs_site.py`
+  - `uv run python -B scripts/check_repository_governance.py`
+  - `uv run python -B scripts/check_helper_structure.py`
   - `$env:PYTHONDONTWRITEBYTECODE='1'; uv run python -B -m mkdocs build --strict --site-dir .pytest_tmp/mkdocs-site`
-  - `pyright src/dyntool tests/typing_public_api.py`
-  - `uv run python -B -m pytest -q --basetemp .pytest_tmp/pytest -p no:cacheprovider`
+  - `uv run pyright src/dyntool tests/typing_public_api.py`
+  - `$env:PYTHONDONTWRITEBYTECODE='1'; uv run python -B -m pytest -q --basetemp .pytest_tmp/pytest -p no:cacheprovider`
 - 关键行为必须有测试：
   - demo 路径
   - `from_accel -> eval -> save/load -> plot` 最小闭环
@@ -158,3 +160,38 @@
   - `ruff` 统一使用 `--no-cache`
   - `mkdocs build` 统一输出到已忽略目录，并在 shell 级显式设置 `PYTHONDONTWRITEBYTECODE=1`
   - `pytest` 临时目录统一落到已忽略路径，并关闭 `cacheprovider`
+
+## 13) 内部聚合与 Helper 规则
+- 禁止在单文件顶层平铺成组私有 helper，尤其是同前缀、同风格、围绕同一份 payload 或 runtime 状态工作的 `_normalize_*`、`_coerce_*`、`_apply_*`、`_resolve_*` 小函数簇。
+- 更推荐的内部组织方式是：
+  - 私有 runtime / parser / adapter / resolver 对象
+  - 按职责拆开的私有子模块
+- 少量职责独立、复用明确的 helper 可以保留，但不得让主流程退化为“读一个文件要横跳一串小函数清单”。
+- 该规则由 `uv run python -B scripts/check_helper_structure.py` 作为硬门禁执行。
+
+## 14) plotting 配置与文档口径
+- plotting 正式 TOML schema 只能使用当前正式入口：
+  - `grid.x.major / grid.x.minor / grid.y.major / grid.y.minor`
+  - `axis.x.label / axis.y.label`
+  - `axis.x / axis.y`
+- `PlotTheme.axis_labels`、`PlotTheme.axis_config` 等运行时对象字段名，只允许在 Python API 或运行时说明中出现，不得冒充正式 TOML schema。
+- 项目级 profile / variant patch 仍属于项目层集成手法，不得写成 `dyntool.plotting` 的正式 schema。
+- 已移除的 plotting schema/token 不得在正式文档、示例和内置 theme 资产中复活；迁移文档、归档文档和显式负例测试除外。
+- 该规则由 `uv run python -B scripts/check_repository_governance.py` 作为硬门禁执行。
+
+## 15) 模块内定义顺序
+- 模块内定义顺序遵循“先稳定入口，再下沉细节”的轻量组织规则，不要求所有文件完全同构，但必须保证公开入口可连续阅读。
+- 推荐顺序为：
+  - 模块常量、类型别名、模块级配置
+  - 私有聚合对象或私有 dataclass
+  - 对外公开类
+  - 对外公开函数
+  - 私有薄包装
+  - 底层转换、校验、coerce 细节
+  - `__all__`
+- 私有聚合对象优先于公开入口依赖的散乱 helper；如果公开类或公开函数依赖内部 parser / runtime / adapter / resolver，应把这些聚合对象放在公开入口之前，而不是在公开入口前后散落一组自由 helper。
+- 公开类和公开函数应尽量连续、集中出现；禁止公开类/函数之间被一组无关私有 helper 打断主流程。
+- 这条规则和第 13 节的 helper 聚合规则配套使用：
+  - 第 13 节约束“不要把内部逻辑拆成散乱 helper 簇”
+  - 本节约束“即使已有内部对象，也不要把公开入口和底层细节混排”
+- 本轮该规则只作为仓库规范与评审约束，不新增自动失败门禁；若后续同类问题继续反复出现，再考虑把“公开入口被无关私有 helper 打断”补进 `check_helper_structure.py`。

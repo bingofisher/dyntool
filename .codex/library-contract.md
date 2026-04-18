@@ -2,20 +2,22 @@
 
 ## 主入口
 ```python
-from dyntool import AccelSeries, Metadata, Sample, SampleSet
+from dyntool import AccelSeries, Metadata, DefaultSample, DefaultSampleSet
 import dyntool.storage as dt_storage
 import dyntool.plotting as dt_plotting
 import dyntool.logging as dt_logging
+import dyntool.reporting as dt_reporting
 import dyntool.config as dt_config
-import dyntool.resource as dt_resource
+import dyntool.resources as dt_resources
 ```
 
 ## 正式支持模块
 - `dyntool.storage`
 - `dyntool.plotting`
 - `dyntool.logging`
+- `dyntool.reporting`
 - `dyntool.config`
-- `dyntool.resource`
+- `dyntool.resources`
 
 ## 正式公开面规则
 - 顶层公开面以对象 API 为主，不暴露内部层级路径。
@@ -24,6 +26,7 @@ import dyntool.resource as dt_resource
 
 ## 任务路由
 - 公开面、分层边界和命名口径相关任务优先命中 `advdyntool-task-routing` 与 `software-architecture`。
+- 面向其他项目的公共用法问题优先命中 `advdyntool-usage-guide`。
 - 文档联动任务优先命中 `advdyntool-doc-sync`。
 - 影响分析优先命中 `advdyntool-impact-analysis`。
 - 质量门禁收口优先命中 `advdyntool-quality-gates`。

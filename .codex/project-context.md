@@ -6,8 +6,9 @@
 - 保持对象关系、公开 API 和正式文档口径稳定清晰。
 
 ## 当前正式公开面
-- 顶层对象 API：`AccelSeries`、`Metadata`、`Sample`、`SampleSet` 等核心对象。
-- 正式模块 API：`dyntool.storage`、`dyntool.plotting`、`dyntool.logging`、`dyntool.config`、`dyntool.resource`。
+- 顶层对象 API：`AccelSeries`、`Metadata`、`VibrationTestMetadata`、`DefaultSample`、`DefaultSampleSet`、`OperationResult`、`BatchOperationReport`。
+- 正式模块 API：`dyntool.storage`、`dyntool.plotting`、`dyntool.logging`、`dyntool.reporting`。
+- 正式支持模块：`dyntool.config`、`dyntool.resources`。
 - 不再保留旧顶层入口，也不恢复任何历史入口。
 
 ## 当前实现层
@@ -32,12 +33,12 @@
 - 审查代理：规格审查与代码质量审查分离。
 
 ## 质量门禁
-- `python scripts/check_codex_assets.py`
-- `python scripts/check_layer_imports.py`
-- `python scripts/check_text_quality.py`
-- `python scripts/check_docstring_coverage.py`
-- `python scripts/check_public_api_baseline.py`
-- `python scripts/check_mkdocs_site.py`
-- `uv run mkdocs build --strict`
+- `uv run python -B scripts/check_codex_assets.py`
+- `uv run python -B scripts/check_layer_imports.py`
+- `uv run python -B scripts/check_text_quality.py`
+- `uv run python -B scripts/check_docstring_coverage.py`
+- `uv run python -B scripts/check_public_api_baseline.py`
+- `uv run python -B scripts/check_mkdocs_site.py`
+- `$env:PYTHONDONTWRITEBYTECODE='1'; uv run python -B -m mkdocs build --strict --site-dir .pytest_tmp/mkdocs-site`
 - `pyright src/dyntool tests/typing_public_api.py`
-- `pytest -q`
+- `uv run python -B -m pytest -q --basetemp .pytest_tmp/pytest -p no:cacheprovider`

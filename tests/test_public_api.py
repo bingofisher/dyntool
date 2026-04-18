@@ -321,8 +321,11 @@ def test_plotting_module_no_longer_exposes_backend_tokens() -> None:
 
 def test_plotting_module_exports_match_stage_c_public_surface() -> None:
     assert set(dt_plotting.__all__) == {
+        "AxisConfig",
         "BoxPlotter",
+        "ContinuousAxisSpec",
         "FramePlotter",
+        "OctaveAxisSpec",
         "OneThirdOctavePlotter",
         "PlotCategory",
         "PlotDataset",
@@ -335,6 +338,9 @@ def test_plotting_module_exports_match_stage_c_public_surface() -> None:
 
 
 def test_plotting_public_objects_keep_expected_module_locations() -> None:
+    assert dt_plotting.AxisConfig.__module__ == "dyntool.plotting.axis_config"
+    assert dt_plotting.ContinuousAxisSpec.__module__ == "dyntool.plotting.axis_config"
+    assert dt_plotting.OctaveAxisSpec.__module__ == "dyntool.plotting.axis_config"
     assert dt_plotting.PlotDataset.__module__ == "dyntool.plotting.dataset"
     assert dt_plotting.PlotTheme.__module__ == "dyntool.plotting.config"
     assert dt_plotting.PlotResult.__module__ == "dyntool.plotting.types"

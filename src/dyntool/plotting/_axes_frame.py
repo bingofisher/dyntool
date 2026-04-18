@@ -117,11 +117,25 @@ class GridFrame:
 
         params = self.params or {}
         for axis_name in ("x", "y"):
-            merged: dict[str, Any] = {}
             frame = params.get("frame")
+            axis_params = params.get(axis_name)
+            if isinstance(axis_params, Mapping) and any(
+                isinstance(axis_params.get(level), Mapping) for level in ("major", "minor")
+            ):
+                for level in ("major", "minor"):
+                    merged: dict[str, Any] = {}
+                    if isinstance(frame, Mapping):
+                        merged.update(frame)
+                    level_params = axis_params.get(level)
+                    if isinstance(level_params, Mapping):
+                        merged.update(level_params)
+                    if merged:
+                        merged["which"] = level
+                        self._apply_axis(ax, axis_name=axis_name, params=merged)
+                continue
+            merged = {}
             if isinstance(frame, Mapping):
                 merged.update(frame)
-            axis_params = params.get(axis_name)
             if isinstance(axis_params, Mapping):
                 merged.update(axis_params)
             if merged:

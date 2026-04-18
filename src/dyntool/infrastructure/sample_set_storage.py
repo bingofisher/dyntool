@@ -14,6 +14,11 @@ import pandas as pd
 from tqdm.auto import tqdm
 
 from ..logging import LoggingMode, get_log_provider, get_logger
+from ..storage._sample_set_request_summary import (
+    summarize_sample_set_categories,
+    summarize_sample_set_data_options,
+    summarize_sample_set_scheme,
+)
 from ..storage.types import (
     NameResolver,
     StorageConnectOptions,
@@ -51,33 +56,6 @@ def _log_info(message: str, *args: Any) -> None:
         exc_info=None,
     )
     root_logger.handle(record)
-
-
-def _summarize_categories(categories: list[str] | None) -> str:
-    if not categories:
-        return "all"
-    return ",".join(str(item) for item in categories)
-
-
-def _summarize_data_options(data_options: dict[str, Any] | None) -> str:
-    if not data_options:
-        return "none"
-    keys = ",".join(sorted(str(key) for key in data_options))
-    summary_parts = [f"keys={keys}"]
-    for key in (
-        "attr_data_format",
-        "decimal_round",
-        "float_dtype",
-        "h5_compression",
-        "h5_compression_level",
-    ):
-        if key in data_options:
-            summary_parts.append(f"{key}={data_options[key]}")
-    return "; ".join(summary_parts)
-
-
-def _scheme_label(scheme: StorageScheme) -> str:
-    return scheme.name
 
 
 def _should_show_progress(show_progress: bool | None) -> bool:
@@ -213,10 +191,10 @@ class SampleSetStorage:
             "name_resolver=%s, data_options=%s",
             base_dir,
             resolved_mode.value,
-            _scheme_label(resolved_scheme),
+            summarize_sample_set_scheme(resolved_scheme),
             resolved_set_filename,
             "enabled" if resolved_name_resolver is not None else "disabled",
-            _summarize_data_options(resolved_data_options),
+            summarize_sample_set_data_options(resolved_data_options),
         )
         if resolved_mode is StorageMode.RECREATE:
             if base_dir.exists():
@@ -256,10 +234,10 @@ class SampleSetStorage:
             "name_resolver=%s, data_options=%s",
             base_dir,
             resolved_mode.value,
-            _scheme_label(resolved_scheme),
+            summarize_sample_set_scheme(resolved_scheme),
             resolved_set_filename,
             "enabled" if resolved_name_resolver is not None else "disabled",
-            _summarize_data_options(self.data_options),
+            summarize_sample_set_data_options(self.data_options),
         )
         return self
 
@@ -279,10 +257,10 @@ class SampleSetStorage:
             "name_resolver=%s, data_options=%s",
             base_dir,
             mode.value,
-            _scheme_label(storage_scheme),
+            summarize_sample_set_scheme(storage_scheme),
             actual_set_filename,
             "enabled" if name_resolver is not None else "disabled",
-            _summarize_data_options(data_options),
+            summarize_sample_set_data_options(data_options),
         )
         if mode is StorageMode.RECREATE:
             if base_dir.exists():
@@ -322,10 +300,10 @@ class SampleSetStorage:
             "name_resolver=%s, data_options=%s",
             base_dir,
             mode.value,
-            _scheme_label(storage_scheme),
+            summarize_sample_set_scheme(storage_scheme),
             actual_set_filename,
             "enabled" if name_resolver is not None else "disabled",
-            _summarize_data_options(self.data_options),
+            summarize_sample_set_data_options(self.data_options),
         )
         return self
 
@@ -450,8 +428,8 @@ class SampleSetStorage:
             workers,
             chunk_size,
             strict,
-            _scheme_label(self.storage_scheme),
-            _summarize_categories(categories),
+            summarize_sample_set_scheme(self.storage_scheme),
+            summarize_sample_set_categories(categories),
         )
         ok = 0
         fail = 0
@@ -620,8 +598,8 @@ class SampleSetStorage:
             workers,
             chunk_size,
             strict,
-            _scheme_label(self.storage_scheme),
-            _summarize_categories(categories),
+            summarize_sample_set_scheme(self.storage_scheme),
+            summarize_sample_set_categories(categories),
         )
         existing_samples = dict(self.sampleset.items())
         existing_uids = set(existing_samples)

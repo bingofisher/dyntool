@@ -13,6 +13,7 @@ import dyntool.compute as dt_compute
 import dyntool.domain as dt_domain
 import dyntool.logging as dt_logging
 import dyntool.plotting as dt_plotting
+import dyntool.plotting.axis_config as dt_plotting_axis_config
 import dyntool.reporting as dt_reporting
 import dyntool.plotting.config as dt_plotting_config
 import dyntool.plotting.dataset as dt_plotting_dataset
@@ -214,7 +215,21 @@ if TYPE_CHECKING:
         category=dt_plotting.PlotCategory.SAMPLE,
     )
     assert_type(dataset, dt_plotting.PlotDataset)
-    result = dt_plotting.FramePlotter().plot_dataset(dataset)
+    continuous_axis = dt_plotting.ContinuousAxisSpec(
+        major_step=1.0,
+        minor_step=0.5,
+        num_segments=4,
+        scientific=True,
+        scientific_fontsize=11.0,
+        scientific_offset_x=0.15,
+        scientific_offset_y=1.04,
+    )
+    octave_axis = dt_plotting.OctaveAxisSpec(show_every=2)
+    axis_config = dt_plotting.AxisConfig(x=continuous_axis, y=continuous_axis)
+    assert_type(continuous_axis, dt_plotting.ContinuousAxisSpec)
+    assert_type(octave_axis, dt_plotting.OctaveAxisSpec)
+    assert_type(axis_config, dt_plotting.AxisConfig)
+    result = dt_plotting.FramePlotter(axis_config=axis_config).plot_dataset(dataset, axis_config=axis_config)
     assert_type(result, dt_plotting.PlotResult)
     assert_type(result.figure, Figure | None)
     assert_type(result.axes, tuple[Axes, ...])
@@ -222,7 +237,12 @@ if TYPE_CHECKING:
     assert_type(result.artists, tuple[Artist, ...])
     theme = dt_plotting.PlotTheme.default()
     assert_type(theme, dt_plotting.PlotTheme)
+    assert_type(theme.axis_config, dt_plotting.AxisConfig | None)
     assert_type(dt_plotting.PlotTheme.from_file("config/plot_theme.toml"), dt_plotting.PlotTheme)
+    assert_type(dt_plotting.PlotTheme.apply_songtnr(), str | None)
+    assert_type(dt_plotting.AxisConfig, type[dt_plotting_axis_config.AxisConfig])
+    assert_type(dt_plotting.ContinuousAxisSpec, type[dt_plotting_axis_config.ContinuousAxisSpec])
+    assert_type(dt_plotting.OctaveAxisSpec, type[dt_plotting_axis_config.OctaveAxisSpec])
     assert_type(dt_plotting.PlotTheme, type[dt_plotting_config.PlotTheme])
     assert_type(dt_plotting.PlotDataset, type[dt_plotting_dataset.PlotDataset])
     assert_type(dt_plotting.PlotResult, type[dt_plotting_types.PlotResult])
@@ -253,7 +273,15 @@ if TYPE_CHECKING:
         axis_unit="hertz",
         value_unit="decibel",
     )
-    assert_type(dt_plotting.OneThirdOctavePlotter().plot_dataset(octave_dataset), dt_plotting.PlotResult)
+    assert_type(
+        dt_plotting.OneThirdOctavePlotter(
+            axis_config=dt_plotting.AxisConfig(x=octave_axis, y=continuous_axis)
+        ).plot_dataset(
+            octave_dataset,
+            axis_config=dt_plotting.AxisConfig(x=octave_axis, y=continuous_axis),
+        ),
+        dt_plotting.PlotResult,
+    )
 
     story_dataset = dt_plotting.PlotDataset.from_axis_value(
         axis=[-1.0, 0.0, 1.0, 2.0],
@@ -263,7 +291,13 @@ if TYPE_CHECKING:
         axis_unit="story",
         value_unit="meter/second**2",
     )
-    assert_type(dt_plotting.StoryValuePlotter().plot_dataset(story_dataset), dt_plotting.PlotResult)
+    assert_type(
+        dt_plotting.StoryValuePlotter(axis_config=axis_config).plot_dataset(
+            story_dataset,
+            axis_config=axis_config,
+        ),
+        dt_plotting.PlotResult,
+    )
 
     config_loader = dt_config.load_config("config/demo.toml")
     assert_type(config_loader, dt_config.Config)

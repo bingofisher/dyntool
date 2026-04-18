@@ -228,10 +228,22 @@ class PlotterBase:
             self._grid_frame.apply(ax)
 
     def _set_axis_labels_if_missing(self, ax: Axes, *, xlabel: str, ylabel: str) -> None:
+        x_options = self._theme.axis_label_options("x") if self._theme is not None else {}
+        y_options = self._theme.axis_label_options("y") if self._theme is not None else {}
+        resolved_xlabel = str(x_options.get("text") or xlabel)
+        resolved_ylabel = str(y_options.get("text") or ylabel)
+        x_pad = x_options.get("pad")
+        y_pad = y_options.get("pad")
         if not ax.get_xlabel():
-            ax.set_xlabel(xlabel)
+            if x_pad is None:
+                ax.set_xlabel(resolved_xlabel)
+            else:
+                ax.set_xlabel(resolved_xlabel, labelpad=float(x_pad))
         if not ax.get_ylabel():
-            ax.set_ylabel(ylabel)
+            if y_pad is None:
+                ax.set_ylabel(resolved_ylabel)
+            else:
+                ax.set_ylabel(resolved_ylabel, labelpad=float(y_pad))
 
     def _collect_visible_legend_items(self, ax: Axes) -> tuple[list[Any], list[str]]:
         handles, labels = ax.get_legend_handles_labels()

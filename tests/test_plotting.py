@@ -6,6 +6,8 @@ import warnings
 from pathlib import Path
 
 import matplotlib
+import matplotlib as mpl
+from matplotlib import font_manager
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -26,9 +28,13 @@ from dyntool import (
     ZVLLimit,
     ZVLLimitStandard,
 )
+from dyntool.config import deep_update, read_config_file
 from dyntool.plotting import (
+    AxisConfig,
     BoxPlotter,
+    ContinuousAxisSpec,
     FramePlotter,
+    OctaveAxisSpec,
     OneThirdOctavePlotter,
     PlotCategory,
     PlotDataset,
@@ -253,6 +259,50 @@ def test_one_third_octave_plotter_consumes_plot_dataset() -> None:
     assert isinstance(result, PlotResult)
     assert result.figure is not None
     assert len(result.axes[0].lines) >= 2
+
+
+def test_one_third_octave_plotter_supports_continuous_y_axis_config() -> None:
+    dataset = PlotDataset.from_axis_value(
+        axis=[2.0, 2.5, 3.15, 4.0, 5.0, 6.3, 8.0, 10.0],
+        value=[1000.0, 1200.0, 1500.0, 1800.0, 2100.0, 2400.0, 2700.0, 3000.0],
+        name="otovl-envelope",
+        category=PlotCategory.SAMPLE,
+        axis_unit="hertz",
+        value_unit="decibel",
+    )
+
+    result = OneThirdOctavePlotter(
+        axis_config=AxisConfig(
+            x=OctaveAxisSpec(show_every=2),
+            y=ContinuousAxisSpec(
+                major_step=1000.0,
+                minor_step=500.0,
+                tick_min=0.0,
+                tick_max=3000.0,
+                scientific=True,
+                scientific_exponent=3,
+                scientific_fontsize=11.0,
+                scientific_offset_x=0.18,
+                scientific_offset_y=1.03,
+            ),
+        )
+    ).plot_dataset(dataset)
+
+    ax = result.ax
+    assert ax is not None
+    np.testing.assert_allclose(ax.get_yticks(), np.array([0.0, 1000.0, 2000.0, 3000.0]))
+    ax.figure.canvas.draw()
+    y_min, y_max = ax.get_ylim()
+    visible_minor_ticks = ax.yaxis.get_minorticklocs()
+    visible_minor_ticks = visible_minor_ticks[(visible_minor_ticks >= y_min) & (visible_minor_ticks <= y_max)]
+    np.testing.assert_allclose(visible_minor_ticks, np.array([500.0, 1500.0, 2500.0]))
+    y_labels = [tick.get_text() for tick in ax.get_yticklabels()]
+    assert y_labels[:4] == ["0", "1", "2", "3"]
+    assert ax.yaxis.get_offset_text().get_visible() is True
+    assert ax.yaxis.get_offset_text().get_fontsize() == pytest.approx(11.0)
+    offset_x, offset_y = ax.yaxis.get_offset_text().get_position()
+    assert offset_x == pytest.approx(0.18)
+    assert offset_y == pytest.approx(1.03)
 
 
 def test_story_value_plotter_consumes_plot_dataset_and_limit_columns() -> None:
@@ -489,6 +539,41 @@ def test_plot_theme_default_exposes_minimal_template_contract() -> None:
     assert theme.axes["tick_direction"] == "in"
     assert theme.legend["frameon"] is False
     assert theme.artist_options("plot")["linewidth"] > 0
+    assert theme.grid["x"]["major"]["enabled"] is False
+    assert theme.axis_labels == {}
+    assert theme.axis_config is None
+
+
+def test_plot_theme_apply_matplotlib_registers_songtnr_alias_from_bundled_font() -> None:
+    theme = PlotTheme.default()
+    theme.locale["sans_serif"] = ["SongTNR", "Microsoft YaHei"]
+
+    with matplotlib.rc_context():
+        applied = theme.apply_matplotlib()
+
+        assert applied == "SongTNR"
+        assert plt.rcParams["font.sans-serif"][0] == "SongTNR"
+        assert plt.rcParams["font.serif"][0] == "SongTNR"
+        font_path = font_manager.findfont(
+            font_manager.FontProperties(family=[applied]),
+            fallback_to_default=False,
+        )
+        assert Path(font_path).name == "SongTNR.ttf"
+
+
+def test_plot_theme_apply_songtnr_provides_global_font_shortcut() -> None:
+    with matplotlib.rc_context():
+        applied = PlotTheme.apply_songtnr()
+
+        assert applied == "SongTNR"
+        assert plt.rcParams["font.family"] == ["sans-serif"]
+        assert plt.rcParams["font.sans-serif"][0] == "SongTNR"
+        assert plt.rcParams["font.serif"][0] == "SongTNR"
+        font_path = font_manager.findfont(
+            font_manager.FontProperties(family=[applied]),
+            fallback_to_default=False,
+        )
+        assert Path(font_path).name == "SongTNR.ttf"
 
 
 def test_plot_theme_from_file_supports_new_minimal_schema(tmp_path) -> None:
@@ -507,18 +592,38 @@ height_cm = 9.0
 dpi = 180
 add_axes_rect = [0.1, 0.2, 0.7, 0.6]
 
-[axes]
-spine_top = false
-spine_bottom = true
-spine_left = true
-spine_right = false
-spine_linewidth = 1.1
-tick_length = 4.0
-tick_width = 0.9
-minor_tick_length = 2.5
-minor_tick_width = 0.7
-tick_direction = "out"
-grid_linewidth = 0.4
+[axes.spines]
+top = false
+bottom = true
+left = true
+right = false
+linewidth = 1.1
+
+[axes.ticks]
+direction = "out"
+
+[axes.ticks.major]
+length = 4.0
+width = 0.9
+
+[axes.ticks.minor]
+length = 2.5
+width = 0.7
+
+[grid.x.major]
+enabled = true
+color = "#b3b3b3"
+linestyle = ":"
+linewidth = 0.4
+
+[grid.x.minor]
+enabled = false
+
+[grid.y.major]
+enabled = false
+
+[grid.y.minor]
+enabled = false
 
 [artist.plot]
 linewidth = 2.0
@@ -545,10 +650,154 @@ ncol = 2
     assert theme.figure["add_axes_rect"] == (0.1, 0.2, 0.7, 0.6)
     assert theme.axes["spine_linewidth"] == 1.1
     assert theme.axes["tick_direction"] == "out"
+    assert theme.grid["x"]["major"]["enabled"] is True
+    assert theme.grid["x"]["major"]["linewidth"] == pytest.approx(0.4)
     assert theme.legend["loc"] == "upper right"
     assert theme.legend["ncol"] == 2
     assert theme.artist_options("plot")["linewidth"] == 2.0
     assert theme.artist_options("plot")["marker"] == "s"
+    assert theme.axis_config is None
+
+
+def test_theme_schema_build_theme_reuses_mapping_section_logic() -> None:
+    from dyntool.plotting._theme_normalizer import THEME_SCHEMA
+
+    payload = {
+        "figure": {"width_cm": 16.0, "height_cm": 8.0, "dpi": 120, "add_axes_rect": [0.1, 0.2, 0.7, 0.6]},
+        "axis": {
+            "x": {
+                "kind": "continuous",
+                "ticks": {"major": {"step": 2.0}},
+                "limits": {"min": 0.0, "max": 4.0},
+            }
+        },
+    }
+
+    theme = THEME_SCHEMA.build_theme(payload, default_artist={"plot": {"color": "red"}})
+
+    assert theme.figure["width_cm"] == pytest.approx(16.0)
+    assert theme.artist_options("plot")["color"] == "red"
+    assert isinstance(theme.axis_config, AxisConfig)
+    assert isinstance(theme.axis_config.x, ContinuousAxisSpec)
+    assert theme.axis_config.x.major_step == pytest.approx(2.0)
+    assert theme.axis_config.x.tick_min == pytest.approx(0.0)
+    assert theme.axis_config.x.tick_max == pytest.approx(4.0)
+
+
+def test_plot_theme_from_file_supports_axis_config_schema(tmp_path) -> None:
+    config_path = tmp_path / "plot_theme_with_axis_config.toml"
+    config_path.write_text(
+        """
+[locale]
+font_family = "sans-serif"
+sans_serif = ["SongTNR"]
+math_fontset = "stix"
+unicode_minus = false
+
+[figure]
+width_cm = 14.0
+height_cm = 10.0
+dpi = 150
+add_axes_rect = [0.12, 0.14, 0.82, 0.78]
+
+[axis.x]
+kind = "continuous"
+
+[axis.x.ticks]
+num_segments = 2
+
+[axis.x.ticks.major]
+step = 2.0
+
+[axis.x.ticks.minor]
+step = 0.5
+
+[axis.x.limits]
+min = 0.0
+max = 4.0
+
+[axis.y]
+kind = "continuous"
+
+[axis.y.ticks]
+values = [0.0, 1000.0, 2000.0]
+
+[axis.y.formatter.scientific]
+enabled = true
+fontsize = 11
+exponent = 3
+
+[axis.y.formatter.scientific.offset]
+x = 0.15
+y = 1.04
+        """.strip(),
+        encoding="utf-8",
+    )
+
+    theme = PlotTheme.from_file(config_path)
+
+    assert isinstance(theme.axis_config, AxisConfig)
+    assert isinstance(theme.axis_config.x, ContinuousAxisSpec)
+    assert theme.axis_config.x.major_step == pytest.approx(2.0)
+    assert theme.axis_config.x.num_segments == 2
+    assert theme.axis_config.x.tick_min == pytest.approx(0.0)
+    assert theme.axis_config.x.tick_max == pytest.approx(4.0)
+    assert theme.axis_config.x.minor_step == pytest.approx(0.5)
+    assert isinstance(theme.axis_config.y, ContinuousAxisSpec)
+    assert theme.axis_config.y.ticks == (0.0, 1000.0, 2000.0)
+    assert theme.axis_config.y.scientific is True
+    assert theme.axis_config.y.scientific_fontsize == pytest.approx(11.0)
+    assert theme.axis_config.y.scientific_exponent == 3
+    assert theme.axis_config.y.scientific_offset_x == pytest.approx(0.15)
+    assert theme.axis_config.y.scientific_offset_y == pytest.approx(1.04)
+
+
+def test_plot_theme_from_file_supports_axis_labels_schema(tmp_path) -> None:
+    config_path = tmp_path / "plot_theme_with_axis_labels.toml"
+    config_path.write_text(
+        """
+[figure]
+width_cm = 14.0
+height_cm = 10.0
+dpi = 150
+add_axes_rect = [0.12, 0.14, 0.82, 0.78]
+
+[axis.x.label]
+text = "时间 / s"
+pad = 1.0
+
+[axis.y.label]
+text = "加速度 / (m/s²)"
+pad = 2.0
+        """.strip(),
+        encoding="utf-8",
+    )
+
+    theme = PlotTheme.from_file(config_path)
+
+    assert theme.axis_label_options("x") == {"text": "时间 / s", "pad": pytest.approx(1.0)}
+    assert theme.axis_label_options("y") == {"text": "加速度 / (m/s²)", "pad": pytest.approx(2.0)}
+
+
+def test_plot_theme_axis_labels_preserve_mathtext_and_literal_dollar_strings(tmp_path) -> None:
+    config_path = tmp_path / "plot_theme_with_math_labels.toml"
+    config_path.write_text(
+        """
+[axis.x.label]
+text = '$f$ / Hz'
+pad = 1.0
+
+[axis.y.label]
+text = 'Price (\\$) and $a_{\\mathrm{max}}$ / (m/s$^2$)'
+pad = 2.0
+        """.strip(),
+        encoding="utf-8",
+    )
+
+    theme = PlotTheme.from_file(config_path)
+
+    assert theme.axis_label_options("x")["text"] == "$f$ / Hz"
+    assert theme.axis_label_options("y")["text"] == "Price (\\$) and $a_{\\mathrm{max}}$ / (m/s$^2$)"
 
 
 def test_plot_theme_from_file_rejects_unknown_top_level_block(tmp_path) -> None:
@@ -574,6 +823,33 @@ enabled = true
     )
 
     with pytest.raises(ValueError, match="PlotTheme 配置存在未支持的顶层块"):
+        PlotTheme.from_file(config_path)
+
+
+def test_plot_theme_from_file_rejects_legacy_plotting_schema(tmp_path) -> None:
+    config_path = tmp_path / "plot_theme_legacy.toml"
+    config_path.write_text(
+        """
+[figure]
+width_cm = 14.0
+height_cm = 10.0
+dpi = 150
+add_axes_rect = [0.12, 0.14, 0.82, 0.78]
+
+[axes]
+spine_top = false
+
+[axis_labels.x]
+text = "Time / s"
+
+[axis_config.x]
+kind = "continuous"
+ticks = [0.0, 1.0, 2.0]
+        """.strip(),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError):
         PlotTheme.from_file(config_path)
 
 
@@ -616,18 +892,38 @@ height_cm = 10.0
 dpi = 150
 add_axes_rect = [0.12, 0.14, 0.82, 0.78]
 
-[axes]
-spine_top = false
-spine_bottom = true
-spine_left = true
-spine_right = false
-spine_linewidth = 1.2
-tick_length = 3.5
-tick_width = 0.9
-minor_tick_length = 2.5
-minor_tick_width = 0.7
-tick_direction = "in"
-grid_linewidth = 0.6
+[axes.spines]
+top = false
+bottom = true
+left = true
+right = false
+linewidth = 1.2
+
+[axes.ticks]
+direction = "in"
+
+[axes.ticks.major]
+length = 3.5
+width = 0.9
+
+[axes.ticks.minor]
+length = 2.5
+width = 0.7
+
+[grid.x.major]
+enabled = true
+color = "#b3b3b3"
+linestyle = ":"
+linewidth = 0.6
+
+[grid.x.minor]
+enabled = false
+
+[grid.y.major]
+enabled = false
+
+[grid.y.minor]
+enabled = false
 
 [artist.plot]
 linewidth = 2.5
@@ -664,6 +960,263 @@ ncol = 1
     assert line.get_alpha() == pytest.approx(0.7)
     assert ax.spines["left"].get_linewidth() == pytest.approx(1.2)
     assert ax.spines["top"].get_visible() is False
+    assert any(line.get_visible() for line in ax.get_xgridlines())
+    assert not any(line.get_visible() for line in ax.get_ygridlines())
+
+
+def test_frame_plotter_applies_theme_axis_labels_when_axes_labels_missing(tmp_path) -> None:
+    config_path = tmp_path / "plot_theme_with_axis_labels.toml"
+    config_path.write_text(
+        """
+[figure]
+width_cm = 14.0
+height_cm = 10.0
+dpi = 150
+add_axes_rect = [0.12, 0.14, 0.82, 0.78]
+
+[axis.x.label]
+text = "频率 / Hz"
+pad = 1.0
+
+[axis.y.label]
+text = "加速度幅值 / (m/s²)"
+pad = 2.0
+        """.strip(),
+        encoding="utf-8",
+    )
+    theme = PlotTheme.from_file(config_path)
+    dataset = PlotDataset.from_axis_value(
+        axis=[0.0, 1.0, 2.0],
+        value=[1.0, 2.0, 3.0],
+        name="sample-a",
+        category=PlotCategory.SAMPLE,
+    )
+
+    result = FramePlotter(theme=theme).plot_dataset(dataset)
+
+    ax = result.ax
+    assert ax is not None
+    assert ax.get_xlabel() == "频率 / Hz"
+    assert ax.get_ylabel() == "加速度幅值 / (m/s²)"
+    assert ax.xaxis.labelpad == pytest.approx(1.0)
+    assert ax.yaxis.labelpad == pytest.approx(2.0)
+
+
+def test_frame_plotter_hides_ticks_for_hidden_spines_even_if_rc_enables_them(tmp_path) -> None:
+    config_path = tmp_path / "plot_theme.toml"
+    config_path.write_text(
+        """
+[locale]
+font_family = "sans-serif"
+sans_serif = ["SongTNR"]
+math_fontset = "stix"
+unicode_minus = false
+
+[figure]
+width_cm = 14.0
+height_cm = 10.0
+dpi = 150
+add_axes_rect = [0.12, 0.14, 0.82, 0.78]
+
+[axes.spines]
+top = false
+bottom = true
+left = true
+right = false
+linewidth = 1.2
+
+[axes.ticks]
+direction = "in"
+
+[axes.ticks.major]
+length = 3.5
+width = 0.9
+
+[axes.ticks.minor]
+length = 2.5
+width = 0.7
+
+[grid.x.major]
+enabled = false
+
+[grid.x.minor]
+enabled = false
+
+[grid.y.major]
+enabled = false
+
+[grid.y.minor]
+enabled = false
+
+[artist.plot]
+linewidth = 2.5
+linestyle = "--"
+markersize = 6.0
+color = "purple"
+marker = "o"
+alpha = 0.7
+
+[legend]
+loc = "upper right"
+fontsize = 9
+frameon = false
+ncol = 1
+        """.strip(),
+        encoding="utf-8",
+    )
+    dataset = PlotDataset.from_axis_value(
+        axis=[0.0, 1.0, 2.0],
+        value=[1.0, 2.0, 3.0],
+        name="sample-a",
+        category=PlotCategory.SAMPLE,
+    )
+
+    with mpl.rc_context({"xtick.top": True, "ytick.right": True}):
+        theme = PlotTheme.from_file(config_path)
+        result = FramePlotter(theme=theme).plot_dataset(dataset)
+
+    ax = result.ax
+    assert ax is not None
+    ax.figure.canvas.draw()
+    x_tick = ax.xaxis.get_major_ticks()[0]
+    y_tick = ax.yaxis.get_major_ticks()[0]
+    assert x_tick.tick1line.get_visible() is True
+    assert x_tick.tick2line.get_visible() is False
+    assert y_tick.tick1line.get_visible() is True
+    assert y_tick.tick2line.get_visible() is False
+
+
+def test_frame_plotter_applies_explicit_continuous_axis_config() -> None:
+    dataset = PlotDataset.from_axis_value(
+        axis=[0.5, 1.5, 3.5],
+        value=[1000.0, 1500.0, 2000.0],
+        name="sample-a",
+        category=PlotCategory.SAMPLE,
+    )
+
+    result = FramePlotter(
+        axis_config=AxisConfig(
+            x=ContinuousAxisSpec(major_step=2.0, tick_min=0.0, tick_max=4.0, minor_step=0.5),
+            y=ContinuousAxisSpec(
+                ticks=[0.0, 1000.0, 2000.0],
+                scientific=True,
+                scientific_fontsize=12.0,
+                scientific_exponent=3,
+                scientific_offset_x=0.2,
+                scientific_offset_y=1.05,
+            ),
+        )
+    ).plot_dataset(dataset)
+
+    ax = result.ax
+    assert ax is not None
+    np.testing.assert_allclose(ax.get_xticks(), np.array([0.0, 2.0, 4.0]))
+    ax.figure.canvas.draw()
+    x_min, x_max = ax.get_xlim()
+    visible_minor_ticks = ax.xaxis.get_minorticklocs()
+    visible_minor_ticks = visible_minor_ticks[(visible_minor_ticks >= x_min) & (visible_minor_ticks <= x_max)]
+    np.testing.assert_allclose(visible_minor_ticks, np.array([0.5, 1.0, 1.5, 2.5, 3.0, 3.5]))
+    np.testing.assert_allclose(ax.get_yticks(), np.array([0.0, 1000.0, 2000.0]))
+    y_labels = [tick.get_text() for tick in ax.get_yticklabels()]
+    assert y_labels[:3] == ["0", "1", "2"]
+    assert ax.yaxis.get_offset_text().get_visible() is True
+    assert ax.yaxis.get_offset_text().get_fontsize() == pytest.approx(12.0)
+    offset_x, offset_y = ax.yaxis.get_offset_text().get_position()
+    assert offset_x == pytest.approx(0.2)
+    assert offset_y == pytest.approx(1.05)
+
+
+def test_frame_plotter_honors_explicit_ticks_exactly() -> None:
+    dataset = PlotDataset.from_axis_value(
+        axis=[0.2, 0.8, 1.7],
+        value=[2.0, 3.0, 4.0],
+        name="sample-a",
+        category=PlotCategory.SAMPLE,
+    )
+
+    result = FramePlotter(
+        axis_config=AxisConfig(
+            x=ContinuousAxisSpec(ticks=[0.0, 0.5, 1.0, 1.5, 2.0]),
+        )
+    ).plot_dataset(dataset)
+
+    ax = result.ax
+    assert ax is not None
+    np.testing.assert_allclose(ax.get_xticks(), np.array([0.0, 0.5, 1.0, 1.5, 2.0]))
+
+
+def test_frame_plotter_major_step_aligns_to_data_bounds_when_no_explicit_limits() -> None:
+    dataset = PlotDataset.from_axis_value(
+        axis=[0.2, 0.8, 1.7],
+        value=[2.0, 3.0, 4.0],
+        name="sample-a",
+        category=PlotCategory.SAMPLE,
+    )
+
+    result = FramePlotter(
+        axis_config=AxisConfig(
+            x=ContinuousAxisSpec(major_step=0.5),
+        )
+    ).plot_dataset(dataset)
+
+    ax = result.ax
+    assert ax is not None
+    np.testing.assert_allclose(ax.get_xticks(), np.array([0.0, 0.5, 1.0, 1.5, 2.0]))
+
+
+def test_plotting_variant_patch_can_merge_base_and_c1_profile_with_deep_update(tmp_path) -> None:
+    base_path = tmp_path / "plot_base.toml"
+    c1_path = tmp_path / "plot_c1.toml"
+    base_path.write_text(
+        """
+[figure]
+width_cm = 14.0
+height_cm = 10.0
+dpi = 150
+add_axes_rect = [0.12, 0.14, 0.82, 0.78]
+
+[axis.x]
+kind = "continuous"
+
+[axis.x.ticks.major]
+step = 10.0
+
+[axis.x.ticks.minor]
+step = 5.0
+
+[axis.y]
+kind = "continuous"
+
+[axis.y.ticks.major]
+step = 0.001
+
+[axis.y.ticks.minor]
+step = 0.0005
+
+[axis.y.formatter.scientific]
+enabled = true
+exponent = 3
+        """.strip(),
+        encoding="utf-8",
+    )
+    c1_path.write_text(
+        """
+[axis.y]
+kind = "continuous"
+
+[axis.y.ticks.minor]
+step = 0.0001
+        """.strip(),
+        encoding="utf-8",
+    )
+
+    merged = deep_update(read_config_file(base_path), read_config_file(c1_path))
+
+    assert merged["figure"]["width_cm"] == pytest.approx(14.0)
+    assert merged["axis"]["x"]["ticks"]["major"]["step"] == pytest.approx(10.0)
+    assert merged["axis"]["x"]["ticks"]["minor"]["step"] == pytest.approx(5.0)
+    assert merged["axis"]["y"]["ticks"]["major"]["step"] == pytest.approx(0.001)
+    assert merged["axis"]["y"]["ticks"]["minor"]["step"] == pytest.approx(0.0001)
 
 
 def test_frame_plotter_dataset_style_overrides_theme_defaults(tmp_path) -> None:
@@ -682,18 +1235,35 @@ height_cm = 10.0
 dpi = 150
 add_axes_rect = [0.12, 0.14, 0.82, 0.78]
 
-[axes]
-spine_top = false
-spine_bottom = true
-spine_left = true
-spine_right = false
-spine_linewidth = 1.2
-tick_length = 3.5
-tick_width = 0.9
-minor_tick_length = 2.5
-minor_tick_width = 0.7
-tick_direction = "in"
-grid_linewidth = 0.6
+[axes.spines]
+top = false
+bottom = true
+left = true
+right = false
+linewidth = 1.2
+
+[axes.ticks]
+direction = "in"
+
+[axes.ticks.major]
+length = 3.5
+width = 0.9
+
+[axes.ticks.minor]
+length = 2.5
+width = 0.7
+
+[grid.x.major]
+enabled = false
+
+[grid.x.minor]
+enabled = false
+
+[grid.y.major]
+enabled = false
+
+[grid.y.minor]
+enabled = false
 
 [artist.plot]
 linewidth = 2.5
@@ -746,18 +1316,35 @@ height_cm = 10.0
 dpi = 150
 add_axes_rect = [0.12, 0.14, 0.82, 0.78]
 
-[axes]
-spine_top = false
-spine_bottom = true
-spine_left = true
-spine_right = false
-spine_linewidth = 1.2
-tick_length = 3.5
-tick_width = 0.9
-minor_tick_length = 2.5
-minor_tick_width = 0.7
-tick_direction = "in"
-grid_linewidth = 0.6
+[axes.spines]
+top = false
+bottom = true
+left = true
+right = false
+linewidth = 1.2
+
+[axes.ticks]
+direction = "in"
+
+[axes.ticks.major]
+length = 3.5
+width = 0.9
+
+[axes.ticks.minor]
+length = 2.5
+width = 0.7
+
+[grid.x.major]
+enabled = false
+
+[grid.x.minor]
+enabled = false
+
+[grid.y.major]
+enabled = false
+
+[grid.y.minor]
+enabled = false
 
 [legend]
 loc = "lower left"
@@ -811,6 +1398,108 @@ def test_frame_plotters_can_overlay_on_same_axes_with_theme_defaults() -> None:
     assert len(ax.lines) == 2
 
 
+def test_story_value_plotter_keeps_default_story_ticks_without_axis_config() -> None:
+    dataset = PlotDataset.from_axis_value(
+        axis=[-1.0, 0.0, 1.0, 2.0],
+        value=[0.002, 0.003, 0.004, 0.005],
+        name="story-response",
+        category=PlotCategory.SAMPLE,
+        axis_unit="story",
+        value_unit="meter/second**2",
+    )
+
+    result = StoryValuePlotter().plot_dataset(dataset)
+
+    ax = result.ax
+    assert ax is not None
+    np.testing.assert_allclose(ax.get_yticks(), np.array([-1.0, 0.0, 1.0, 2.0]))
+
+
+def test_story_value_plotter_axis_config_can_override_default_story_ticks() -> None:
+    dataset = PlotDataset.from_axis_value(
+        axis=[-1.0, 0.0, 1.0, 2.0],
+        value=[0.002, 0.003, 0.004, 0.005],
+        name="story-response",
+        category=PlotCategory.SAMPLE,
+        axis_unit="story",
+        value_unit="meter/second**2",
+    )
+
+    result = StoryValuePlotter(
+        axis_config=AxisConfig(
+            y=ContinuousAxisSpec(ticks=[-2.0, 0.0, 2.0]),
+        )
+    ).plot_dataset(dataset)
+
+    ax = result.ax
+    assert ax is not None
+    np.testing.assert_allclose(ax.get_yticks(), np.array([-2.0, 0.0, 2.0]))
+
+
+def test_one_third_octave_plotter_supports_octave_axis_config_show_every() -> None:
+    dataset = PlotDataset.from_axis_value(
+        axis=[2.0, 2.5, 3.15, 4.0, 5.0, 6.3, 8.0, 10.0],
+        value=[60.0, 61.0, 62.0, 63.0, 64.0, 65.0, 66.0, 67.0],
+        name="otovl-sample",
+        category=PlotCategory.SAMPLE,
+        axis_unit="hertz",
+        value_unit="decibel",
+    )
+
+    result = OneThirdOctavePlotter(axis_config=AxisConfig(x=OctaveAxisSpec(show_every=2))).plot_dataset(dataset)
+
+    ax = result.ax
+    assert ax is not None
+    ax.figure.canvas.draw()
+    labels = [tick.get_text() for tick in ax.get_xticklabels()]
+    assert labels[0] == "2"
+    assert labels[1] == ""
+    assert labels[2] == "3.15"
+    assert labels[3] == ""
+
+
+def test_plot_dataset_axis_config_runtime_override_has_higher_priority_than_theme(tmp_path) -> None:
+    config_path = tmp_path / "plot_theme_with_axis_config.toml"
+    config_path.write_text(
+        """
+[locale]
+font_family = "sans-serif"
+sans_serif = ["SongTNR"]
+math_fontset = "stix"
+unicode_minus = false
+
+[figure]
+width_cm = 14.0
+height_cm = 10.0
+dpi = 150
+add_axes_rect = [0.12, 0.14, 0.82, 0.78]
+
+[axis.x]
+kind = "continuous"
+
+[axis.x.ticks]
+values = [0.0, 2.0, 4.0]
+        """.strip(),
+        encoding="utf-8",
+    )
+    theme = PlotTheme.from_file(config_path)
+    dataset = PlotDataset.from_axis_value(
+        axis=[0.2, 0.8, 1.7],
+        value=[2.0, 3.0, 4.0],
+        name="sample-a",
+        category=PlotCategory.SAMPLE,
+    )
+
+    result = FramePlotter(theme=theme).plot_dataset(
+        dataset,
+        axis_config=AxisConfig(x=ContinuousAxisSpec(ticks=[0.0, 1.0, 2.0])),
+    )
+
+    ax = result.ax
+    assert ax is not None
+    np.testing.assert_allclose(ax.get_xticks(), np.array([0.0, 1.0, 2.0]))
+
+
 def test_plot_theme_asset_templates_are_loadable() -> None:
     theme_dir = Path(dt_plotting.__file__).resolve().parent / "assets"
 
@@ -825,8 +1514,11 @@ def test_plot_theme_asset_templates_are_loadable() -> None:
 
 def test_plotting_module_exports_match_stage_c_public_surface() -> None:
     assert set(dt_plotting.__all__) == {
+        "AxisConfig",
         "BoxPlotter",
+        "ContinuousAxisSpec",
         "FramePlotter",
+        "OctaveAxisSpec",
         "OneThirdOctavePlotter",
         "PlotCategory",
         "PlotDataset",

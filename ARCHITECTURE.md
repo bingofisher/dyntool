@@ -157,3 +157,17 @@ AdvDynTool 以数值结果正确、单位一致和结果可追溯为第一优先
 - 旧版 `v1` 仓库在连接时会自动迁移到 `v2`，迁移完成后继续以 `SET_SQLITE_H5` 身份工作。
 - `metadata_frame()` 与 `summary_frame(metadata_fields=...)` 仍优先走 storage 快路径，但 `v2` 的快路径改为读取 `metadata_json` 后在 Python 侧展开。
 - 这次升级的已知权衡是：写入与体积收益明显，但 metadata 表格读取速度低于旧版。
+## plotting 轴配置
+
+- `dyntool.plotting` 现已把轴语义正式提升为 `AxisConfig`
+- `ContinuousAxisSpec` 用于连续轴的 major/minor ticks、科学计数法和显示范围控制
+- `ContinuousAxisSpec` 同时承载科学计数法 offset 文本的字号与位置配置
+- `OctaveAxisSpec` 用于倍频程轴的标签疏密与可选显式位置/标签
+- `PlotTheme.axes` 继续只负责外观，不混入 locator 或 formatter 语义
+- `PlotTheme.grid` 独立承载网格策略与样式，TOML 入口固定为 `grid.x.major / grid.x.minor / grid.y.major / grid.y.minor`
+- 轴标签 TOML 入口固定为 `axis.x.label / axis.y.label`
+- 轴语义 TOML 入口固定为 `axis.x / axis.y`
+- `PlotTheme.axis_config` 只承载主题级默认轴语义
+- 运行时优先级固定为：`plot_dataset(..., axis_config=...)` > plotter 构造参数 `axis_config` > `PlotTheme.axis_config` > plotter 内建默认行为
+- plotting 正式 TOML schema 只使用 `grid.x.major / ...`、`axis.x.label / axis.y.label`、`axis.x / axis.y`；`PlotTheme.axis_config` 等字段名仅属于运行时对象说明
+- 项目级 variant patch 仍属于项目层集成策略，不进入 `dyntool.plotting` 的正式 schema

@@ -1,0 +1,22 @@
+required_agents = [
+    "impact-analysis.toml",
+    "implement-domain-compute.toml",
+    "implement-application.toml",
+    "implement-storage-infrastructure.toml",
+    "implement-resource-config.toml",
+    "implement-plotting-logging.toml",
+    "public-surface-guardian.toml",
+    "test-specialist.toml",
+    "docs-sync.toml",
+    "verification-runner.toml",
+    "spec-reviewer.toml",
+    "code-quality-reviewer.toml",
+]
+
+required_skills = [
+    "advdyntool-task-routing",
+    "advdyntool-impact-analysis",
+    "advdyntool-doc-sync",
+    "advdyntool-quality-gates",
+    "advdyntool-usage-guide",
+]

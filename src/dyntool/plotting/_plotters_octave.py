@@ -10,10 +10,10 @@ import numpy as np
 import pandas as pd
 from matplotlib.axes import Axes
 
-from ._axes_formatters import DiscreteAxisFormatter
-from ._axes_helpers import AxisHelper
+from ._axis_config_adapter import apply_octave_axis_config, resolve_axis_config
 from ._plotters_base import PlotterBase
 from ._plotters_common import StatMetricInput, _STAT_STYLE_DEFAULTS, compute_statistic, stat_label
+from .axis_config import AxisConfig
 from .config import PlotTheme
 from .dataset import PlotCategory, PlotDataset
 from .types import PlotResult, PlotterKind
@@ -39,6 +39,7 @@ class OctaveBandSpec:
     @classmethod
     def load_truth_table(cls, table_path: str | Path | None = None) -> pd.DataFrame:
         """读取倍频程真值表。"""
+
         path = Path(table_path) if table_path is not None else cls.DEFAULT_TABLE_PATH
         table = PlotterBase.read_csv_table(path)
         return table[[cls.BAND_NUMBER_COLUMN, cls.CENTER_FREQUENCY_COLUMN]].copy()
@@ -53,6 +54,7 @@ class OctaveBandSpec:
         tolerance: float = 0.05,
     ) -> "OctaveBandSpec":
         """基于默认真值表构造频带规格。"""
+
         cls.load_truth_table()
         return cls(
             band_octaves=band_octaves,
@@ -68,6 +70,7 @@ class OctaveBandSpec:
 
     def center_frequency(self, band_number: int) -> float:
         """返回指定频带号的中心频率。"""
+
         reference_band_number = self._derive_reference_band_number(self.band_octaves, self.reference_frequency)
         exponent = (int(band_number) - reference_band_number) * self.band_octaves
         return float(self.reference_frequency * (self.OCTAVE_RATIO**exponent))
@@ -78,6 +81,7 @@ class OctaveBandSpec:
         upper_frequency: float | None = None,
     ) -> list[int]:
         """按频率范围推导连续频带号。"""
+
         lower = lower_frequency if lower_frequency is not None else self.lower_frequency
         upper = upper_frequency if upper_frequency is not None else self.upper_frequency
         if lower is None or upper is None:
@@ -94,6 +98,7 @@ class OctaveBandSpec:
 
     def validate_segment(self, freqs: np.ndarray | list[float]) -> None:
         """校验频率数组是否可映射到连续倍频程频带。"""
+
         values = PlotterBase.coerce_array(freqs)
         if values.size == 0:
             raise ValueError("频率数组不能为空。")
@@ -140,11 +145,39 @@ class OneThirdOctavePlotter(PlotterBase):
         ax: Axes | None = None,
         *,
         theme: PlotTheme | None = None,
+        axis_config: AxisConfig | None = None,
     ) -> None:
         """构造正式三分之一倍频程 plotter。"""
 
         super().__init__(ax=ax, theme=theme)
         self._band_spec = self._default_band_spec()
+        self._axis_config = axis_config
+
+    def plot_dataset(
+        self,
+        dataset: PlotDataset,
+        *,
+        categories: Sequence[PlotCategory | str] | None = None,
+        names: Sequence[str] | None = None,
+        ax: Axes | None = None,
+        legend_options: Mapping[str, Any] | None = None,
+        axis_config: AxisConfig | None = None,
+        stats: Sequence[StatMetricInput] | None = None,
+        stat_label_overrides: Mapping[str, str] | None = None,
+    ) -> PlotResult:
+        """绑定数据集并执行正式绘图主链。"""
+
+        self.set_dataset(dataset)
+        return self._plot_dataset(
+            dataset,
+            categories=categories,
+            names=names,
+            ax=ax,
+            legend_options=legend_options,
+            axis_config=axis_config,
+            stats=stats,
+            stat_label_overrides=stat_label_overrides,
+        )
 
     def _plot_dataset(
         self,
@@ -154,6 +187,7 @@ class OneThirdOctavePlotter(PlotterBase):
         names: Sequence[str] | None = None,
         ax: Axes | None = None,
         legend_options: Mapping[str, Any] | None = None,
+        axis_config: AxisConfig | None = None,
         stats: Sequence[StatMetricInput] | None = None,
         stat_label_overrides: Mapping[str, str] | None = None,
     ) -> PlotResult:
@@ -187,16 +221,19 @@ class OneThirdOctavePlotter(PlotterBase):
             xlabel=self.with_unit(self.default_x_label, axis_unit),
             ylabel=self.with_unit(self.default_y_label, value_unit),
         )
-        helper = AxisHelper(target_ax)
-        formatter = DiscreteAxisFormatter.from_number_values(positions=x_positions, values=freqs)
-        helper.format_axis(
-            side="bottom",
-            mode="discrete",
-            positions=formatter.positions,
-            labels=formatter.labels,
-            show_every=formatter.show_every,
+        resolved_axis_config = resolve_axis_config(
+            theme_axis_config=self._theme.axis_config if self._theme is not None else None,
+            plotter_axis_config=self._axis_config,
+            runtime_axis_config=axis_config,
         )
-        target_ax.tick_params(axis="x", which="minor", labelbottom=False, labeltop=False)
+        apply_octave_axis_config(
+            target_ax,
+            dataset=dataset,
+            keys=keys,
+            freqs=freqs,
+            x_positions=x_positions,
+            axis_config=resolved_axis_config,
+        )
         self._apply_legend(target_ax, legend_options=legend_options)
         self._finalize_figure(fig)
         return PlotResult(raw=fig, figure=fig, axes=(target_ax,))

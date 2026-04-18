@@ -27,6 +27,7 @@ REQUIRED_SKILLS = (
     "advdyntool-impact-analysis",
     "advdyntool-doc-sync",
     "advdyntool-quality-gates",
+    "advdyntool-usage-guide",
 )
 REQUIRED_AGENT_KEYS = (
     "name",
@@ -40,6 +41,11 @@ REQUIRED_CODEX_FILES = (
     ".codex/project-context.md",
     ".codex/library-contract.md",
     ".codex/prompts/task-template.md",
+)
+REQUIRED_GITIGNORE_TOKENS = (
+    ".agents/*",
+    "!.agents/skills/",
+    "!.agents/skills/**",
 )
 AGENTS_REQUIRED_TOKENS = (
     ".codex/agents/",
@@ -68,6 +74,40 @@ FORBIDDEN_PUBLIC_SURFACE_PATTERNS = {
 }
 ROLE_MATRIX_PATH = Path(".agents/skills/advdyntool-task-routing/references/role-matrix.toml")
 DOC_WORKFLOW_PATH = Path("docs/developer/development_workflow.md")
+USAGE_GUIDE_DIR = Path(".agents/skills/advdyntool-usage-guide")
+USAGE_GUIDE_REQUIRED_FILES = (
+    USAGE_GUIDE_DIR / "SKILL.md",
+    USAGE_GUIDE_DIR / "references/usage-map.md",
+    USAGE_GUIDE_DIR / "references/regression-checklist.md",
+)
+USAGE_GUIDE_SKILL_REQUIRED_TOKENS = (
+    "name: advdyntool-usage-guide",
+    "src/dyntool/__init__.py",
+    "docs/api/public_api.md",
+    "docs/examples_manifest.toml",
+    "docs/workflow_guide.md",
+    "docs/examples_overview.md",
+    "references/regression-checklist.md",
+)
+USAGE_GUIDE_MAP_REQUIRED_EXAMPLE_IDS = (
+    "import_and_normalize",
+    "build_and_manage_samples",
+    "evaluate_vibration",
+    "store_and_reload",
+    "plot_and_export",
+    "logged_run",
+    "resource_driven_eval",
+    "plot_dataset_and_plotters",
+    "logging_providers_and_modes",
+    "storage_scheme_selection",
+    "statistics_export",
+    "report_package_export",
+)
+USAGE_GUIDE_CHECKLIST_REQUIRED_TOKENS = (
+    "## 主场景回归",
+    "## 边界纠偏回归",
+    "## 误触发回归",
+)
 BOM = bytes((0xEF, 0xBB, 0xBF))
 
 
@@ -161,10 +201,13 @@ def _check_gitignore(violations: list[str]) -> None:
         violations.append(".gitignore: missing")
         return
     text = _read_text(path)
-    blocked_entries = {".codex/", "/.codex/"}
+    blocked_entries = {".codex/", "/.codex/", ".agents/", "/.agents/"}
     active_entries = {line.strip() for line in text.splitlines() if line.strip() and not line.lstrip().startswith("#")}
     if blocked_entries & active_entries:
-        violations.append(".gitignore: must not ignore the repository-scoped .codex/ directory")
+        violations.append(".gitignore: must not ignore the repository-scoped .codex/ or .agents/ directory")
+    for token in REQUIRED_GITIGNORE_TOKENS:
+        if token not in text:
+            violations.append(f".gitignore: missing required token {token!r}")
 
 
 def _check_agents_md(violations: list[str]) -> None:
@@ -176,6 +219,35 @@ def _check_agents_md(violations: list[str]) -> None:
     for token in AGENTS_REQUIRED_TOKENS:
         if token not in text:
             violations.append(f"AGENTS.md: missing required token {token!r}")
+
+
+def _require_tokens(path: Path, required_tokens: tuple[str, ...], violations: list[str]) -> None:
+    try:
+        text = _read_text(path)
+    except ValueError as exc:
+        violations.append(str(exc))
+        return
+    for token in required_tokens:
+        if token not in text:
+            violations.append(f"{path.relative_to(PROJECT_ROOT)}: missing required token {token!r}")
+
+
+def _check_usage_guide(violations: list[str]) -> None:
+    for relative in USAGE_GUIDE_REQUIRED_FILES:
+        path = _repo_path(relative)
+        if not path.exists():
+            violations.append(f"{relative.as_posix()}: missing required usage-guide asset")
+
+    skill_path = _repo_path(USAGE_GUIDE_DIR / "SKILL.md")
+    usage_map_path = _repo_path(USAGE_GUIDE_DIR / "references/usage-map.md")
+    checklist_path = _repo_path(USAGE_GUIDE_DIR / "references/regression-checklist.md")
+
+    if skill_path.exists():
+        _require_tokens(skill_path, USAGE_GUIDE_SKILL_REQUIRED_TOKENS, violations)
+    if usage_map_path.exists():
+        _require_tokens(usage_map_path, USAGE_GUIDE_MAP_REQUIRED_EXAMPLE_IDS, violations)
+    if checklist_path.exists():
+        _require_tokens(checklist_path, USAGE_GUIDE_CHECKLIST_REQUIRED_TOKENS, violations)
 
 
 def _iter_asset_files() -> list[Path]:
@@ -208,6 +280,7 @@ def main() -> int:
     _check_role_matrix(violations)
     _check_gitignore(violations)
     _check_agents_md(violations)
+    _check_usage_guide(violations)
     _check_legacy_tokens(violations)
 
     if violations:

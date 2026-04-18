@@ -65,6 +65,67 @@ class ResolvedStorageDataOptions:
         }
 
 
+class _StorageDataOptionResolver:
+    """收拢 data_options 的字段级解析逻辑。"""
+
+    def resolve_attr_data_format(self, data_options: Mapping[str, Any]) -> AttrDataFormat:
+        value = str(data_options.get(DATA_OPTION_ATTR_DATA_FORMAT, AttrDataFormat.CSV.value))
+        try:
+            return AttrDataFormat(value)
+        except ValueError as exc:
+            raise ValueError("data_options.attr_data_format 必须是 'csv' 或 'npy'。") from exc
+
+    def resolve_decimal_round(self, data_options: Mapping[str, Any]) -> int | None:
+        value = data_options.get(DATA_OPTION_DECIMAL_ROUND)
+        if value is None:
+            return None
+        if not isinstance(value, int) or value < 0:
+            raise ValueError("data_options.decimal_round 必须是大于等于 0 的整数。")
+        return value
+
+    def resolve_float_dtype(self, data_options: Mapping[str, Any]) -> str | None:
+        value = data_options.get(DATA_OPTION_FLOAT_DTYPE)
+        if value is None:
+            return None
+        if value not in {"float32", "float64"}:
+            raise ValueError("data_options.float_dtype 仅支持 'float32' 或 'float64'。")
+        return str(value)
+
+    def resolve_h5_compression(self, data_options: Mapping[str, Any]) -> str | None:
+        value = data_options.get(DATA_OPTION_H5_COMPRESSION, DEFAULT_H5_COMPRESSION)
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise ValueError("data_options.h5_compression 必须是字符串或 None。")
+        compression = value.strip().lower()
+        if compression not in _ALLOWED_H5_COMPRESSIONS:
+            allowed = ", ".join(sorted(_ALLOWED_H5_COMPRESSIONS))
+            raise ValueError(f"data_options.h5_compression 仅支持 {allowed}，或显式传入 None 关闭压缩。")
+        return compression
+
+    def resolve_h5_compression_level(
+        self,
+        data_options: Mapping[str, Any],
+        compression: str | None,
+    ) -> int | None:
+        if DATA_OPTION_H5_COMPRESSION_LEVEL not in data_options:
+            if compression == "gzip":
+                return DEFAULT_H5_COMPRESSION_LEVEL
+            return None
+
+        value = data_options[DATA_OPTION_H5_COMPRESSION_LEVEL]
+        if compression is None:
+            raise ValueError("data_options.h5_compression_level 只能在启用 H5 压缩时使用。")
+        if compression != "gzip":
+            raise ValueError("data_options.h5_compression_level 仅适用于 gzip 压缩。")
+        if not isinstance(value, int) or not 0 <= value <= 9:
+            raise ValueError("data_options.h5_compression_level 必须是 0 到 9 的整数。")
+        return value
+
+
+_DATA_OPTION_RESOLVER = _StorageDataOptionResolver()
+
+
 def resolve_storage_data_options(
     storage_scheme: StorageScheme,
     data_options: Mapping[str, Any] | None,
@@ -75,9 +136,9 @@ def resolve_storage_data_options(
     _raise_on_unknown_data_option_keys(options)
     _raise_on_inapplicable_keys(storage_scheme, options)
 
-    attr_data_format = _resolve_attr_data_format(options)
-    decimal_round = _resolve_decimal_round(options)
-    float_dtype = _resolve_float_dtype(options)
+    attr_data_format = _DATA_OPTION_RESOLVER.resolve_attr_data_format(options)
+    decimal_round = _DATA_OPTION_RESOLVER.resolve_decimal_round(options)
+    float_dtype = _DATA_OPTION_RESOLVER.resolve_float_dtype(options)
 
     if storage_scheme not in _H5_STORAGE_SCHEMES:
         return ResolvedStorageDataOptions(
@@ -89,8 +150,8 @@ def resolve_storage_data_options(
             h5_dataset_options={},
         )
 
-    h5_compression = _resolve_h5_compression(options)
-    h5_compression_level = _resolve_h5_compression_level(options, h5_compression)
+    h5_compression = _DATA_OPTION_RESOLVER.resolve_h5_compression(options)
+    h5_compression_level = _DATA_OPTION_RESOLVER.resolve_h5_compression_level(options, h5_compression)
     h5_dataset_options = resolve_h5_dataset_options(
         dataset_options=options.get(DATA_OPTION_H5_DATASET_OPTIONS),
         compression=h5_compression,

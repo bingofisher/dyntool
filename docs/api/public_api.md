@@ -74,6 +74,8 @@ v1.2.0 起正式主链固定为：
 3. `ConcretePlotter(...).plot_dataset(dataset, ax=ax, ...)`
 4. `PlotResult.ax`
 
+若只需要快速把全局默认字体切到仓库内置 `SongTNR`，可以直接调用 `PlotTheme.apply_songtnr()`。
+
 示例：
 
 ```python
@@ -90,6 +92,14 @@ dataset = dt_plotting.PlotDataset.from_axis_value(
 )
 result = dt_plotting.FramePlotter(theme=theme).plot_dataset(dataset)
 print(result.ax is not None)
+```
+
+字体快捷入口示例：
+
+```python
+import dyntool.plotting as dt_plotting
+
+dt_plotting.PlotTheme.apply_songtnr()
 ```
 
 ### `dyntool.storage`
@@ -150,3 +160,59 @@ print(result.ax is not None)
 稳定性：`Public API`
 
 `dyntool.resources` 负责仓库内置资源读取。
+## plotting 轴配置补充
+
+`dyntool.plotting` 新增以下正式公开对象：
+
+- `AxisConfig`
+- `ContinuousAxisSpec`
+- `OctaveAxisSpec`
+
+推荐主链现在可以写成：
+
+1. `PlotDataset.from_* (...)`
+2. `PlotTheme.from_file(path)` 或 `PlotTheme.default()`
+3. `ConcretePlotter(..., axis_config=...).plot_dataset(dataset, ax=ax, axis_config=...)`
+4. `PlotResult.ax`
+
+边界保持不变：
+
+- `PlotTheme.axes` 继续只负责轴框、刻度和网格的外观
+- `PlotTheme.axis_config` 负责主题级默认轴语义
+- `AxisConfig` 负责连续轴 major/minor ticks、科学计数法与倍频程标签策略
+- `ContinuousAxisSpec` 当前还支持 `major_step`、`minor_step`、`scientific_fontsize`、`scientific_offset_x`、`scientific_offset_y`，用于控制连续轴刻度和科学计数法 offset 文本
+
+最小示例：
+
+```python
+import dyntool.plotting as dt_plotting
+
+dataset = dt_plotting.PlotDataset.from_axis_value(
+    axis=[0.0, 2.0, 4.0, 6.0],
+    value=[0.0, 1.2, 1.5, 0.8],
+    name="demo",
+    category=dt_plotting.PlotCategory.SAMPLE,
+)
+axis_config = dt_plotting.AxisConfig(
+    x=dt_plotting.ContinuousAxisSpec(major_step=2.0, minor_step=1.0, tick_min=0.0, tick_max=6.0),
+    y=dt_plotting.ContinuousAxisSpec(scientific=True),
+)
+result = dt_plotting.FramePlotter(axis_config=axis_config).plot_dataset(dataset)
+```
+
+补充说明：
+
+- TOML 配置层当前已经统一切到 `grid.x.major / grid.x.minor / grid.y.major / grid.y.minor`
+- 轴标签正式入口是 `axis.x.label / axis.y.label`
+- 轴语义正式入口是 `axis.x / axis.y`
+- `PlotTheme.axes` 继续只负责轴框和 tick 外观
+- `PlotTheme.grid` 负责网格策略与样式
+- `PlotTheme.axis_config` 负责主题级默认轴语义
+- `OneThirdOctavePlotter` 当前正式支持 `x = OctaveAxisSpec` 与 `y = ContinuousAxisSpec`
+- 若项目内存在轻微变体，推荐在项目层读取基础 TOML 后用 `dyntool.config.deep_update(...)` 合并 variant patch，再把合并后的结果交给 `PlotTheme` / `axis_config` 主链
+
+`PlotTheme.axis_labels` 是运行时对象上的主题级标签默认值；正式 TOML 入口是 `axis.x.label / axis.y.label`。标签文本会原样交给 Matplotlib；若需要数学公式，请按 Matplotlib 习惯写 `$...$`，推荐在 TOML 中优先使用单引号字面量字符串。
+
+`OneThirdOctavePlotter` 当前正式支持 `x = OctaveAxisSpec` 与 `y = ContinuousAxisSpec` 的组合，因此倍频程图也可以通过 `axis_config.y` 使用 `major_step`、`minor_step` 与 `scientific_*`。
+
+`AxisConfig` 继续只表达单张图的 `x / y` 轴语义，不直接承载 `C1 / C2 / C3 / C4` 这类业务分支。若项目内存在轻微变体，推荐在项目层读取基础 TOML 后用 `dyntool.config.deep_update(...)` 合并 variant patch，再把合并后的结果交给 `PlotTheme` / `axis_config` 主链。

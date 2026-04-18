@@ -28,6 +28,7 @@ REQUIRED_SKILLS = (
     "advdyntool-impact-analysis",
     "advdyntool-doc-sync",
     "advdyntool-quality-gates",
+    "advdyntool-usage-guide",
 )
 
 
@@ -65,7 +66,18 @@ def _seed_minimal_codex_assets(root: Path) -> None:
         )
         + "\n",
     )
-    _write_text(root / ".gitignore", ".venv/\n")
+    _write_text(
+        root / ".gitignore",
+        "\n".join(
+            (
+                ".venv/",
+                ".agents/*",
+                "!.agents/skills/",
+                "!.agents/skills/**",
+            )
+        )
+        + "\n",
+    )
     _write_text(root / ".editorconfig", "root = true\n[*]\ncharset = utf-8\nend_of_line = lf\n")
     _write_text(root / ".gitattributes", "* text=auto eol=lf\n*.py text eol=lf\n*.md text eol=lf\n")
     _write_text(root / ".codex" / "project-context.md", "# 项目上下文\n当前公开入口是 `dyntool`。\n")
@@ -100,6 +112,47 @@ def _seed_minimal_codex_assets(root: Path) -> None:
             root / ".agents" / "skills" / skill_name / "references" / "README.md",
             "# 参考\n角色矩阵与触发条件。\n",
         )
+    _write_text(
+        root / ".agents" / "skills" / "advdyntool-usage-guide" / "SKILL.md",
+        "\n".join(
+            (
+                "---",
+                "name: advdyntool-usage-guide",
+                "---",
+                "src/dyntool/__init__.py",
+                "docs/api/public_api.md",
+                "docs/examples_manifest.toml",
+                "docs/workflow_guide.md",
+                "docs/examples_overview.md",
+                "references/regression-checklist.md",
+            )
+        )
+        + "\n",
+    )
+    _write_text(
+        root / ".agents" / "skills" / "advdyntool-usage-guide" / "references" / "usage-map.md",
+        "\n".join(
+            (
+                "import_and_normalize",
+                "build_and_manage_samples",
+                "evaluate_vibration",
+                "store_and_reload",
+                "plot_and_export",
+                "logged_run",
+                "resource_driven_eval",
+                "plot_dataset_and_plotters",
+                "logging_providers_and_modes",
+                "storage_scheme_selection",
+                "statistics_export",
+                "report_package_export",
+            )
+        )
+        + "\n",
+    )
+    _write_text(
+        root / ".agents" / "skills" / "advdyntool-usage-guide" / "references" / "regression-checklist.md",
+        "## 主场景回归\n## 边界纠偏回归\n## 误触发回归\n",
+    )
 
 
 def test_check_codex_assets_passes_for_minimal_well_formed_tree(tmp_path: Path) -> None:
