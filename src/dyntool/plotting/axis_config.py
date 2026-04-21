@@ -76,11 +76,12 @@ class ContinuousAxisSpec:
 
     ticks: tuple[float, ...] | None = None
     major_step: float | None = None
+    major_origin: float = 0.0
     num_segments: int | None = None
     tick_min: float | None = None
     tick_max: float | None = None
     minor_step: float | None = None
-    include_zero: bool | None = None
+    minor_origin: float = 0.0
     baseline: float | None = None
     height_ratio: float | None = None
     decimals: int | None = None
@@ -96,6 +97,12 @@ class ContinuousAxisSpec:
         self.major_step = _AXIS_CONFIG_PARSER.optional_float(self.major_step, path="ContinuousAxisSpec.major_step")
         if self.major_step is not None and self.major_step <= 0.0:
             raise ValueError("ContinuousAxisSpec.major_step 必须大于 0。")
+        self.major_origin = _AXIS_CONFIG_PARSER.optional_float(
+            self.major_origin,
+            path="ContinuousAxisSpec.major_origin",
+        )
+        if self.major_origin is None:
+            self.major_origin = 0.0
         self.num_segments = _AXIS_CONFIG_PARSER.optional_int(self.num_segments, path="ContinuousAxisSpec.num_segments")
         if self.num_segments is not None and self.num_segments <= 0:
             raise ValueError("ContinuousAxisSpec.num_segments 必须大于 0。")
@@ -104,10 +111,12 @@ class ContinuousAxisSpec:
         self.minor_step = _AXIS_CONFIG_PARSER.optional_float(self.minor_step, path="ContinuousAxisSpec.minor_step")
         if self.minor_step is not None and self.minor_step <= 0.0:
             raise ValueError("ContinuousAxisSpec.minor_step 必须大于 0。")
-        self.include_zero = _AXIS_CONFIG_PARSER.optional_bool(
-            self.include_zero,
-            path="ContinuousAxisSpec.include_zero",
+        self.minor_origin = _AXIS_CONFIG_PARSER.optional_float(
+            self.minor_origin,
+            path="ContinuousAxisSpec.minor_origin",
         )
+        if self.minor_origin is None:
+            self.minor_origin = 0.0
         self.baseline = _AXIS_CONFIG_PARSER.optional_float(self.baseline, path="ContinuousAxisSpec.baseline")
         self.height_ratio = _AXIS_CONFIG_PARSER.optional_float(
             self.height_ratio,
@@ -194,8 +203,8 @@ class AxisConfig:
 _ALLOWED_AXIS_KEYS = {"x", "y"}
 _ALLOWED_SIDE_KEYS = {"kind", "label", "ticks", "limits", "formatter"}
 _ALLOWED_CONTINUOUS_TICKS_KEYS = {"values", "major", "minor", "num_segments"}
-_ALLOWED_STEP_KEYS = {"step"}
-_ALLOWED_LIMITS_KEYS = {"min", "max", "include_zero", "baseline", "height_ratio"}
+_ALLOWED_STEP_KEYS = {"step", "origin"}
+_ALLOWED_LIMITS_KEYS = {"min", "max", "baseline", "height_ratio"}
 _ALLOWED_FORMATTER_KEYS = {"decimals", "trim_trailing_zeros", "scientific"}
 _ALLOWED_SCIENTIFIC_KEYS = {"enabled", "fontsize", "exponent", "offset"}
 _ALLOWED_OFFSET_KEYS = {"x", "y"}
@@ -246,11 +255,12 @@ def _parse_continuous_axis(payload: Mapping[str, Any], *, path: str) -> Continuo
     return ContinuousAxisSpec(
         ticks=ticks.get("values"),
         major_step=major.get("step"),
+        major_origin=major.get("origin", 0.0),
         num_segments=ticks.get("num_segments"),
         tick_min=limits.get("min"),
         tick_max=limits.get("max"),
         minor_step=minor.get("step"),
-        include_zero=limits.get("include_zero"),
+        minor_origin=minor.get("origin", 0.0),
         baseline=limits.get("baseline"),
         height_ratio=limits.get("height_ratio"),
         decimals=formatter.get("decimals"),

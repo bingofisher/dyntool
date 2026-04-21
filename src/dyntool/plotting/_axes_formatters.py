@@ -72,16 +72,12 @@ class TickPlanner:
     lower: float
     upper: float
     target_blocks: int = 5
-    include_zero: bool = False
 
     def plan(self) -> np.ndarray:
         """生成可读的 major ticks。"""
 
         lower = float(self.lower)
         upper = float(self.upper)
-        if self.include_zero:
-            lower = min(lower, 0.0)
-            upper = max(upper, 0.0)
         if lower == upper:
             margin = max(abs(lower) * 0.1, 1.0)
             lower -= margin
@@ -93,9 +89,6 @@ class TickPlanner:
         start = np.floor(lower / step) * step
         end = np.ceil(upper / step) * step
         ticks = self._build_ticks(start, end, step)
-
-        if self.include_zero and not np.any(np.isclose(ticks, 0.0, atol=1e-12)):
-            ticks = np.sort(np.append(ticks, 0.0))
         return self._normalize_ticks(ticks)
 
     def plan_segments(self) -> np.ndarray:
@@ -103,9 +96,6 @@ class TickPlanner:
 
         lower = float(self.lower)
         upper = float(self.upper)
-        if self.include_zero:
-            lower = min(lower, 0.0)
-            upper = max(upper, 0.0)
         if lower == upper:
             margin = max(abs(lower) * 0.1, 1.0)
             lower -= margin

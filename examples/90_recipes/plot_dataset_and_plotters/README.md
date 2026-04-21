@@ -42,19 +42,26 @@ enabled = false
 [axis.x.label]
 text = "时间 / s"
 pad = 1.0
+fontsize = 10.0
 
 [axis.y.label]
 text = '$a_{\mathrm{max}}$ / (m/s$^2$)'
 pad = 1.0
+fontsize = 11.0
 
 [axis.x]
 kind = "continuous"
 
+[axis.x.ticks]
+fontsize = 8.0
+
 [axis.x.ticks.major]
 step = 2.0
+origin = 0.0
 
 [axis.x.ticks.minor]
 step = 1.0
+origin = 0.0
 
 [axis.y]
 kind = "continuous"
@@ -63,6 +70,11 @@ kind = "continuous"
 enabled = true
 exponent = 3
 ```
+
+补充口径：
+- continuous 轴只要给了 `step`，对应 `origin` 默认按 `0` 起算；显式写出时用于改变步进锚点
+- continuous 轴默认不开科学计数法；只有显式写 `formatter.scientific.enabled = true` 才启用
+- `axis.<side>.label.fontsize` 控制轴标签字号，`axis.<side>.ticks.fontsize` 控制 ticklabel 字号
 
 如果项目内只有 `C1 / C2` 这类轻微差异，推荐保留一份 base plotting TOML，再通过 variant patch 使用 `dyntool.config.read_config_file(...) + deep_update(...)` 合并，而不要把业务键直接写进 `AxisConfig`。  
 不要再把 `configure_zh`、`AxisFrame`、`GridFrame`、`AxisHelper`、`LegendHelper` 或 `add()+plot()` 当作正式用法。 

@@ -28,3 +28,6 @@
 - 若需要临时 rename / filter / order legend，请在本次绘图调用里显式传参，或直接操作 `ax.legend(...)`
 - 运行时可以通过 `FramePlotter(..., axis_config=...)` 或 `plot_dataset(..., axis_config=...)` 覆盖 `PlotTheme.axis_config`
 - 当前主题文件已经统一切到点层级 schema：网格走 `grid.x.major / grid.y.major`，标签走 `axis.x.label / axis.y.label`，轴语义走 `axis.x / axis.y`
+- continuous 轴只要给了 `ticks.major.step` 或 `ticks.minor.step`，对应 `origin` 默认按 `0` 起算；需要变更步进锚点时再显式写 `origin`
+- continuous 轴默认不开科学计数法；只有显式写 `formatter.scientific.enabled = true` 或 Python 侧传 `scientific=True` 才启用
+- `axis.<side>.label.fontsize` 控制轴标签字号，`axis.<side>.ticks.fontsize` 控制 ticklabel 字号；`formatter.scientific.fontsize` 只控制 offset 文本字号

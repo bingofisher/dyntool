@@ -134,6 +134,7 @@ class StoryValuePlotter(PlotterBase):
             keys=keys,
             axis_config=resolved_axis_config,
         )
+        self._apply_tick_label_options(target_ax)
         self._apply_legend(target_ax, legend_options=legend_options)
         self._finalize_figure(fig)
         return PlotResult(raw=fig, figure=fig, axes=(target_ax,))

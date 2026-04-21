@@ -67,6 +67,9 @@ description: Use when users ask how to use AdvDynTool or `dyntool` in another pr
 - 保留关键参数名，让用户知道该填什么
 - 除非问题本身要求，不引入内部模块、复杂扩展点或非正式入口
 - plotting 统一走 `PlotDataset -> PlotTheme -> concrete plotter -> PlotResult.ax`
+- continuous 轴若使用 `ticks.major.step` / `ticks.minor.step`，默认按 `origin = 0` 起算；只有需要改变步进锚点时再显式写 `origin`
+- continuous 轴默认不开科学计数法；只有显式写 `formatter.scientific.enabled = true` 或 Python 侧传 `scientific=True` 才推荐
+- 需要控制字号时，优先区分：`axis.<side>.label.fontsize` 是轴标签字号，`axis.<side>.ticks.fontsize` 是 ticklabel 字号，`formatter.scientific.fontsize` 只控制 offset 文本字号
 
 如果用户只问“该走哪个入口”，也要给 3 到 8 行最小骨架，而不是只丢路径。
 

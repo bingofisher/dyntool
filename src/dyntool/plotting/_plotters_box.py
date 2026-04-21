@@ -84,6 +84,7 @@ class BoxPlotter(PlotterBase):
             xlabel=self.default_x_label,
             ylabel=self.with_unit(self.default_y_label, value_unit),
         )
+        self._apply_tick_label_options(target_ax)
         self._register_box_stat_proxies(
             target_ax,
             stat_metrics=stat_metrics,

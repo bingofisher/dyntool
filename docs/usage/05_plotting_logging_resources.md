@@ -94,9 +94,13 @@ enabled = false
 [axis.x.label]
 text = "频率 / Hz"
 pad = 1.0
+fontsize = 10.0
 
 [axis.x]
 kind = "octave"
+
+[axis.x.ticks]
+fontsize = 8.0
 
 [axis.x.formatter]
 show_every = 2
@@ -106,10 +110,18 @@ kind = "continuous"
 
 [axis.y.ticks.major]
 step = 10.0
+origin = 0.0
 
 [axis.y.ticks.minor]
 step = 5.0
+origin = 0.0
 ```
+
+补充口径：
+- continuous 轴只要给了 `ticks.major.step` 或 `ticks.minor.step`，对应 `origin` 默认按 `0` 起算
+- continuous 轴默认不开科学计数法；只有显式写 `formatter.scientific.enabled = true` 才启用
+- `axis.<side>.label.fontsize` 控制轴标签字号，`axis.<side>.ticks.fontsize` 控制 ticklabel 字号
+- `formatter.scientific.fontsize` 只控制科学计数法 offset 文本字号，不替代 ticklabel 字号
 
 如果项目里存在 `C1 / C2 / C3 / C4` 这类“大同小异”的绘图差异，推荐保持 `AxisConfig` 仍只描述单轴语义，在项目层采用“base TOML + variant patch + `deep_update(...)`”模式选择变体，而不要把业务分支直接写进正式 schema。
 

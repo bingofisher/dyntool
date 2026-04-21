@@ -765,18 +765,53 @@ add_axes_rect = [0.12, 0.14, 0.82, 0.78]
 [axis.x.label]
 text = "时间 / s"
 pad = 1.0
+fontsize = 10.0
 
 [axis.y.label]
 text = "加速度 / (m/s²)"
 pad = 2.0
+fontsize = 11.0
         """.strip(),
         encoding="utf-8",
     )
 
     theme = PlotTheme.from_file(config_path)
 
-    assert theme.axis_label_options("x") == {"text": "时间 / s", "pad": pytest.approx(1.0)}
-    assert theme.axis_label_options("y") == {"text": "加速度 / (m/s²)", "pad": pytest.approx(2.0)}
+    assert theme.axis_label_options("x") == {
+        "text": "时间 / s",
+        "pad": pytest.approx(1.0),
+        "fontsize": pytest.approx(10.0),
+    }
+    assert theme.axis_label_options("y") == {
+        "text": "加速度 / (m/s²)",
+        "pad": pytest.approx(2.0),
+        "fontsize": pytest.approx(11.0),
+    }
+
+
+def test_plot_theme_from_file_supports_axis_tick_fontsize_schema(tmp_path) -> None:
+    config_path = tmp_path / "plot_theme_with_axis_tick_fontsize.toml"
+    config_path.write_text(
+        """
+[axis.x]
+kind = "continuous"
+
+[axis.x.ticks]
+fontsize = 8.0
+
+[axis.y]
+kind = "continuous"
+
+[axis.y.ticks]
+fontsize = 9.0
+        """.strip(),
+        encoding="utf-8",
+    )
+
+    theme = PlotTheme.from_file(config_path)
+
+    assert theme.axis_tick_options("x") == {"fontsize": pytest.approx(8.0)}
+    assert theme.axis_tick_options("y") == {"fontsize": pytest.approx(9.0)}
 
 
 def test_plot_theme_axis_labels_preserve_mathtext_and_literal_dollar_strings(tmp_path) -> None:
@@ -977,10 +1012,12 @@ add_axes_rect = [0.12, 0.14, 0.82, 0.78]
 [axis.x.label]
 text = "频率 / Hz"
 pad = 1.0
+fontsize = 10.0
 
 [axis.y.label]
 text = "加速度幅值 / (m/s²)"
 pad = 2.0
+fontsize = 11.0
         """.strip(),
         encoding="utf-8",
     )
@@ -1000,6 +1037,43 @@ pad = 2.0
     assert ax.get_ylabel() == "加速度幅值 / (m/s²)"
     assert ax.xaxis.labelpad == pytest.approx(1.0)
     assert ax.yaxis.labelpad == pytest.approx(2.0)
+    assert ax.xaxis.label.get_fontsize() == pytest.approx(10.0)
+    assert ax.yaxis.label.get_fontsize() == pytest.approx(11.0)
+
+
+def test_frame_plotter_applies_theme_tick_label_fontsize(tmp_path) -> None:
+    config_path = tmp_path / "plot_theme_with_tick_fontsize.toml"
+    config_path.write_text(
+        """
+[axis.x]
+kind = "continuous"
+
+[axis.x.ticks]
+fontsize = 8.0
+
+[axis.y]
+kind = "continuous"
+
+[axis.y.ticks]
+fontsize = 9.0
+        """.strip(),
+        encoding="utf-8",
+    )
+    theme = PlotTheme.from_file(config_path)
+    dataset = PlotDataset.from_axis_value(
+        axis=[0.0, 1.0, 2.0],
+        value=[10.0, 20.0, 30.0],
+        name="sample-a",
+        category=PlotCategory.SAMPLE,
+    )
+
+    result = FramePlotter(theme=theme).plot_dataset(dataset)
+
+    ax = result.ax
+    assert ax is not None
+    ax.figure.canvas.draw()
+    assert all(tick.get_fontsize() == pytest.approx(8.0) for tick in ax.get_xticklabels())
+    assert all(tick.get_fontsize() == pytest.approx(9.0) for tick in ax.get_yticklabels())
 
 
 def test_frame_plotter_hides_ticks_for_hidden_spines_even_if_rc_enables_them(tmp_path) -> None:
@@ -1145,7 +1219,7 @@ def test_frame_plotter_honors_explicit_ticks_exactly() -> None:
     np.testing.assert_allclose(ax.get_xticks(), np.array([0.0, 0.5, 1.0, 1.5, 2.0]))
 
 
-def test_frame_plotter_major_step_aligns_to_data_bounds_when_no_explicit_limits() -> None:
+def test_frame_plotter_major_step_uses_zero_origin_when_no_explicit_limits() -> None:
     dataset = PlotDataset.from_axis_value(
         axis=[0.2, 0.8, 1.7],
         value=[2.0, 3.0, 4.0],
@@ -1161,7 +1235,87 @@ def test_frame_plotter_major_step_aligns_to_data_bounds_when_no_explicit_limits(
 
     ax = result.ax
     assert ax is not None
-    np.testing.assert_allclose(ax.get_xticks(), np.array([0.0, 0.5, 1.0, 1.5, 2.0]))
+    np.testing.assert_allclose(ax.get_xticks(), np.array([0.5, 1.0, 1.5]))
+
+
+def test_frame_plotter_major_step_origin_does_not_append_non_aligned_endpoint() -> None:
+    dataset = PlotDataset.from_axis_value(
+        axis=[0.0, 0.02, 0.04, 0.06, 0.08],
+        value=[0.0, 0.02, 0.04, 0.06, 0.08],
+        name="sample-a",
+        category=PlotCategory.SAMPLE,
+    )
+
+    result = FramePlotter(
+        axis_config=AxisConfig(
+            y=ContinuousAxisSpec(
+                major_step=0.01,
+                major_origin=0.0,
+                tick_min=0.0,
+                tick_max=0.085,
+            )
+        )
+    ).plot_dataset(dataset)
+
+    ax = result.ax
+    assert ax is not None
+    np.testing.assert_allclose(
+        ax.get_yticks(),
+        np.array([0.0, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08]),
+    )
+    assert "0.09" not in [tick.get_text() for tick in ax.get_yticklabels()]
+
+
+def test_frame_plotter_minor_origin_is_independent_from_major_origin() -> None:
+    dataset = PlotDataset.from_axis_value(
+        axis=[0.0, 0.5, 1.0, 1.5, 2.0],
+        value=[1.0, 1.5, 2.0, 2.5, 3.0],
+        name="sample-a",
+        category=PlotCategory.SAMPLE,
+    )
+
+    result = FramePlotter(
+        axis_config=AxisConfig(
+            x=ContinuousAxisSpec(
+                major_step=1.0,
+                major_origin=0.0,
+                minor_step=0.5,
+                minor_origin=0.25,
+                tick_min=0.0,
+                tick_max=2.0,
+            )
+        )
+    ).plot_dataset(dataset)
+
+    ax = result.ax
+    assert ax is not None
+    x_min, x_max = ax.get_xlim()
+    visible_minor_ticks = ax.xaxis.get_minorticklocs()
+    visible_minor_ticks = visible_minor_ticks[(visible_minor_ticks >= x_min) & (visible_minor_ticks <= x_max)]
+    np.testing.assert_allclose(visible_minor_ticks, np.array([0.25, 0.75, 1.25, 1.75]))
+
+
+def test_frame_plotter_defaults_to_non_scientific_formatter() -> None:
+    dataset = PlotDataset.from_axis_value(
+        axis=[0.0, 1.0, 2.0],
+        value=[1000.0, 2000.0, 3000.0],
+        name="sample-a",
+        category=PlotCategory.SAMPLE,
+    )
+
+    result = FramePlotter(
+        axis_config=AxisConfig(
+            y=ContinuousAxisSpec(
+                ticks=[0.0, 1000.0, 2000.0, 3000.0],
+            )
+        )
+    ).plot_dataset(dataset)
+
+    ax = result.ax
+    assert ax is not None
+    ax.figure.canvas.draw()
+    assert [tick.get_text() for tick in ax.get_yticklabels()[:4]] == ["0", "1000", "2000", "3000"]
+    assert ax.yaxis.get_offset_text().get_visible() is False
 
 
 def test_plotting_variant_patch_can_merge_base_and_c1_profile_with_deep_update(tmp_path) -> None:
@@ -1217,6 +1371,51 @@ step = 0.0001
     assert merged["axis"]["x"]["ticks"]["minor"]["step"] == pytest.approx(5.0)
     assert merged["axis"]["y"]["ticks"]["major"]["step"] == pytest.approx(0.001)
     assert merged["axis"]["y"]["ticks"]["minor"]["step"] == pytest.approx(0.0001)
+
+
+def test_plot_theme_from_file_supports_axis_tick_origins(tmp_path) -> None:
+    config_path = tmp_path / "plot_theme.toml"
+    config_path.write_text(
+        """
+[axis.x]
+kind = "continuous"
+
+[axis.x.ticks.major]
+step = 2.0
+origin = 0.0
+
+[axis.x.ticks.minor]
+step = 0.5
+origin = 0.25
+        """.strip(),
+        encoding="utf-8",
+    )
+
+    theme = PlotTheme.from_file(config_path)
+
+    assert theme.axis_config is not None
+    assert isinstance(theme.axis_config.x, ContinuousAxisSpec)
+    assert theme.axis_config.x.major_origin == pytest.approx(0.0)
+    assert theme.axis_config.x.minor_origin == pytest.approx(0.25)
+
+
+def test_plot_theme_from_file_rejects_removed_include_zero_key(tmp_path) -> None:
+    config_path = tmp_path / "plot_theme.toml"
+    config_path.write_text(
+        """
+[axis.y]
+kind = "continuous"
+
+[axis.y.limits]
+min = 0.0
+max = 1.0
+include_zero = true
+        """.strip(),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="axis.y.limits 存在未支持的字段"):
+        PlotTheme.from_file(config_path)
 
 
 def test_frame_plotter_dataset_style_overrides_theme_defaults(tmp_path) -> None:

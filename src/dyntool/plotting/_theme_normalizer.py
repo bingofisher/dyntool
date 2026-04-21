@@ -31,7 +31,8 @@ _ALLOWED_GRID_AXIS_KEYS = {"major", "minor"}
 _ALLOWED_GRID_LEVEL_KEYS = {"enabled", "color", "linestyle", "linewidth"}
 _ALLOWED_AXIS_KEYS = {"x", "y"}
 _ALLOWED_AXIS_SIDE_KEYS = {"kind", "label", "ticks", "limits", "formatter"}
-_ALLOWED_AXIS_LABEL_KEYS = {"text", "pad"}
+_ALLOWED_AXIS_LABEL_KEYS = {"text", "pad", "fontsize"}
+_ALLOWED_AXIS_TICK_DISPLAY_KEYS = {"fontsize"}
 
 
 class _ThemeSchemaParser:
@@ -69,6 +70,7 @@ class _ThemeSchemaParser:
             artist=self.normalize_artist(artist_payload if artist_payload is not None else default_artist),
             legend=self.normalize_legend(self.mapping_section(payload, "legend")),
             axis_labels=self.normalize_axis_labels(axis_payload),
+            axis_ticks=self.normalize_axis_ticks(axis_payload),
             axis_config=self.normalize_axis_config(axis_payload),
         )
 
@@ -216,11 +218,51 @@ class _ThemeSchemaParser:
             normalized[side] = {
                 "text": self._coerce_str(label_mapping.get("text", ""), path=f"axis.{side}.label.text"),
                 "pad": self._coerce_float(label_mapping.get("pad", 0.0), path=f"axis.{side}.label.pad"),
+                "fontsize": self._coerce_float(
+                    label_mapping.get("fontsize", 9.0),
+                    path=f"axis.{side}.label.fontsize",
+                ),
+            }
+        return normalized
+
+    def normalize_axis_ticks(self, payload: Mapping[str, Any] | None) -> dict[str, dict[str, Any]]:
+        raw = payload or {}
+        self._validate_allowed_keys(raw, allowed=_ALLOWED_AXIS_KEYS, message="axis 存在未支持的字段")
+        normalized: dict[str, dict[str, Any]] = {}
+        for side in ("x", "y"):
+            section = self._mapping_or_empty(raw.get(side), path=f"axis.{side}")
+            self._validate_allowed_keys(
+                section,
+                allowed=_ALLOWED_AXIS_SIDE_KEYS,
+                message=f"axis.{side} 存在未支持的字段",
+            )
+            ticks = self._mapping_or_empty(section.get("ticks"), path=f"axis.{side}.ticks")
+            if "fontsize" not in ticks:
+                continue
+            normalized[side] = {
+                "fontsize": self._coerce_float(
+                    ticks.get("fontsize"),
+                    path=f"axis.{side}.ticks.fontsize",
+                )
             }
         return normalized
 
     def normalize_axis_config(self, payload: Mapping[str, Any] | None) -> AxisConfig | None:
-        return parse_axis_config(payload)
+        if payload is None:
+            return parse_axis_config(None)
+        sanitized = deepcopy(dict(payload))
+        for side in ("x", "y"):
+            section = sanitized.get(side)
+            if not isinstance(section, Mapping):
+                continue
+            section_copy = dict(section)
+            ticks = section_copy.get("ticks")
+            if isinstance(ticks, Mapping):
+                ticks_copy = dict(ticks)
+                ticks_copy.pop("fontsize", None)
+                section_copy["ticks"] = ticks_copy
+            sanitized[side] = section_copy
+        return parse_axis_config(sanitized)
 
     def _mapping_or_empty(self, value: object, *, path: str) -> Mapping[str, Any]:
         if value is None:

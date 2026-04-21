@@ -194,7 +194,14 @@ dataset = dt_plotting.PlotDataset.from_axis_value(
     category=dt_plotting.PlotCategory.SAMPLE,
 )
 axis_config = dt_plotting.AxisConfig(
-    x=dt_plotting.ContinuousAxisSpec(major_step=2.0, minor_step=1.0, tick_min=0.0, tick_max=6.0),
+    x=dt_plotting.ContinuousAxisSpec(
+        major_step=2.0,
+        major_origin=0.0,
+        minor_step=1.0,
+        minor_origin=0.0,
+        tick_min=0.0,
+        tick_max=6.0,
+    ),
     y=dt_plotting.ContinuousAxisSpec(scientific=True),
 )
 result = dt_plotting.FramePlotter(axis_config=axis_config).plot_dataset(dataset)
@@ -209,6 +216,10 @@ result = dt_plotting.FramePlotter(axis_config=axis_config).plot_dataset(dataset)
 - `PlotTheme.grid` 负责网格策略与样式
 - `PlotTheme.axis_config` 负责主题级默认轴语义
 - `OneThirdOctavePlotter` 当前正式支持 `x = OctaveAxisSpec` 与 `y = ContinuousAxisSpec`
+- continuous 轴默认不开科学计数法，只有显式 `scientific=True` 或 TOML 写 `formatter.scientific.enabled = true` 才启用
+- `major_origin / minor_origin` 只在对应 `major_step / minor_step` 存在时生效，默认都按 `0` 起算
+- `axis.<side>.label.fontsize` 控制轴标签字号，`axis.<side>.ticks.fontsize` 控制 ticklabel 字号
+- `formatter.scientific.fontsize` 只控制科学计数法 offset 文本字号
 - 若项目内存在轻微变体，推荐在项目层读取基础 TOML 后用 `dyntool.config.deep_update(...)` 合并 variant patch，再把合并后的结果交给 `PlotTheme` / `axis_config` 主链
 
 `PlotTheme.axis_labels` 是运行时对象上的主题级标签默认值；正式 TOML 入口是 `axis.x.label / axis.y.label`。标签文本会原样交给 Matplotlib；若需要数学公式，请按 Matplotlib 习惯写 `$...$`，推荐在 TOML 中优先使用单引号字面量字符串。

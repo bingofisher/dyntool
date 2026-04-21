@@ -157,11 +157,12 @@ def _continuous_kwargs(spec: ContinuousAxisSpec) -> dict[str, object]:
     return {
         "ticks": spec.ticks,
         "major_step": spec.major_step,
+        "major_origin": spec.major_origin,
         "num_segments": spec.num_segments,
         "tick_min": spec.tick_min,
         "tick_max": spec.tick_max,
         "minor_step": spec.minor_step,
-        "include_zero": spec.include_zero,
+        "minor_origin": spec.minor_origin,
         "baseline": spec.baseline,
         "height_ratio": spec.height_ratio,
         "decimals": spec.decimals,

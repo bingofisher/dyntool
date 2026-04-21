@@ -58,6 +58,7 @@ class PlotTheme:
     artist: dict[str, dict[str, Any]] = field(default_factory=dict)
     legend: dict[str, Any] = field(default_factory=dict)
     axis_labels: dict[str, dict[str, Any]] = field(default_factory=dict)
+    axis_ticks: dict[str, dict[str, Any]] = field(default_factory=dict)
     axis_config: AxisConfig | None = None
 
     @classmethod
@@ -72,6 +73,7 @@ class PlotTheme:
             artist=THEME_SCHEMA.normalize_artist(_DEFAULT_ARTIST_THEME),
             legend=THEME_SCHEMA.normalize_legend(None),
             axis_labels=THEME_SCHEMA.normalize_axis_labels(None),
+            axis_ticks=THEME_SCHEMA.normalize_axis_ticks(None),
             axis_config=None,
         )
 
@@ -116,6 +118,11 @@ class PlotTheme:
         """返回指定坐标轴标签的主题配置。"""
 
         return dict(self.axis_labels.get(side, {}))
+
+    def axis_tick_options(self, side: str) -> dict[str, Any]:
+        """返回指定坐标轴 ticklabel 的主题配置。"""
+
+        return dict(self.axis_ticks.get(side, {}))
 
     def _build_axis_frame(self) -> Any:
         """返回当前模板对应的内部 ``AxisFrame``。"""

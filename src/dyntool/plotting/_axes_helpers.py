@@ -7,7 +7,7 @@ from typing import Any, Callable, Iterable, Mapping, Sequence
 import numpy as np
 from matplotlib.axes import Axes
 from matplotlib.legend import Legend
-from matplotlib.ticker import FixedFormatter, FixedLocator, MultipleLocator
+from matplotlib.ticker import FixedFormatter, FixedLocator
 from numpy.typing import ArrayLike
 
 from ._axes_common import AxisFormatMode, AxisSide
@@ -157,8 +157,6 @@ class LegendHelper:
 class AxisHelper:
     """公开数值轴、离散轴与图例辅助工具。"""
 
-    _DEFAULT_SCIENTIFIC_THRESHOLD = (-2, 3)
-
     def __init__(self, ax: Axes) -> None:
         self._ax = ax
 
@@ -170,11 +168,12 @@ class AxisHelper:
         data: ArrayLike | None = None,
         ticks: Sequence[float] | None = None,
         major_step: float | None = None,
+        major_origin: float | None = None,
         num_segments: int | None = None,
         tick_min: float | None = None,
         tick_max: float | None = None,
         minor_step: float | None = None,
-        include_zero: bool | None = None,
+        minor_origin: float | None = None,
         baseline: float | None = None,
         height_ratio: float | None = None,
         decimals: int | None = None,
@@ -198,11 +197,12 @@ class AxisHelper:
                 data=data,
                 ticks=ticks,
                 major_step=major_step,
+                major_origin=major_origin,
                 num_segments=num_segments,
                 tick_min=tick_min,
                 tick_max=tick_max,
                 minor_step=minor_step,
-                include_zero=include_zero,
+                minor_origin=minor_origin,
                 baseline=baseline,
                 height_ratio=height_ratio,
                 decimals=decimals,
@@ -263,11 +263,12 @@ class AxisHelper:
         data: ArrayLike | None,
         ticks: Sequence[float] | None,
         major_step: float | None,
+        major_origin: float | None,
         num_segments: int | None,
         tick_min: float | None,
         tick_max: float | None,
         minor_step: float | None,
-        include_zero: bool | None,
+        minor_origin: float | None,
         baseline: float | None,
         height_ratio: float | None,
         decimals: int | None,
@@ -284,7 +285,6 @@ class AxisHelper:
             ticks=ticks,
             tick_min=tick_min,
             tick_max=tick_max,
-            include_zero=include_zero,
             baseline=baseline,
             height_ratio=height_ratio,
         )
@@ -293,12 +293,12 @@ class AxisHelper:
             data=data,
             ticks=ticks,
             major_step=major_step,
+            major_origin=major_origin,
             num_segments=num_segments,
             tick_min=tick_min,
             tick_max=tick_max,
             resolved_tick_min=lower_bound,
             resolved_tick_max=upper_bound,
-            include_zero=include_zero,
         )
         display_lower, display_upper = self._resolve_display_bounds(
             tick_lower=lower_bound,
@@ -319,7 +319,16 @@ class AxisHelper:
         axis.set_major_locator(FixedLocator(resolved_ticks.tolist()))
         axis.set_major_formatter(formatter)
         if minor_step is not None:
-            axis.set_minor_locator(MultipleLocator(float(minor_step)))
+            minor_ticks = self._build_step_ticks(
+                lower=float(tick_min) if tick_min is not None else None,
+                upper=float(tick_max) if tick_max is not None else None,
+                resolved_lower=float(lower_bound),
+                resolved_upper=float(upper_bound),
+                data=self._coerce_data_or_axis_data(side=side, data=data),
+                step=float(minor_step),
+                origin=float(minor_origin) if minor_origin is not None else None,
+            )
+            axis.set_minor_locator(FixedLocator(minor_ticks.tolist()))
         self._set_axis_side_visibility(side)
         self._set_offset_position(side)
         axis.get_offset_text().set_visible(not np.isclose(scale_factor, 1.0))
@@ -364,12 +373,12 @@ class AxisHelper:
         data: ArrayLike | None,
         ticks: Sequence[float] | None,
         major_step: float | None,
+        major_origin: float | None,
         num_segments: int | None,
         tick_min: float | None,
         tick_max: float | None,
         resolved_tick_min: float | None,
         resolved_tick_max: float | None,
-        include_zero: bool | None,
     ) -> np.ndarray:
         if ticks is not None:
             values = np.asarray(list(ticks), dtype=float)
@@ -386,7 +395,7 @@ class AxisHelper:
                 resolved_upper=float(resolved_tick_max) if resolved_tick_max is not None else None,
                 data=self._coerce_data_or_axis_data(side=side, data=data),
                 step=float(major_step),
-                include_zero=bool(include_zero),
+                origin=float(major_origin) if major_origin is not None else None,
             )
 
         source_values = self._coerce_data_or_axis_data(side=side, data=data)
@@ -394,9 +403,6 @@ class AxisHelper:
             raise ValueError("无法为连续轴格式化推断有效数据。")
         lower = float(np.nanmin(source_values)) if tick_min is None else float(tick_min)
         upper = float(np.nanmax(source_values)) if tick_max is None else float(tick_max)
-        if include_zero:
-            lower = min(lower, 0.0)
-            upper = max(upper, 0.0)
         if not np.isfinite(lower) or not np.isfinite(upper):
             raise ValueError("连续轴刻度范围必须是有限数值。")
         if lower == upper:
@@ -407,7 +413,6 @@ class AxisHelper:
             lower=lower,
             upper=upper,
             target_blocks=num_segments or 5,
-            include_zero=bool(include_zero),
         )
         if num_segments is not None:
             return planner.plan_segments()
@@ -422,15 +427,12 @@ class AxisHelper:
         resolved_upper: float | None,
         data: np.ndarray,
         step: float,
-        include_zero: bool,
+        origin: float | None,
     ) -> np.ndarray:
         if data.size == 0 and (resolved_lower is None or resolved_upper is None):
             raise ValueError("无法在缺少有效数据和显式边界时按 major_step 规划刻度。")
         computed_lower = float(np.nanmin(data)) if resolved_lower is None else float(resolved_lower)
         computed_upper = float(np.nanmax(data)) if resolved_upper is None else float(resolved_upper)
-        if include_zero:
-            computed_lower = min(computed_lower, 0.0)
-            computed_upper = max(computed_upper, 0.0)
         if computed_lower == computed_upper:
             margin = max(abs(computed_lower) * 0.1, step)
             computed_lower -= margin
@@ -438,14 +440,22 @@ class AxisHelper:
         if computed_lower > computed_upper:
             computed_lower, computed_upper = computed_upper, computed_lower
 
-        start = float(lower) if lower is not None else np.floor(computed_lower / step) * step
-        end = float(upper) if upper is not None else np.ceil(computed_upper / step) * step
-        values = np.arange(start, end + step * 0.5, step, dtype=float)
+        start = float(lower) if lower is not None else computed_lower
+        end = float(upper) if upper is not None else computed_upper
+        if origin is None:
+            sequence_start = float(start) if lower is not None else np.floor(computed_lower / step) * step
+            sequence_end = float(end) if upper is not None else np.ceil(computed_upper / step) * step
+            values = np.arange(sequence_start, sequence_end + step * 0.5, step, dtype=float)
+        else:
+            start_index = int(np.ceil((start - origin) / step))
+            end_index = int(np.floor((end - origin) / step))
+            values = np.asarray(
+                [origin + idx * step for idx in range(start_index, end_index + 1)],
+                dtype=float,
+            )
         if values.size == 0:
-            return np.asarray([start, end], dtype=float)
-        if upper is not None and not np.isclose(values[-1], end):
-            values = values[values < end]
-            values = np.append(values, end)
+            return np.asarray([start], dtype=float)
+        values = values[(values >= start - 1e-12) & (values <= end + 1e-12)]
         return values
 
     def _resolve_continuous_bounds(
@@ -456,7 +466,6 @@ class AxisHelper:
         ticks: Sequence[float] | None,
         tick_min: float | None,
         tick_max: float | None,
-        include_zero: bool | None,
         baseline: float | None,
         height_ratio: float | None,
     ) -> tuple[float, float]:
@@ -468,9 +477,6 @@ class AxisHelper:
             raise ValueError("无法为连续轴格式化推断有效数据。")
         lower = float(np.nanmin(values)) if tick_min is None else float(tick_min)
         upper = float(np.nanmax(values)) if tick_max is None else float(tick_max)
-        if include_zero:
-            lower = min(lower, 0.0)
-            upper = max(upper, 0.0)
         if not np.isfinite(lower) or not np.isfinite(upper):
             raise ValueError("连续轴刻度范围必须是有限数值。")
         if lower == upper:
@@ -532,15 +538,10 @@ class AxisHelper:
         max_abs = float(np.nanmax(np.abs(ticks))) if ticks.size else 0.0
         if max_abs <= 0.0:
             return 1.0
-        exponent = int(np.floor(np.log10(max_abs)))
-        if scientific is False:
+        if scientific is not True:
             return 1.0
-        if scientific is True:
-            return 10.0**exponent
-        lower_threshold, upper_threshold = self._DEFAULT_SCIENTIFIC_THRESHOLD
-        if exponent <= lower_threshold or exponent >= upper_threshold:
-            return 10.0**exponent
-        return 1.0
+        exponent = int(np.floor(np.log10(max_abs)))
+        return 10.0**exponent
 
     def _set_axis_limits(self, *, side: AxisSide, lower: float, upper: float) -> None:
         if side in {"bottom", "top"}:

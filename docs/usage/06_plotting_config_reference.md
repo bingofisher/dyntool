@@ -98,16 +98,21 @@ ncol = 1
 [axis.x.label]
 text = "时间 / s"
 pad = 1.0
+fontsize = 10.0
 
 [axis.y.label]
 text = '$a_{\mathrm{max}}$ / (m/s$^2$)'
 pad = 1.0
+fontsize = 11.0
 
 [axis.x]
 kind = "continuous"
 
 [axis.x.ticks.major]
 step = 2.0
+
+[axis.x.ticks]
+fontsize = 8.0
 
 [axis.x.ticks.minor]
 step = 1.0
@@ -285,6 +290,7 @@ pad = 1.0
 | --- | --- | --- |
 | `text` | `str` | 轴标签文本 |
 | `pad` | `float` | 对应 `set_xlabel(..., labelpad=...)` / `set_ylabel(..., labelpad=...)` |
+| `fontsize` | `float` | 轴标签字号 |
 
 `axis.<side>.label.text` 会原样传给 Matplotlib。若需要数学公式，请按 Matplotlib 习惯使用 `$...$`。  
 推荐在 TOML 中优先使用单引号字面量字符串，这样数学文本里的反斜杠不用双写：
@@ -320,11 +326,11 @@ step = 2.0
 
 [axis.x.ticks.minor]
 step = 0.5
+origin = 0.0
 
 [axis.x.limits]
 min = 0.0
 max = 4.0
-include_zero = true
 
 [axis.x.formatter]
 decimals = 1
@@ -340,18 +346,21 @@ enabled = false
 | --- | --- | --- |
 | `values` | `list[float]` | 显式 major tick 位置，优先级最高 |
 | `num_segments` | `int` | 自动分段数，优先级低于 `values` 和 `major.step` |
+| `fontsize` | `float` | 该侧 ticklabel 字号 |
 
 #### `axis.<side>.ticks.major`
 
 | 字段 | 类型 | 含义 |
 | --- | --- | --- |
 | `step` | `float` | continuous 轴 major tick 间距 |
+| `origin` | `float` | `major_step` 的起算锚点；未显式给出时默认按 `0` 起算 |
 
 #### `axis.<side>.ticks.minor`
 
 | 字段 | 类型 | 含义 |
 | --- | --- | --- |
 | `step` | `float` | continuous 轴 minor tick 间距 |
+| `origin` | `float` | `minor_step` 的起算锚点；未显式给出时默认按 `0` 起算 |
 
 #### `axis.<side>.limits`
 
@@ -359,7 +368,6 @@ enabled = false
 | --- | --- | --- |
 | `min` | `float` | tick 规划下界 |
 | `max` | `float` | tick 规划上界 |
-| `include_zero` | `bool` | 规划时是否强制包含 `0` |
 | `baseline` | `float` | 以该基线做显示范围推导 |
 | `height_ratio` | `float` | 显示范围相对 tick 范围的比例 |
 
@@ -390,6 +398,9 @@ enabled = false
 - `axis.<side>.formatter.scientific.offset.x / y` 不是数据坐标
 - 它们会直接透传给 Matplotlib 的 `axis.get_offset_text().set_position((x, y))`
 - 更稳妥的用法是先观察自动位置，再做小范围微调
+- continuous 轴默认不开科学计数法；只有显式写 `formatter.scientific.enabled = true` 才启用
+- `origin` 只在对应 `step` 存在时生效；未显式给出时默认按 `0` 起算
+- `axis.<side>.ticks.fontsize` 控制 ticklabel 字号；`formatter.scientific.fontsize` 只控制科学计数法 offset 文本字号，两者不相互替代
 
 continuous 轴优先级固定为：
 

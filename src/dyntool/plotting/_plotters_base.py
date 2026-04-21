@@ -234,6 +234,8 @@ class PlotterBase:
         resolved_ylabel = str(y_options.get("text") or ylabel)
         x_pad = x_options.get("pad")
         y_pad = y_options.get("pad")
+        x_fontsize = x_options.get("fontsize")
+        y_fontsize = y_options.get("fontsize")
         if not ax.get_xlabel():
             if x_pad is None:
                 ax.set_xlabel(resolved_xlabel)
@@ -244,6 +246,20 @@ class PlotterBase:
                 ax.set_ylabel(resolved_ylabel)
             else:
                 ax.set_ylabel(resolved_ylabel, labelpad=float(y_pad))
+        if x_fontsize is not None:
+            ax.xaxis.label.set_fontsize(float(x_fontsize))
+        if y_fontsize is not None:
+            ax.yaxis.label.set_fontsize(float(y_fontsize))
+
+    def _apply_tick_label_options(self, ax: Axes) -> None:
+        x_options = self._theme.axis_tick_options("x") if self._theme is not None else {}
+        y_options = self._theme.axis_tick_options("y") if self._theme is not None else {}
+        x_fontsize = x_options.get("fontsize")
+        y_fontsize = y_options.get("fontsize")
+        if x_fontsize is not None:
+            ax.tick_params(axis="x", which="major", labelsize=float(x_fontsize))
+        if y_fontsize is not None:
+            ax.tick_params(axis="y", which="major", labelsize=float(y_fontsize))
 
     def _collect_visible_legend_items(self, ax: Axes) -> tuple[list[Any], list[str]]:
         handles, labels = ax.get_legend_handles_labels()

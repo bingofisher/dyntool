@@ -217,7 +217,9 @@ if TYPE_CHECKING:
     assert_type(dataset, dt_plotting.PlotDataset)
     continuous_axis = dt_plotting.ContinuousAxisSpec(
         major_step=1.0,
+        major_origin=0.0,
         minor_step=0.5,
+        minor_origin=0.0,
         num_segments=4,
         scientific=True,
         scientific_fontsize=11.0,

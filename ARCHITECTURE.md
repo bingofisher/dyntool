@@ -170,4 +170,6 @@ AdvDynTool 以数值结果正确、单位一致和结果可追溯为第一优先
 - `PlotTheme.axis_config` 只承载主题级默认轴语义
 - 运行时优先级固定为：`plot_dataset(..., axis_config=...)` > plotter 构造参数 `axis_config` > `PlotTheme.axis_config` > plotter 内建默认行为
 - plotting 正式 TOML schema 只使用 `grid.x.major / ...`、`axis.x.label / axis.y.label`、`axis.x / axis.y`；`PlotTheme.axis_config` 等字段名仅属于运行时对象说明
+- continuous 轴只要给了 `major_step` / `minor_step`，对应 `major_origin` / `minor_origin` 默认按 `0` 起算；continuous 轴默认不开科学计数法，只有显式开启时才启用
+- `axis.<side>.label.fontsize` 控制轴标签字号，`axis.<side>.ticks.fontsize` 控制 ticklabel 字号；`formatter.scientific.fontsize` 只控制 offset 文本字号
 - 项目级 variant patch 仍属于项目层集成策略，不进入 `dyntool.plotting` 的正式 schema

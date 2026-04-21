@@ -54,6 +54,8 @@
 
 - 正式入口：`dyntool.plotting`
 - 固定主链：`PlotDataset.from_* -> PlotTheme.from_file/default -> concrete plotter -> PlotResult.ax`
+- plotting continuous 轴补充口径：`ticks.major.step` / `ticks.minor.step` 默认按 `origin = 0` 起算，scientific 默认关闭，只有显式开启时才启用
+- plotting 字号补充口径：`axis.<side>.label.fontsize` 管轴标签，`axis.<side>.ticks.fontsize` 管 ticklabel，`formatter.scientific.fontsize` 只管 offset 文本
 - example id：`plot_and_export`
 - doc：`docs/usage/05_plotting_logging_resources.md`
 - script：`examples/10_scenarios/05_plot_and_export/main.py`
