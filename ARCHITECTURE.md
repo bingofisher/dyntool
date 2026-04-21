@@ -27,6 +27,12 @@ AdvDynTool 以数值结果正确、单位一致和结果可追溯为第一优先
 - `domain -> compute`
 - `infrastructure -> domain`
 
+项目层 GUI 补充约束如下：
+
+- `src/dyntool_gui` 是桌面工作台骨架，属于项目层应用，不进入 `dyntool` 库级公开面
+- `dyntool_gui -> dyntool` 只允许依赖正式对象 API 和正式模块 API
+- GUI 首轮只固定信息架构、主窗口、dock 区、模块页和占位状态模型
+
 ## 正式公开面
 
 ### 顶层对象层

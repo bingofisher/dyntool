@@ -6,11 +6,12 @@
 
 - 版本线与迁移策略
 - 工程项目迁移验证
-- 版本迁移说明与发布清单
-- plotting 收口记录
+- 发布清单与版本迁移说明
+- plotting 架构与执行任务
+- PySide6 GUI 骨架
 - API 设计与公开面约束
 - DefaultSample / DefaultSampleSet 与 storage 主链
 - 文档规范与示例映射
-- 开发工作流与 Git / 项目管理
-- 测试策略和限值模型维护
+- Git / 项目管理工作流
+- 测试策略与限值模型维护
 - 自定义扩展

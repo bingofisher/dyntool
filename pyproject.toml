@@ -28,6 +28,7 @@ dependencies = [
 [project.optional-dependencies]
 logging = ["loguru>=0.7"]
 plotting = ["matplotlib>=3.7"]
+gui = ["PySide6>=6.8"]
 docs = [
     "mkdocs>=1.6",
     "mkdocs-material>=9.6",
@@ -49,6 +50,7 @@ dev = [
 ]
 
 [dependency-groups]
+gui = ["PySide6>=6.8"]
 docs = [
     "mkdocs>=1.6",
     "mkdocs-material>=9.6",
@@ -70,7 +72,7 @@ dev = [
 ]
 
 [tool.hatch.build]
-packages = ["src/dyntool"]
+packages = ["src/dyntool", "src/dyntool_gui"]
 
 [tool.hatch.version]
 path = "src/dyntool/_version.py"
