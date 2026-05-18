@@ -145,6 +145,16 @@
 - 整个项目重构、跨层大改或十分复杂的任务，才考虑使用子代理。
 - 涉及公开 API 调整、存储格式变化、单位语义变化时，仍必须先按第 8 节询问用户。
 
+## 11.1) GitHub 主线治理
+- `main` 是唯一正式主线，不再把日常开发建立在长期并行主线之上。
+- `v*` tag 是唯一正式发布事实源，不以临时 branch、PR 标题或口头说明替代。
+- GitHub 仓库治理固定采用 branch ruleset + tag ruleset + GitHub Actions 的组合，不以 push ruleset 作为当前公开仓库的主设计前提。
+- 当前正式 ruleset 名称固定为：
+  - `Protect main`
+  - `Protect release tags`
+- 当前正式 CI workflow 名称固定为 `CI`，主 job 名固定为 `quality`；若未来变更，必须同步更新文档、发布清单与 GitHub ruleset 中的 required check 配置。
+- 合并到 `main` 的正式口径固定为：Pull Request + review + CI；不再依赖人工口头约束。
+
 ## 12) 维护脚本
 - 编码与文本卫生维护入口：
   - `python -B scripts/fix_text_hygiene.py --check`

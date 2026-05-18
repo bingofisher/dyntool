@@ -11,6 +11,9 @@
 - 主目录 `AdvDynTool` 默认对应 `main`；本轮整合来源允许先在 `codex/gui-skeleton` 上完成后合回 `main`
 - `codex/gui-skeleton` 只处理 `v1.2.2` 的整合、文档同步、治理收口和项目环境整理
 - `v1.2.2` tag 只能打在通过合并后审查的稳定提交上
+- GitHub branch ruleset 名称固定为 `Protect main`
+- GitHub tag ruleset 名称固定为 `Protect release tags`
+- CI workflow 名称固定为 `CI`，required check 名称固定为 `quality`
 
 ## 一、版本线确认
 
@@ -57,5 +60,7 @@
 
 - [ ] 已完成补丁提交与合并后审查
 - [ ] 已准备在稳定提交上创建 `v1.2.2` tag
+- [ ] GitHub `Protect main` 与 `Protect release tags` 已按当前版本线规则配置
+- [ ] `quality` 已作为 `main` 合并前的正式 required check（若当前阶段已启用）
 - [ ] 发布后已同步回写 `main` 的版本线与 changelog 事实
 - [ ] 如仍存在后续问题，下一补丁目标进入下一稳定补丁版本

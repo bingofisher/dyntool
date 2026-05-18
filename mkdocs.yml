@@ -106,6 +106,7 @@ nav:
       - 工程项目迁移验证: developer/engineering_project_migration_validation.md
       - 1.2.0 迁移说明: developer/migration_1_2_0.md
       - 发布检查清单: developer/release_checklist.md
+      - GitHub Rulesets 与发布治理: developer/github_rulesets.md
       - plotting 架构（v1.2.0）: developer/plotting_architecture.md
       - plotting 执行任务（v1.2.0）: developer/plotting_execution_tasks.md
       - GUI 工作台骨架: developer/gui_skeleton.md
