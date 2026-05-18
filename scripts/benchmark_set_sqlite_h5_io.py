@@ -386,9 +386,9 @@ def _validate_current_store(
     )
     actual_uids = list(loaded.keys())
     if len(actual_uids) != len(source_mapping):
-        raise AssertionError("current 楠岃瘉澶辫触锛氭牱鏈暟涓嶄竴鑷淬€?")
+        raise AssertionError("current 验证失败：样本数不一致。")
     if set(actual_uids) != set(source_mapping):
-        raise AssertionError("current 楠岃瘉澶辫触锛歎ID 闆嗕笉涓€鑷淬€?")
+        raise AssertionError("current 验证失败：UID 集不一致。")
 
     metadata_frame = loaded.metadata_frame()
     actual_metadata = {
@@ -401,7 +401,7 @@ def _validate_current_store(
             if field_name in {"uid", "alias"}:
                 continue
             if _normalize_metadata_value(actual_row.get(field_name)) != _normalize_metadata_value(expected_value):
-                raise AssertionError(f"current 楠岃瘉澶辫触锛歮etadata 瀛楁 {field_name} 涓嶄竴鑷淬€?")
+                raise AssertionError(f"current 验证失败：metadata 字段 {field_name} 不一致。")
 
     summary_frame = loaded.storage.summary_frame(
         metadata_fields=metadata_fields,
@@ -412,7 +412,7 @@ def _validate_current_store(
             if sample.data_vars.get("accel") is None:
                 continue
             if not np.isclose(float(summary_frame.loc[sample.uid, "pga"]), float(sample.pga())):
-                raise AssertionError(f"current 楠岃瘉澶辫触锛氭牱鏈?{sample.uid} 鐨?pga 涓嶄竴鑷淬€?")
+                raise AssertionError(f"current 验证失败：样本 {sample.uid} 的 pga 不一致。")
 
     loaded_fields = loaded.storage.load_many_fields(actual_uids, categories)
     for uid, sample in source_mapping.items():
@@ -420,14 +420,14 @@ def _validate_current_store(
             if sample.data_vars.get(category) is None:
                 continue
             if category not in loaded_fields[uid]:
-                raise AssertionError(f"current 楠岃瘉澶辫触锛氭牱鏈?{uid} 缂哄皯 {category} payload銆?")
+                raise AssertionError(f"current 验证失败：样本 {uid} 缺少 {category} payload。")
 
     for uid, sample in source_mapping.items():
         actual_presence = loaded.storage.sample_presence(uid)
         for category in categories:
             expected_presence = sample.data_vars.get(category) is not None
             if bool(actual_presence.get(category, False)) != expected_presence:
-                raise AssertionError(f"current 楠岃瘉澶辫触锛氭牱鏈?{uid} 鐨?{category} presence 涓嶄竴鑷淬€?")
+                raise AssertionError(f"current 验证失败：样本 {uid} 的 {category} presence 不一致。")
 
 
 def _print_stage_metrics(metrics: dict[str, float]) -> None:

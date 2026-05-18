@@ -125,6 +125,7 @@
 - 如果任务可以由主代理在当前上下文中稳定完成，应优先直接完成。
 - 仓库级子代理定义放在 `.codex/agents/`。
 - 仓库级技能定义放在 `.agents/skills/`。
+- 全部 skill 的主入口、分界和保留策略以 `docs/developer/skill_governance.md` 为准。
 - 这些仓库级 Codex 资产必须纳入 `python scripts/check_codex_assets.py` 校验。
 
 ### 简单任务

@@ -107,6 +107,12 @@ COMMON_MOJIBAKE_FRAGMENTS = (
     "\u95b8\u612c\u61d8\u934e",
     "\u6fe1\ue0a2\u5a89",
     "\u95bb\ue78c\u5291\u9369",
+    "楠岃瘉澶辫触",
+    "鏍锋湰",
+    "鏍囧噯鍖",
+    "浠庡簳灞",
+    "绛栫暐",
+    "杩斿洖",
 )
 BOM = bytes((0xEF, 0xBB, 0xBF))
 C1_CONTROL_RE = re.compile(r"[\u0080-\u009f]")

@@ -1,229 +1,193 @@
-"""模块页骨架。"""
+"""中央模块工作区。"""
 
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QFrame,
-    QGridLayout,
-    QGroupBox,
+    QHBoxLayout,
     QLabel,
-    QPlainTextEdit,
     QPushButton,
-    QTabWidget,
+    QSizePolicy,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
 
-from ..session import MODULE_LABELS, ModuleKey
+from ..layout import LANDSCAPE_2K_PROFILE
+from ..session import MODULE_LABELS, ImportKind, ModuleKey, ProjectSession
+from .export_workspace import ExportWorkspace
+from .import_filter_workspace import ImportFilterWorkspace
+from .plotting_workspace import PlottingWorkspace
+from .processing_workspace import ProcessingWorkspace
+from .project_overview import ProjectOverviewWidget
 
 
-class ModuleWorkspace(QTabWidget):
-    """中央模块工作区。"""
+class ModuleWorkspace(QWidget):
+    """中央任务工作区（纯导航 + 页面容器）。
 
-    action_requested = Signal(str)
+    不再声明或中继任何业务信号。各子 workspace 的信号由外部直接连接。
+    """
+
+    currentChanged = Signal(int)
 
     def __init__(self, parent: object | None = None) -> None:
         super().__init__(parent)
-        self._action_buttons: list[QPushButton] = []
+        self.project_overview = ProjectOverviewWidget(self)
+        self.import_filter_workspace = ImportFilterWorkspace(self)
+        self.import_workflow = self.import_filter_workspace.import_workflow
+        self.subset_workspace = self.import_filter_workspace.subset_workspace
+        self.processing_workspace = ProcessingWorkspace(self)
+        self.plotting_workspace = PlottingWorkspace(self)
+        self.export_workspace = ExportWorkspace(self)
+
         self._pages: dict[ModuleKey, QWidget] = {
-            ModuleKey.PROJECT: self._build_project_page(),
-            ModuleKey.IMPORT: self._build_import_page(),
-            ModuleKey.PROCESSING: self._build_processing_page(),
-            ModuleKey.PLOTTING: self._build_plotting_page(),
-            ModuleKey.EXPORT: self._build_export_page(),
+            ModuleKey.PROJECT: self.project_overview,
+            ModuleKey.IMPORT: self.import_filter_workspace,
+            ModuleKey.PROCESSING: self.processing_workspace,
+            ModuleKey.PLOTTING: self.plotting_workspace,
         }
-        for key, page in self._pages.items():
-            self.addTab(page, MODULE_LABELS[key])
+        self._module_order = tuple(self._pages.keys())
+        self._nav_buttons: list[QPushButton] = []
+
+        root_layout = QVBoxLayout(self)
+        root_layout.setContentsMargins(0, 0, 0, 0)
+        root_layout.setSpacing(4)
+
+        self._context_bar = QFrame(self)
+        self._context_bar.setObjectName("contextBar")
+        self._context_bar.setProperty("surfaceRole", "contextBar")
+        self._context_bar.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self._context_bar.setFixedHeight(LANDSCAPE_2K_PROFILE.context_bar_height)
+        self._context_bar.setStyleSheet(
+            """
+            QFrame#contextBar {
+                background: #1E3A8A;
+                border-bottom: 1px solid #1D4ED8;
+            }
+            """
+        )
+        bar_layout = QHBoxLayout(self._context_bar)
+        bar_layout.setContentsMargins(0, 0, 0, 0)
+        bar_layout.setSpacing(0)
+        self._context_label = QLabel("未加载项目", self._context_bar)
+        self._context_label.setObjectName("ContextBarTitleLabel")
+        self._context_label.setStyleSheet(
+            "background-color: #1E3A8A; color: #FFFFFF; font-size: 11pt; font-weight: 600; padding-left: 16px;"
+        )
+        self._context_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        bar_layout.addWidget(self._context_label, 1)
+        self._progress_label = QLabel("", self._context_bar)
+        self._progress_label.setObjectName("ContextBarProgressLabel")
+        self._progress_label.setStyleSheet(
+            "background-color: #1E3A8A; color: #DBEAFE; font-size: 9pt; padding-right: 16px;"
+        )
+        bar_layout.addWidget(self._progress_label)
+        root_layout.addWidget(self._context_bar)
+
+        self._nav_bar = QWidget(self)
+        self._nav_bar.setObjectName("ModuleNavigationBar")
+        self._nav_bar.setMaximumHeight(LANDSCAPE_2K_PROFILE.nav_button_height + 6)
+        self._nav_bar.setStyleSheet(
+            "QWidget#ModuleNavigationBar { border-bottom: 1px solid #E2E8F0; background: #FFFFFF; }"
+        )
+        nav_layout = QHBoxLayout(self._nav_bar)
+        nav_layout.setContentsMargins(8, 0, 8, 0)
+        nav_layout.setSpacing(0)
+        for index, module in enumerate(self._module_order):
+            button = QPushButton(MODULE_LABELS[module], self._nav_bar)
+            button.setProperty("navButton", True)
+            button.setCheckable(True)
+            button.setMinimumHeight(LANDSCAPE_2K_PROFILE.nav_button_height)
+            button.setMaximumHeight(LANDSCAPE_2K_PROFILE.nav_button_height)
+            button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            button.clicked.connect(lambda checked=False, idx=index: self.setCurrentIndex(idx))
+            nav_layout.addWidget(button)
+            self._nav_buttons.append(button)
+        root_layout.addWidget(self._nav_bar)
+
+        self._stack = QStackedWidget(self)
+        self._stack.setObjectName("ModuleWorkspaceStack")
+        for page in self._pages.values():
+            self._stack.addWidget(page)
+        root_layout.addWidget(self._stack, 1)
+
+        self.setCurrentIndex(0)
+
+    def count(self) -> int:
+        """返回页面数量。"""
+
+        return len(self._module_order)
+
+    def tabText(self, index: int) -> str:
+        """返回指定页面标签。"""
+
+        return MODULE_LABELS[self._module_order[index]]
+
+    def currentIndex(self) -> int:
+        """返回当前页面索引。"""
+
+        return self._stack.currentIndex()
+
+    def setCurrentIndex(self, index: int) -> None:
+        """切换当前页面。"""
+
+        if index < 0 or index >= self.count():
+            return
+        if index == self._stack.currentIndex():
+            self._sync_nav_state(index)
+            return
+        self._stack.setCurrentIndex(index)
+        self._sync_nav_state(index)
+        self.currentChanged.emit(index)
 
     def current_module(self) -> ModuleKey:
-        """返回当前模块键。"""
+        """返回当前模块。"""
 
-        return list(self._pages)[self.currentIndex()]
+        return self._module_order[self.currentIndex()]
 
     def set_current_module(self, module: ModuleKey) -> None:
         """切换当前模块。"""
 
-        self.setCurrentIndex(list(self._pages).index(module))
+        if module in {ModuleKey.SUBSET, ModuleKey.EXPORT}:
+            module = ModuleKey.IMPORT if module is ModuleKey.SUBSET else ModuleKey.PLOTTING
+        self.setCurrentIndex(self._module_order.index(module))
 
-    def _build_project_page(self) -> QWidget:
-        page = QWidget()
-        layout = QGridLayout(page)
-        layout.addWidget(self._group("项目本体", ("项目总览", "工作目录", "默认导出目录", "最近保存时间")), 0, 0)
-        layout.addWidget(
-            self._group("主 SampleSet 信息", ("名称 / 类名 / sample_type", "sample_domain", "metadata 类型与字段")),
-            0,
-            1,
-        )
-        layout.addWidget(
-            self._group("SampleSet 能力", ("supported_categories", "storable_categories", "supported_fields")), 1, 0
-        )
-        layout.addWidget(
-            self._button_group(
-                "项目动作",
-                ("设置主集", "设置对比集", "查看 metadata 字段", "查看支持 categories", "保存项目"),
-            ),
-            1,
-            1,
-        )
-        return page
+    def set_import_kind(self, import_kind: ImportKind) -> None:
+        """更新导入工作流的导入类型。"""
 
-    def _build_import_page(self) -> QWidget:
-        page = QWidget()
-        layout = QVBoxLayout(page)
-        tabs = QTabWidget()
-        tabs.addTab(
-            self._build_import_subpage(
-                "导入 Sample",
-                ("添加文件", "预览导入文件", "检查单位", "试导入", "执行导入 Sample"),
-            ),
-            "导入 Sample",
-        )
-        tabs.addTab(
-            self._build_import_subpage(
-                "导入 SampleSet",
-                ("添加目录", "预览导入文件", "检查单位", "试导入", "执行导入 SampleSet"),
-            ),
-            "导入 SampleSet",
-        )
-        layout.addWidget(tabs)
-        return page
+        self.import_workflow.set_import_kind(import_kind)
 
-    def _build_processing_page(self) -> QWidget:
-        page = QWidget()
-        layout = QGridLayout(page)
-        layout.addWidget(
-            self._group(
-                "子集构建器", ("来源: 主集 / 对比集 / 查询子集", "条件: uids / criteria / filter", "先构建子集再处理")
-            ),
-            0,
-            0,
-        )
-        layout.addWidget(
-            self._group(
-                "处理与评价入口", ("preprocess / pipeline", "freqspec / respspec", "zvl / otovl / fdmvl / fpvdv")
-            ),
-            0,
-            1,
-        )
-        layout.addWidget(
-            self._group("结果导出准备", ("metadata_frame", "scalar_frame", "series_frame", "peaks_frame")), 0, 2
-        )
-        result_tabs = QTabWidget()
-        for name in ("metadata_frame", "scalar_frame", "series_frame", "peaks_frame"):
-            result_tabs.addTab(self._placeholder_text(f"{name} 结果预览占位"), name)
-        layout.addWidget(result_tabs, 1, 0, 1, 2)
-        layout.addWidget(
-            self._button_group(
-                "处理动作",
-                ("构建子集", "运行处理", "查看结果预览", "导出处理结果"),
-            ),
-            1,
-            2,
-        )
-        return page
+    def load_session(self, session: ProjectSession) -> None:
+        """刷新各任务页。"""
 
-    def _build_plotting_page(self) -> QWidget:
-        page = QWidget()
-        layout = QGridLayout(page)
-        layout.addWidget(self._group("图任务树", ("图组", "图任务", "子图", "绑定数据")), 0, 0)
-        layout.addWidget(self._preview_frame("绘图预览区", "首轮不接 Matplotlib 真实画布。"), 0, 1)
-        layout.addWidget(
-            self._group("统一图参数区", ("数据绑定", "绘图入口", "坐标 / 标签 / 图例", "局部 hook 与导出")), 0, 2
-        )
-        layout.addWidget(
-            self._button_group(
-                "绘图动作",
-                ("新建图组", "新建图任务", "绑定绘图数据", "刷新预览", "打开大图预览", "导出当前图组"),
-            ),
-            1,
-            0,
-            1,
-            3,
-        )
-        return page
+        self.project_overview.load_session(session)
+        self.import_filter_workspace.load_session(session)
+        self.processing_workspace.load_session(session)
+        self.plotting_workspace.load_session(session)
+        self.export_workspace.load_session(session)
+        self.set_current_module(session.current_module)
 
-    def _build_export_page(self) -> QWidget:
-        page = QWidget()
-        layout = QGridLayout(page)
-        layout.addWidget(self._group("导出任务与模板", ("当前工程导出任务", "最近导出", "预设模板")), 0, 0)
-        layout.addWidget(
-            self._group("导出内容编排", ("项目摘要", "处理结果表", "图组选择", "report package 入口")), 0, 1
-        )
-        layout.addWidget(self._group("输出与预检", ("输出目录", "覆盖策略", "预检结果", "可视化进度")), 0, 2)
-        layout.addWidget(
-            self._button_group(
-                "工程导出动作",
-                ("工程导出预检", "执行工程导出", "仅导出结果表", "仅导出图组", "仅导出报告包"),
-            ),
-            1,
-            0,
-            1,
-            3,
-        )
-        return page
-
-    def _build_import_subpage(self, title: str, actions: tuple[str, ...]) -> QWidget:
-        page = QWidget()
-        layout = QGridLayout(page)
-        layout.addWidget(self._group(f"{title} / 导入源", ("文件 / 目录 / 存储路径", "来源类型", "导入状态")), 0, 0)
-        layout.addWidget(
-            self._group(f"{title} / 预览与检测", ("按钮触发文件预览", "单位检测结果", "存储结构检测结果")), 0, 1
-        )
-        layout.addWidget(
-            self._group(f"{title} / 导入参数", ("目标: 新建 / 追加 / 合并", "解析参数", "hook / metadata / 单位策略")),
-            0,
-            2,
-        )
-        layout.addWidget(self._button_group(f"{title} / 动作", actions), 1, 0, 1, 3)
-        return page
-
-    def _group(self, title: str, lines: tuple[str, ...]) -> QGroupBox:
-        box = QGroupBox(title)
-        layout = QVBoxLayout(box)
-        for line in lines:
-            label = QLabel(line)
-            label.setWordWrap(True)
-            layout.addWidget(label)
-        layout.addStretch(1)
-        return box
-
-    def _button_group(
+    def update_context(
         self,
-        title: str,
-        labels: tuple[str, ...],
-        row: int = 0,
-        column: int = 0,
-        row_span: int = 1,
-        column_span: int = 1,
-    ) -> QGroupBox:
-        del row, column, row_span, column_span
-        box = QGroupBox(title)
-        layout = QGridLayout(box)
-        for index, text in enumerate(labels):
-            button = QPushButton(text)
-            button.clicked.connect(lambda checked=False, name=text: self.action_requested.emit(name))
-            self._action_buttons.append(button)
-            layout.addWidget(button, index // 3, index % 3)
-        return box
+        project_name: str,
+        primary_name: str,
+        dirty: bool,
+        progress_text: str = "",
+    ) -> None:
+        """更新顶部项目上下文条。"""
 
-    def _preview_frame(self, title: str, text: str) -> QGroupBox:
-        box = QGroupBox(title)
-        layout = QVBoxLayout(box)
-        frame = QFrame()
-        frame.setFrameShape(QFrame.Shape.StyledPanel)
-        inner = QVBoxLayout(frame)
-        label = QLabel(text)
-        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        label.setWordWrap(True)
-        inner.addWidget(label)
-        layout.addWidget(frame)
-        return box
+        dirty_mark = " ●" if dirty else ""
+        text = f"{project_name}  ·  主集: {primary_name}{dirty_mark}"
+        self._context_label.setText(text)
+        self._progress_label.setText(progress_text)
 
-    def _placeholder_text(self, text: str) -> QWidget:
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
-        edit = QPlainTextEdit(text)
-        edit.setReadOnly(True)
-        layout.addWidget(edit)
-        return widget
+    def _sync_nav_state(self, current_index: int) -> None:
+        for index, button in enumerate(self._nav_buttons):
+            checked = index == current_index
+            button.blockSignals(True)
+            button.setChecked(checked)
+            button.setProperty("current", checked)
+            button.style().unpolish(button)
+            button.style().polish(button)
+            button.blockSignals(False)

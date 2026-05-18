@@ -135,9 +135,7 @@ def _check_plotting_schema_tokens(project_root: Path, violations: list[str]) -> 
         for pattern in FORBIDDEN_PLOTTING_SCHEMA_PATTERNS:
             match = pattern.search(text)
             if match:
-                violations.append(
-                    f"{relative.as_posix()}: contains removed plotting schema token {match.group(0)!r}"
-                )
+                violations.append(f"{relative.as_posix()}: contains removed plotting schema token {match.group(0)!r}")
 
 
 def main(*, project_root: Path | None = None) -> int:

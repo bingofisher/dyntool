@@ -11,28 +11,64 @@ from ..models import DataModelBase
 from .types import SampleField
 
 
-def _coerce_sample_field(value: SampleField | str | None, *, property_name: str) -> SampleField:
-    """把声明值解析为 ``SampleField``。"""
+class _SampleSchemaParser:
+    """集中处理样本 schema 的声明解析。"""
 
-    if value is None:
-        return SampleField(property_name)
-    if isinstance(value, SampleField):
-        return value
-    return SampleField(str(value).strip())
+    def resolve_slot_name(self, value: str) -> str:
+        """解析并校验数据槽名称。"""
+
+        resolved_name = str(value).strip()
+        if not resolved_name:
+            raise ValueError("SampleSlotSpec.name 不能为空")
+        return resolved_name
+
+    def resolve_aliases(self, aliases: tuple[str, ...]) -> tuple[str, ...]:
+        """解析并标准化别名列表。"""
+
+        resolved = tuple(str(alias).strip() for alias in aliases if str(alias).strip())
+        return tuple(dict.fromkeys(resolved))
+
+    def resolve_schema_aliases(self, aliases: dict[str, str]) -> dict[str, str]:
+        """解析 schema 级别的别名映射。"""
+
+        resolved: dict[str, str] = {}
+        for raw_key, raw_value in aliases.items():
+            key = str(raw_key).strip()
+            value = str(raw_value).strip()
+            if key and value:
+                resolved[key] = value
+        return resolved
+
+    def resolve_field(
+        self,
+        value: SampleField | str | None,
+        *,
+        property_name: str,
+    ) -> SampleField:
+        """把声明值解析为 ``SampleField``。"""
+
+        if value is None:
+            return SampleField(property_name)
+        if isinstance(value, SampleField):
+            return value
+        return SampleField(str(value).strip())
+
+    def resolve_category(
+        self,
+        value: DataCategory | str | None,
+        *,
+        property_name: str,
+    ) -> DataCategory | None:
+        """把声明值解析为 ``DataCategory``。"""
+
+        if value is None:
+            return SAMPLE_ATTR_TO_DATA_CATEGORY.get(property_name)
+        if isinstance(value, DataCategory):
+            return value
+        return DataCategory(str(value).strip())
 
 
-def _coerce_data_category(
-    value: DataCategory | str | None,
-    *,
-    property_name: str,
-) -> DataCategory | None:
-    """把声明值解析为 ``DataCategory``。"""
-
-    if value is None:
-        return SAMPLE_ATTR_TO_DATA_CATEGORY.get(property_name)
-    if isinstance(value, DataCategory):
-        return value
-    return DataCategory(str(value).strip())
+_SCHEMA_PARSER = _SampleSchemaParser()
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,12 +85,19 @@ class SampleSlotSpec:
     category: DataCategory | str | None = None
 
     def __post_init__(self) -> None:
-        resolved_name = str(self.name).strip()
-        if not resolved_name:
-            raise ValueError("SampleSlotSpec.name 不能为空")
+        resolved_name = _SCHEMA_PARSER.resolve_slot_name(self.name)
         object.__setattr__(self, "name", resolved_name)
-        object.__setattr__(self, "field", _coerce_sample_field(self.field, property_name=resolved_name))
-        object.__setattr__(self, "category", _coerce_data_category(self.category, property_name=resolved_name))
+        object.__setattr__(self, "aliases", _SCHEMA_PARSER.resolve_aliases(self.aliases))
+        object.__setattr__(
+            self,
+            "field",
+            _SCHEMA_PARSER.resolve_field(self.field, property_name=resolved_name),
+        )
+        object.__setattr__(
+            self,
+            "category",
+            _SCHEMA_PARSER.resolve_category(self.category, property_name=resolved_name),
+        )
 
     @property
     def property_name(self) -> str:
@@ -79,8 +122,8 @@ class SampleSchema:
     aliases: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        resolved_aliases = {str(key).strip(): str(value).strip() for key, value in self.aliases.items()}
-        object.__setattr__(self, "aliases", resolved_aliases)
+        object.__setattr__(self, "name", str(self.name).strip())
+        object.__setattr__(self, "aliases", _SCHEMA_PARSER.resolve_schema_aliases(self.aliases))
 
     def canonical_name(self, name: str) -> str:
         """把属性别名解析为样本属性名。"""

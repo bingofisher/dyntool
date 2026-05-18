@@ -1,4 +1,4 @@
-"""`SET_SQLITE_H5` 绛栫暐鍐呴儴瀵煎嚭鍏ュ彛銆?"""
+"""`SET_SQLITE_H5` 策略内部导出入口。"""
 
 from __future__ import annotations
 

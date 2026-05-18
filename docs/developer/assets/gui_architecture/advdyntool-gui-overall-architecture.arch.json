@@ -1,0 +1,365 @@
+{
+  "version": 1,
+  "title": "AdvDynTool GUI 整体业务架构",
+  "type": "engineering-diagram",
+  "source": "generated",
+  "profile": "engineering-review",
+  "theme": "tech-blue",
+  "layout": "hierarchical",
+  "counts": {
+    "nodes": 19,
+    "edges": 30,
+    "modules": 4
+  },
+  "nodes": [
+    {
+      "id": "overview",
+      "label": "总览",
+      "type": "service",
+      "module": "page_layer"
+    },
+    {
+      "id": "data_entry",
+      "label": "导入与筛选",
+      "type": "service",
+      "module": "page_layer"
+    },
+    {
+      "id": "subset_page",
+      "label": "导入与筛选（子集工作区）",
+      "type": "service",
+      "module": "page_layer"
+    },
+    {
+      "id": "analysis_page",
+      "label": "数据处理",
+      "type": "service",
+      "module": "page_layer"
+    },
+    {
+      "id": "plotting_page",
+      "label": "图形绘制",
+      "type": "service",
+      "module": "page_layer"
+    },
+    {
+      "id": "delivery_page",
+      "label": "导出预检 / 导出工作区",
+      "type": "service",
+      "module": "page_layer"
+    },
+    {
+      "id": "project_session",
+      "label": "ProjectSession",
+      "type": "process",
+      "module": "state_layer",
+      "size": "large"
+    },
+    {
+      "id": "current_scope",
+      "label": "CurrentScope\n工作范围",
+      "type": "process",
+      "module": "state_layer"
+    },
+    {
+      "id": "capability_snapshot",
+      "label": "CapabilitySnapshot\n能力摘要",
+      "type": "process",
+      "module": "state_layer"
+    },
+    {
+      "id": "import_manager",
+      "label": "ImportManager",
+      "type": "process",
+      "module": "exec_layer"
+    },
+    {
+      "id": "processing_manager",
+      "label": "ProcessingManager",
+      "type": "process",
+      "module": "exec_layer"
+    },
+    {
+      "id": "plot_manager",
+      "label": "PlotManager",
+      "type": "process",
+      "module": "exec_layer"
+    },
+    {
+      "id": "export_manager",
+      "label": "ExportManager",
+      "type": "process",
+      "module": "exec_layer"
+    },
+    {
+      "id": "project",
+      "label": "项目",
+      "type": "document",
+      "module": "domain_layer"
+    },
+    {
+      "id": "primary_set",
+      "label": "主样本集",
+      "type": "database",
+      "module": "domain_layer"
+    },
+    {
+      "id": "subsets",
+      "label": "子样本集定义",
+      "type": "database",
+      "module": "domain_layer"
+    },
+    {
+      "id": "result_objects",
+      "label": "结果对象\n谱 / 评价 / 预览表",
+      "type": "database",
+      "module": "domain_layer",
+      "size": "large"
+    },
+    {
+      "id": "plot_records",
+      "label": "图形记录",
+      "type": "document",
+      "module": "domain_layer"
+    },
+    {
+      "id": "delivery_records",
+      "label": "导出记录",
+      "type": "document",
+      "module": "domain_layer"
+    }
+  ],
+  "edges": [
+    {
+      "id": "edge-1",
+      "from": "overview",
+      "to": "project_session",
+      "type": "primary",
+      "label": "查看上下文"
+    },
+    {
+      "id": "edge-2",
+      "from": "data_entry",
+      "to": "import_manager",
+      "type": "primary",
+      "label": "接入请求"
+    },
+    {
+      "id": "edge-3",
+      "from": "subset_page",
+      "to": "current_scope",
+      "type": "primary",
+      "label": "设定范围"
+    },
+    {
+      "id": "edge-4",
+      "from": "analysis_page",
+      "to": "processing_manager",
+      "type": "primary",
+      "label": "执行分析"
+    },
+    {
+      "id": "edge-5",
+      "from": "plotting_page",
+      "to": "plot_manager",
+      "type": "primary",
+      "label": "渲染图形"
+    },
+    {
+      "id": "edge-6",
+      "from": "delivery_page",
+      "to": "export_manager",
+      "type": "primary",
+      "label": "执行导出"
+    },
+    {
+      "id": "edge-7",
+      "from": "project_session",
+      "to": "project",
+      "type": "dependency",
+      "label": "项目上下文"
+    },
+    {
+      "id": "edge-8",
+      "from": "project_session",
+      "to": "primary_set",
+      "type": "dependency",
+      "label": "当前主对象"
+    },
+    {
+      "id": "edge-9",
+      "from": "project_session",
+      "to": "subsets",
+      "type": "dependency",
+      "label": "子集定义"
+    },
+    {
+      "id": "edge-10",
+      "from": "project_session",
+      "to": "current_scope",
+      "type": "dependency"
+    },
+    {
+      "id": "edge-11",
+      "from": "project_session",
+      "to": "capability_snapshot",
+      "type": "dependency",
+      "label": "页面摘要"
+    },
+    {
+      "id": "edge-12",
+      "from": "project_session",
+      "to": "plot_records",
+      "type": "dependency",
+      "label": "最近图形"
+    },
+    {
+      "id": "edge-13",
+      "from": "project_session",
+      "to": "delivery_records",
+      "type": "dependency",
+      "label": "最近交付"
+    },
+    {
+      "id": "edge-14",
+      "from": "import_manager",
+      "to": "project",
+      "type": "data",
+      "label": "绑定项目"
+    },
+    {
+      "id": "edge-15",
+      "from": "import_manager",
+      "to": "primary_set",
+      "type": "data",
+      "label": "建立/替换"
+    },
+    {
+      "id": "edge-16",
+      "from": "subset_page",
+      "to": "primary_set",
+      "type": "data",
+      "label": "读取 metadata"
+    },
+    {
+      "id": "edge-17",
+      "from": "subset_page",
+      "to": "subsets",
+      "type": "data",
+      "label": "保存条件+快照"
+    },
+    {
+      "id": "edge-18",
+      "from": "subsets",
+      "to": "current_scope",
+      "type": "data",
+      "label": "设为当前范围"
+    },
+    {
+      "id": "edge-19",
+      "from": "current_scope",
+      "to": "processing_manager",
+      "type": "data",
+      "label": "解算 UID"
+    },
+    {
+      "id": "edge-20",
+      "from": "current_scope",
+      "to": "plot_manager",
+      "type": "data",
+      "label": "范围解析"
+    },
+    {
+      "id": "edge-21",
+      "from": "current_scope",
+      "to": "export_manager",
+      "type": "data",
+      "label": "解算范围"
+    },
+    {
+      "id": "edge-22",
+      "from": "processing_manager",
+      "to": "primary_set",
+      "type": "data",
+      "label": "串行写回"
+    },
+    {
+      "id": "edge-23",
+      "from": "processing_manager",
+      "to": "result_objects",
+      "type": "primary",
+      "label": "生成结果"
+    },
+    {
+      "id": "edge-24",
+      "from": "result_objects",
+      "to": "capability_snapshot",
+      "type": "optional",
+      "label": "刷新能力"
+    },
+    {
+      "id": "edge-25",
+      "from": "primary_set",
+      "to": "plot_manager",
+      "type": "data",
+      "label": "样本/原始数据"
+    },
+    {
+      "id": "edge-26",
+      "from": "result_objects",
+      "to": "plot_manager",
+      "type": "data",
+      "label": "结果/表格"
+    },
+    {
+      "id": "edge-27",
+      "from": "plot_manager",
+      "to": "plot_records",
+      "type": "primary",
+      "label": "记录渲染产物"
+    },
+    {
+      "id": "edge-28",
+      "from": "result_objects",
+      "to": "export_manager",
+      "type": "data",
+      "label": "表格来源"
+    },
+    {
+      "id": "edge-29",
+      "from": "plot_records",
+      "to": "export_manager",
+      "type": "data",
+      "label": "图片来源"
+    },
+    {
+      "id": "edge-30",
+      "from": "export_manager",
+      "to": "delivery_records",
+      "type": "primary",
+      "label": "记录交付产物"
+    }
+  ],
+  "modules": [
+    {
+      "id": "page_layer",
+      "label": "页面层",
+      "color": "$primaryLight"
+    },
+    {
+      "id": "state_layer",
+      "label": "状态与协调层",
+      "color": "$secondaryLight"
+    },
+    {
+      "id": "exec_layer",
+      "label": "执行管理层",
+      "color": "$accentLight"
+    },
+    {
+      "id": "domain_layer",
+      "label": "业务对象层",
+      "color": "$secondaryLight"
+    }
+  ]
+}

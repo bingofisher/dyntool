@@ -8,7 +8,7 @@ import numpy as np
 from matplotlib.axes import Axes
 
 from ._axes_formatters import DiscreteAxisFormatter
-from ._axes_helpers import AxisHelper
+from ._axes_helpers import _AxisTickController
 from .axis_config import AxisConfig, ContinuousAxisSpec, OctaveAxisSpec
 from .dataset import PlotDataset
 
@@ -35,7 +35,7 @@ def apply_frame_axis_config(
 
     if axis_config is None:
         return
-    helper = AxisHelper(ax)
+    helper = _AxisTickController(ax)
     if axis_config.x is not None:
         if not isinstance(axis_config.x, ContinuousAxisSpec):
             raise ValueError("FramePlotter 仅支持 continuous 类型的 x 轴配置。")
@@ -67,7 +67,7 @@ def apply_story_value_axis_config(
 
     if axis_config is None:
         return
-    helper = AxisHelper(ax)
+    helper = _AxisTickController(ax)
     if axis_config.x is not None:
         if not isinstance(axis_config.x, ContinuousAxisSpec):
             raise ValueError("StoryValuePlotter 仅支持 continuous 类型的 x 轴配置。")
@@ -99,7 +99,7 @@ def apply_octave_axis_config(
 ) -> None:
     """对 OneThirdOctavePlotter 应用正式轴配置。"""
 
-    helper = AxisHelper(ax)
+    helper = _AxisTickController(ax)
     if axis_config is None or axis_config.x is None:
         formatter = DiscreteAxisFormatter.from_number_values(positions=x_positions, values=freqs)
         helper.format_axis(

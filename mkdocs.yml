@@ -108,7 +108,13 @@ nav:
       - 发布检查清单: developer/release_checklist.md
       - plotting 架构（v1.2.0）: developer/plotting_architecture.md
       - plotting 执行任务（v1.2.0）: developer/plotting_execution_tasks.md
-      - GUI 骨架首轮落地: developer/gui_skeleton.md
+      - GUI 工作台骨架: developer/gui_skeleton.md
+      - GUI 前端架构与路线: developer/gui_frontend_architecture.md
+      - GUI 按钮矩阵: developer/gui_button_matrix.md
+      - GUI 视觉参考: developer/gui_visual_reference.md
+      - GUI 生图 Prompt 包: developer/gui_image_generation_prompts.md
+      - Web 工作台实验线（冻结）: developer/dyntool_web_workbench.md
+      - Skill 治理与主入口: developer/skill_governance.md
       - API 设计: developer/api_design.md
       - Sample / Storage 流程: developer/sample_identity_and_storage.md
       - 文档规范: developer/doc_conventions.md

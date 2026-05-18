@@ -1,0 +1,248 @@
+{
+  "version": 1,
+  "title": "AdvDynTool GUI 图形与导出泳道图",
+  "type": "engineering-diagram",
+  "source": "generated",
+  "profile": "engineering-review",
+  "theme": "tech-blue",
+  "layout": "vertical",
+  "counts": {
+    "nodes": 14,
+    "edges": 18,
+    "modules": 5
+  },
+  "nodes": [
+    {
+      "id": "user_plot",
+      "label": "渲染图形",
+      "type": "process",
+      "module": "user_lane"
+    },
+    {
+      "id": "user_save_plot",
+      "label": "保存图片",
+      "type": "process",
+      "module": "user_lane"
+    },
+    {
+      "id": "user_export",
+      "label": "执行导出",
+      "type": "process",
+      "module": "user_lane"
+    },
+    {
+      "id": "page_plot",
+      "label": "图形绘制页",
+      "type": "service",
+      "module": "page_lane"
+    },
+    {
+      "id": "page_delivery",
+      "label": "导出预检 / 导出工作区",
+      "type": "service",
+      "module": "page_lane"
+    },
+    {
+      "id": "session_scope",
+      "label": "当前工作范围",
+      "type": "process",
+      "module": "session_lane"
+    },
+    {
+      "id": "session_capability",
+      "label": "能力快照",
+      "type": "process",
+      "module": "session_lane"
+    },
+    {
+      "id": "session_records",
+      "label": "最近记录",
+      "type": "document",
+      "module": "session_lane"
+    },
+    {
+      "id": "manager_plot",
+      "label": "PlotManager",
+      "type": "process",
+      "module": "manager_lane"
+    },
+    {
+      "id": "manager_export",
+      "label": "ExportManager",
+      "type": "process",
+      "module": "manager_lane"
+    },
+    {
+      "id": "domain_primary",
+      "label": "主样本集",
+      "type": "database",
+      "module": "domain_lane"
+    },
+    {
+      "id": "domain_results",
+      "label": "分析结果对象",
+      "type": "database",
+      "module": "domain_lane"
+    },
+    {
+      "id": "domain_plot_record",
+      "label": "图形记录",
+      "type": "document",
+      "module": "domain_lane"
+    },
+    {
+      "id": "domain_delivery_record",
+      "label": "导出记录",
+      "type": "document",
+      "module": "domain_lane"
+    }
+  ],
+  "edges": [
+    {
+      "id": "edge-1",
+      "from": "user_plot",
+      "to": "page_plot",
+      "type": "primary"
+    },
+    {
+      "id": "edge-2",
+      "from": "page_plot",
+      "to": "session_scope",
+      "type": "data",
+      "label": "读取范围"
+    },
+    {
+      "id": "edge-3",
+      "from": "page_plot",
+      "to": "session_capability",
+      "type": "data",
+      "label": "检查前置"
+    },
+    {
+      "id": "edge-4",
+      "from": "page_plot",
+      "to": "manager_plot",
+      "type": "primary",
+      "label": "渲染请求"
+    },
+    {
+      "id": "edge-5",
+      "from": "session_scope",
+      "to": "manager_plot",
+      "type": "data",
+      "label": "解算样本"
+    },
+    {
+      "id": "edge-6",
+      "from": "domain_primary",
+      "to": "manager_plot",
+      "type": "data",
+      "label": "原始数据"
+    },
+    {
+      "id": "edge-7",
+      "from": "domain_results",
+      "to": "manager_plot",
+      "type": "data",
+      "label": "结果/表格"
+    },
+    {
+      "id": "edge-8",
+      "from": "manager_plot",
+      "to": "domain_plot_record",
+      "type": "primary",
+      "label": "生成图形记录"
+    },
+    {
+      "id": "edge-9",
+      "from": "user_save_plot",
+      "to": "page_plot",
+      "type": "primary",
+      "label": "保存图片"
+    },
+    {
+      "id": "edge-10",
+      "from": "domain_plot_record",
+      "to": "session_records",
+      "type": "data",
+      "label": "更新最近图形"
+    },
+    {
+      "id": "edge-11",
+      "from": "user_export",
+      "to": "page_delivery",
+      "type": "primary"
+    },
+    {
+      "id": "edge-12",
+      "from": "page_delivery",
+      "to": "session_scope",
+      "type": "data",
+      "label": "读取范围"
+    },
+    {
+      "id": "edge-13",
+      "from": "page_delivery",
+      "to": "session_capability",
+      "type": "data",
+      "label": "前置校验"
+    },
+    {
+      "id": "edge-14",
+      "from": "page_delivery",
+      "to": "manager_export",
+      "type": "primary",
+      "label": "导出请求"
+    },
+    {
+      "id": "edge-15",
+      "from": "domain_results",
+      "to": "manager_export",
+      "type": "data",
+      "label": "表格来源"
+    },
+    {
+      "id": "edge-16",
+      "from": "domain_plot_record",
+      "to": "manager_export",
+      "type": "data",
+      "label": "图片来源"
+    },
+    {
+      "id": "edge-17",
+      "from": "manager_export",
+      "to": "domain_delivery_record",
+      "type": "primary",
+      "label": "生成导出记录"
+    },
+    {
+      "id": "edge-18",
+      "from": "domain_delivery_record",
+      "to": "session_records",
+      "type": "data",
+      "label": "更新最近导出"
+    }
+  ],
+  "modules": [
+    {
+      "id": "user_lane",
+      "label": "用户"
+    },
+    {
+      "id": "page_lane",
+      "label": "页面层"
+    },
+    {
+      "id": "session_lane",
+      "label": "会话状态层"
+    },
+    {
+      "id": "manager_lane",
+      "label": "执行管理层"
+    },
+    {
+      "id": "domain_lane",
+      "label": "业务对象层"
+    }
+  ]
+}

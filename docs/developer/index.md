@@ -9,6 +9,12 @@
 - 发布清单与版本迁移说明
 - plotting 架构与执行任务
 - PySide6 GUI 骨架
+- GUI 前端架构与路线
+- GUI 按钮矩阵
+- GUI 视觉参考
+- GUI 生图 Prompt 包
+- Web 工作台实验线（冻结）
+- Skill 治理与主入口
 - API 设计与公开面约束
 - DefaultSample / DefaultSampleSet 与 storage 主链
 - 文档规范与示例映射

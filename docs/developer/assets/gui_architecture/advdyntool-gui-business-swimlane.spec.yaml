@@ -1,0 +1,269 @@
+meta:
+  profile: engineering-review
+  source: generated
+  theme: tech-blue
+  layout: vertical
+  canvas: 1800x1200
+  routing: orthogonal
+  title: AdvDynTool GUI 业务主线泳道图
+  description: 用泳道表达用户、页面、会话状态、执行管理层和业务对象层之间的主业务链路。
+  legend: 每一列是一个泳道；箭头表示主因果链；数据写回统一落到主样本集、结果对象、图形记录和导出记录。
+modules:
+  - id: user_lane
+    label: 用户
+  - id: page_lane
+    label: 页面层
+  - id: session_lane
+    label: 会话状态层
+  - id: manager_lane
+    label: 执行管理层
+  - id: domain_lane
+    label: 业务对象层
+nodes:
+  - id: user_open
+    label: 打开项目
+    type: terminal
+    module: user_lane
+  - id: user_import
+    label: 接入主样本集
+    type: process
+    module: user_lane
+  - id: user_subset
+    label: 筛选并保存子样本集
+    type: process
+    module: user_lane
+  - id: user_analysis
+    label: 执行分析
+    type: process
+    module: user_lane
+  - id: user_plot
+    label: 渲染图形
+    type: process
+    module: user_lane
+  - id: user_delivery
+    label: 执行导出
+    type: process
+    module: user_lane
+  - id: page_overview
+    label: 总览
+    type: service
+    module: page_lane
+  - id: page_import
+    label: 导入与筛选
+    type: service
+    module: page_lane
+  - id: page_subset
+    label: 导入与筛选（子集工作区）
+    type: service
+    module: page_lane
+  - id: page_analysis
+    label: 数据处理
+    type: service
+    module: page_lane
+  - id: page_plot
+    label: 图形绘制
+    type: service
+    module: page_lane
+  - id: page_delivery
+    label: 导出预检 / 导出工作区
+    type: service
+    module: page_lane
+  - id: session_project
+    label: 项目上下文
+    type: document
+    module: session_lane
+  - id: session_primary
+    label: 主样本集引用
+    type: database
+    module: session_lane
+  - id: session_scope
+    label: 当前工作范围
+    type: process
+    module: session_lane
+  - id: session_capability
+    label: 能力快照
+    type: process
+    module: session_lane
+  - id: session_records
+    label: 最近记录
+    type: document
+    module: session_lane
+  - id: manager_import
+    label: ImportManager
+    type: process
+    module: manager_lane
+  - id: manager_processing
+    label: ProcessingManager
+    type: process
+    module: manager_lane
+  - id: manager_plot
+    label: PlotManager
+    type: process
+    module: manager_lane
+  - id: manager_export
+    label: ExportManager
+    type: process
+    module: manager_lane
+  - id: domain_project
+    label: 项目
+    type: document
+    module: domain_lane
+  - id: domain_primary
+    label: 主样本集
+    type: database
+    module: domain_lane
+  - id: domain_subsets
+    label: 子样本集定义
+    type: database
+    module: domain_lane
+  - id: domain_results
+    label: 分析结果对象
+    type: database
+    module: domain_lane
+  - id: domain_plot_record
+    label: 图形记录
+    type: document
+    module: domain_lane
+  - id: domain_delivery_record
+    label: 导出记录
+    type: document
+    module: domain_lane
+edges:
+  - from: user_open
+    to: page_overview
+    type: primary
+  - from: page_overview
+    to: session_project
+    type: primary
+    label: 加载
+  - from: session_project
+    to: domain_project
+    type: data
+    label: 项目事实
+  - from: user_import
+    to: page_import
+    type: primary
+  - from: page_import
+    to: manager_import
+    type: primary
+    label: 接入请求
+  - from: manager_import
+    to: domain_primary
+    type: primary
+    label: 建立/替换
+  - from: domain_primary
+    to: session_primary
+    type: data
+    label: 绑定主对象
+  - from: session_primary
+    to: session_capability
+    type: optional
+    label: 刷新能力
+  - from: user_subset
+    to: page_subset
+    type: primary
+  - from: page_subset
+    to: session_scope
+    type: primary
+    label: 设置范围
+  - from: page_subset
+    to: domain_subsets
+    type: data
+    label: 保存条件+快照
+  - from: session_primary
+    to: page_subset
+    type: data
+    label: 提供 metadata
+  - from: domain_subsets
+    to: session_scope
+    type: data
+    label: 设为当前范围
+  - from: user_analysis
+    to: page_analysis
+    type: primary
+  - from: page_analysis
+    to: manager_processing
+    type: primary
+    label: 分析请求
+  - from: session_scope
+    to: manager_processing
+    type: data
+    label: 解算 UID
+  - from: session_primary
+    to: manager_processing
+    type: data
+    label: 主样本集
+  - from: manager_processing
+    to: domain_results
+    type: primary
+    label: 生成结果
+  - from: manager_processing
+    to: domain_primary
+    type: data
+    label: 串行写回
+  - from: domain_results
+    to: session_capability
+    type: data
+    label: 刷新能力
+  - from: user_plot
+    to: page_plot
+    type: primary
+  - from: page_plot
+    to: manager_plot
+    type: primary
+    label: 渲染请求
+  - from: session_scope
+    to: manager_plot
+    type: data
+    label: 范围
+  - from: session_capability
+    to: page_plot
+    type: data
+    label: 可用结果
+  - from: session_primary
+    to: manager_plot
+    type: data
+    label: 原始数据
+  - from: domain_results
+    to: manager_plot
+    type: data
+    label: 结果/表格
+  - from: manager_plot
+    to: domain_plot_record
+    type: primary
+    label: 生成图形记录
+  - from: domain_plot_record
+    to: session_records
+    type: data
+    label: 更新最近图形
+  - from: user_delivery
+    to: page_delivery
+    type: primary
+  - from: page_delivery
+    to: manager_export
+    type: primary
+    label: 导出请求
+  - from: session_scope
+    to: manager_export
+    type: data
+    label: 范围
+  - from: session_capability
+    to: page_delivery
+    type: data
+    label: 前置校验
+  - from: domain_results
+    to: manager_export
+    type: data
+    label: 表格来源
+  - from: domain_plot_record
+    to: manager_export
+    type: data
+    label: 图片来源
+  - from: manager_export
+    to: domain_delivery_record
+    type: primary
+    label: 生成导出记录
+  - from: domain_delivery_record
+    to: session_records
+    type: data
+    label: 更新最近导出

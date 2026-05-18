@@ -14,7 +14,7 @@ from matplotlib.lines import Line2D
 from numpy.typing import ArrayLike
 
 from ._axes_frame import AxisFrame, GridFrame
-from ._axes_helpers import LegendHelper
+from ._axes_helpers import _LegendComposer
 from ._plotters_common import StatMetricInput, normalize_stat_metric
 from .config import PlotTheme
 from .dataset import PlotCategory, PlotDataset
@@ -284,7 +284,7 @@ class PlotterBase:
         handles, labels = self._collect_visible_legend_items(ax)
         if not handles:
             return
-        helper = LegendHelper(ax)
+        helper = _LegendComposer(ax)
         helper.apply(legend_options=options, handles=handles, labels=labels)
 
     def _resolve_stat_metrics(self, stats: Sequence[StatMetricInput] | None) -> tuple[PlotStatMetric, ...]:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from dyntool.compute import ComputeContext, ComputeFlow
 from dyntool.compute.pipelines import accel_preprocess_template
@@ -38,6 +39,23 @@ def test_compute_flow_then_restore_and_commit() -> None:
     assert flow.result()["value"] == 1
     committed = flow.commit()
     assert committed == {"value": 1}
+
+
+def test_compute_flow_then_rejects_non_callable_with_chinese_message() -> None:
+    flow = ComputeFlow(_result={"value": 1})
+
+    with pytest.raises(TypeError, match="可调用对象"):
+        flow.then("not-callable")  # type: ignore[arg-type]
+
+
+def test_compute_flow_history_returns_detached_snapshot() -> None:
+    flow = ComputeFlow(_result={"value": 1})
+    flow.add_metric("m1", 1.0)
+
+    history = flow.history()
+    history[0]["action"] = "mutated"
+
+    assert flow.history()[0]["action"] == "metric"
 
 
 def test_accel_preprocess_template_outputs_flow_result() -> None:

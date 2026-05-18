@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
+
 import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -14,9 +15,18 @@ PACKAGE_ROOT = SOURCE_ROOT / "dyntool"
 os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
 sys.dont_write_bytecode = True
 
+_project_root_text = str(PROJECT_ROOT)
+_existing_pythonpath = os.environ.get("PYTHONPATH")
+if _existing_pythonpath:
+    _paths = _existing_pythonpath.split(os.pathsep)
+    if _project_root_text not in _paths:
+        os.environ["PYTHONPATH"] = os.pathsep.join([_project_root_text, *_paths])
+else:
+    os.environ["PYTHONPATH"] = _project_root_text
+
 
 def _reset_dyntool_modules() -> None:
-    """移除已经加载的旧 dyntool 模块。"""
+    """移除已经加载的 dyntool 模块。"""
 
     for name in list(sys.modules):
         if name == "dyntool" or name.startswith("dyntool."):

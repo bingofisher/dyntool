@@ -110,7 +110,7 @@ class DataModelBase:
 
     @property
     def compute(self) -> DataModelComputeNamespace:
-        """杩斿洖鏁版嵁妯″瀷鐨勭粺涓€璁＄畻鍏ュ彛銆?"""
+        """返回数据模型的统一计算入口。"""
 
         return DataModelComputeNamespace(self)
 

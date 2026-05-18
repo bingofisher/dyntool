@@ -2,18 +2,11 @@
 
 from __future__ import annotations
 
-from PySide6.QtWidgets import QAbstractItemView, QTableWidget, QTableWidgetItem, QTabWidget
+from PySide6.QtWidgets import QAbstractItemView, QHeaderView, QTableView, QTabWidget
 
-from ..models import PanelDataBuilder
+from ..managers.task_manager import TaskManager
+from ..models import ExportTableModel, IssueTableModel, LogTableModel, TaskTableModel
 from ..session import ProjectSession
-
-TAB_HEADERS: dict[str, tuple[str, ...]] = {
-    "任务队列": ("任务", "状态", "进度", "说明"),
-    "运行日志": ("时间", "级别", "logger", "消息"),
-    "问题列表": ("状态", "主题", "说明"),
-    "导出记录": ("时间", "名称", "状态", "目标"),
-    "审查结论": ("状态", "标题", "摘要"),
-}
 
 
 class BottomPanel(QTabWidget):
@@ -21,26 +14,53 @@ class BottomPanel(QTabWidget):
 
     def __init__(self, parent: object | None = None) -> None:
         super().__init__(parent)
-        self._builder = PanelDataBuilder()
-        self._tables: dict[str, QTableWidget] = {}
-        for name, headers in TAB_HEADERS.items():
-            table = QTableWidget()
-            table.setColumnCount(len(headers))
-            table.setHorizontalHeaderLabels(list(headers))
+        self._task_manager = TaskManager()
+        self._views: dict[str, QTableView] = {}
+        self._models = {
+            "任务队列": TaskTableModel(self),
+            "运行日志": LogTableModel(self),
+            "问题列表": IssueTableModel(self),
+            "导出记录": ExportTableModel(self),
+        }
+        for name, model in self._models.items():
+            table = QTableView(self)
+            table.setModel(model)
             table.setAlternatingRowColors(True)
             table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
             table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-            self._tables[name] = table
+            table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+            table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+            table.verticalHeader().setVisible(False)
+            table.verticalHeader().setDefaultSectionSize(22)
+            table.horizontalHeader().setFixedHeight(24)
+            self._views[name] = table
             self.addTab(table, name)
 
     def load_session(self, session: ProjectSession) -> None:
-        """刷新底部表格。"""
+        """刷新全部底部表格。"""
 
-        rows_by_name = self._builder.build_bottom_rows(session)
-        for name, rows in rows_by_name.items():
-            table = self._tables[name]
-            table.setRowCount(len(rows))
-            for row_index, row in enumerate(rows):
-                for column_index, value in enumerate(row):
-                    table.setItem(row_index, column_index, QTableWidgetItem(value))
-            table.resizeColumnsToContents()
+        snapshot = self._task_manager.build_snapshot(session)
+        self._models["任务队列"].set_rows(snapshot.tasks)
+        self._models["运行日志"].set_rows(snapshot.logs)
+        self._models["问题列表"].set_rows(snapshot.issues)
+        self._models["导出记录"].set_rows(snapshot.exports)
+
+    def load_task_rows(self, session: ProjectSession) -> None:
+        """仅刷新任务表。"""
+
+        self._models["任务队列"].set_rows(self._task_manager.build_snapshot(session).tasks)
+
+    def load_log_rows(self, session: ProjectSession) -> None:
+        """仅刷新日志表。"""
+
+        self._models["运行日志"].set_rows(self._task_manager.build_snapshot(session).logs)
+
+    def load_issue_rows(self, session: ProjectSession) -> None:
+        """仅刷新问题表。"""
+
+        self._models["问题列表"].set_rows(self._task_manager.build_snapshot(session).issues)
+
+    def table_model(self, tab_name: str) -> object:
+        """返回指定页签的表模型。"""
+
+        return self._models[tab_name]

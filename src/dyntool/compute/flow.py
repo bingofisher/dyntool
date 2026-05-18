@@ -23,12 +23,12 @@ class ComputeFlow:
     source: str | None = None
 
     def result(self) -> Any:
-        """Return the current result."""
+        """返回当前结果。"""
 
         return self._result
 
     def set_result(self, value: Any, *, action: str = "set_result") -> "ComputeFlow":
-        """Replace the current result and record history."""
+        """替换当前结果并记录历史。"""
 
         self._result = value
         self._history.append({"action": action})
@@ -42,10 +42,10 @@ class ComputeFlow:
         action: str | None = None,
         **kwargs: Any,
     ) -> "ComputeFlow":
-        """Apply an operation to the current result and continue chaining."""
+        """对当前结果应用操作并继续链式处理。"""
 
         if not callable(operation):
-            raise TypeError("operation must be callable")
+            raise TypeError("operation 必须是可调用对象")
         self._result = operation(self._result, *args, **kwargs)
         self._history.append(
             {
@@ -84,31 +84,31 @@ class ComputeFlow:
         )
 
     def artifact(self, name: str) -> Any:
-        """Return a stored artifact."""
+        """返回已保存的中间产物。"""
 
         return self._artifacts[name]
 
     def add_artifact(self, name: str, value: Any) -> "ComputeFlow":
-        """Store an artifact."""
+        """保存中间产物。"""
 
         self._artifacts[name] = value
         self._history.append({"action": "artifact", "name": name})
         return self
 
     def metrics(self) -> dict[str, float]:
-        """Return a snapshot of metrics."""
+        """返回指标快照。"""
 
         return dict(self._metrics)
 
     def add_metric(self, name: str, value: float) -> "ComputeFlow":
-        """Store a numeric metric."""
+        """保存数值指标。"""
 
         self._metrics[name] = float(value)
         self._history.append({"action": "metric", "name": name, "value": float(value)})
         return self
 
     def checkpoint(self, name: str) -> "ComputeFlow":
-        """Save a deep-copied checkpoint."""
+        """保存深拷贝检查点。"""
 
         self._checkpoints[name] = deepcopy(
             {
@@ -122,7 +122,7 @@ class ComputeFlow:
         return self
 
     def from_checkpoint(self, name: str) -> "ComputeFlow":
-        """Restore from a named checkpoint."""
+        """从命名检查点恢复。"""
 
         snapshot = deepcopy(self._checkpoints[name])
         self._result = snapshot["result"]
@@ -132,12 +132,12 @@ class ComputeFlow:
         return self
 
     def restore(self, name: str) -> "ComputeFlow":
-        """Readable alias for restoring a checkpoint."""
+        """恢复检查点的可读别名。"""
 
         return self.from_checkpoint(name)
 
     def branch(self, name: str) -> "ComputeFlow":
-        """Create a deep-copied branch flow."""
+        """创建深拷贝分支流。"""
 
         branch_flow = ComputeFlow(
             _result=deepcopy(self._result),
@@ -191,9 +191,9 @@ class ComputeFlow:
         return comparison
 
     def history(self) -> list[dict[str, Any]]:
-        """Return the workflow history."""
+        """返回与内部状态隔离的历史快照。"""
 
-        return list(self._history)
+        return deepcopy(self._history)
 
 
 __all__ = ["ComputeFlow"]

@@ -1,0 +1,278 @@
+meta:
+  profile: engineering-review
+  source: generated
+  theme: tech-blue
+  layout: hierarchical
+  canvas: 1680x1040
+  routing: orthogonal
+  title: AdvDynTool GUI 整体业务架构
+  description: 围绕 4 页正式工作台、导出预检/导出工作区能力和统一会话状态组织的 GUI 整体业务架构。
+  legend: 实线=主控制流；虚线=数据读写或状态依赖；页面层只发起请求，写回由 manager 和 ProjectSession 统一协调。
+modules:
+  - id: page_layer
+    label: 页面层
+    color: $primaryLight
+  - id: state_layer
+    label: 状态与协调层
+    color: $secondaryLight
+  - id: exec_layer
+    label: 执行管理层
+    color: $accentLight
+  - id: domain_layer
+    label: 业务对象层
+    color: $secondaryLight
+nodes:
+  - id: overview
+    label: 总览
+    type: service
+    module: page_layer
+    position:
+      x: 80
+      'y': 80
+  - id: import_filter_page
+    label: 导入与筛选
+    type: service
+    module: page_layer
+    position:
+      x: 560
+      'y': 80
+  - id: analysis_page
+    label: 数据处理
+    type: service
+    module: page_layer
+    position:
+      x: 840
+      'y': 80
+  - id: plotting_page
+    label: 图形绘制
+    type: service
+    module: page_layer
+    position:
+      x: 1120
+      'y': 80
+  - id: export_flow
+    label: 导出预检 / 导出工作区
+    type: service
+    module: page_layer
+    position:
+      x: 1400
+      'y': 80
+  - id: project_session
+    label: ProjectSession
+    type: process
+    module: state_layer
+    size: large
+    position:
+      x: 360
+      'y': 280
+  - id: current_scope
+    label: |-
+      CurrentScope
+      工作范围
+    type: process
+    module: state_layer
+    position:
+      x: 720
+      'y': 280
+  - id: capability_snapshot
+    label: |-
+      CapabilitySnapshot
+      能力摘要
+    type: process
+    module: state_layer
+    position:
+      x: 1080
+      'y': 280
+  - id: import_manager
+    label: ImportManager
+    type: process
+    module: exec_layer
+    position:
+      x: 240
+      'y': 500
+  - id: processing_manager
+    label: ProcessingManager
+    type: process
+    module: exec_layer
+    position:
+      x: 600
+      'y': 500
+  - id: plot_manager
+    label: PlotManager
+    type: process
+    module: exec_layer
+    position:
+      x: 960
+      'y': 500
+  - id: export_manager
+    label: ExportManager
+    type: process
+    module: exec_layer
+    position:
+      x: 1320
+      'y': 500
+  - id: project
+    label: 项目
+    type: document
+    module: domain_layer
+    position:
+      x: 120
+      'y': 760
+  - id: primary_set
+    label: 主样本集
+    type: database
+    module: domain_layer
+    position:
+      x: 420
+      'y': 760
+  - id: subsets
+    label: 子样本集定义
+    type: database
+    module: domain_layer
+    position:
+      x: 700
+      'y': 760
+  - id: result_objects
+    label: |-
+      结果对象
+      谱 / 评价 / 预览表
+    type: database
+    module: domain_layer
+    size: large
+    position:
+      x: 980
+      'y': 760
+  - id: plot_records
+    label: 图形记录
+    type: document
+    module: domain_layer
+    position:
+      x: 1260
+      'y': 760
+  - id: delivery_records
+    label: 导出记录
+    type: document
+    module: domain_layer
+    position:
+      x: 1500
+      'y': 760
+edges:
+  - from: overview
+    to: project_session
+    type: primary
+    label: 查看上下文
+  - from: import_filter_page
+    to: import_manager
+    type: primary
+    label: 接入请求
+  - from: import_filter_page
+    to: current_scope
+    type: primary
+    label: 设定范围
+  - from: analysis_page
+    to: processing_manager
+    type: primary
+    label: 执行分析
+  - from: plotting_page
+    to: plot_manager
+    type: primary
+    label: 渲染图形
+  - from: export_flow
+    to: export_manager
+    type: primary
+    label: 执行导出
+  - from: project_session
+    to: project
+    type: dependency
+    label: 项目上下文
+  - from: project_session
+    to: primary_set
+    type: dependency
+    label: 当前主对象
+  - from: project_session
+    to: subsets
+    type: dependency
+    label: 子集定义
+  - from: project_session
+    to: current_scope
+    type: dependency
+  - from: project_session
+    to: capability_snapshot
+    type: dependency
+    label: 页面摘要
+  - from: project_session
+    to: plot_records
+    type: dependency
+    label: 最近图形
+  - from: project_session
+    to: delivery_records
+    type: dependency
+    label: 最近交付
+  - from: import_manager
+    to: project
+    type: data
+    label: 绑定项目
+  - from: import_manager
+    to: primary_set
+    type: data
+    label: 建立/替换
+  - from: import_filter_page
+    to: primary_set
+    type: data
+    label: 读取 metadata
+  - from: import_filter_page
+    to: subsets
+    type: data
+    label: 保存条件+快照
+  - from: subsets
+    to: current_scope
+    type: data
+    label: 设为当前范围
+  - from: current_scope
+    to: processing_manager
+    type: data
+    label: 解算 UID
+  - from: current_scope
+    to: plot_manager
+    type: data
+    label: 范围解析
+  - from: current_scope
+    to: export_manager
+    type: data
+    label: 解算范围
+  - from: processing_manager
+    to: primary_set
+    type: data
+    label: 串行写回
+  - from: processing_manager
+    to: result_objects
+    type: primary
+    label: 生成结果
+  - from: result_objects
+    to: capability_snapshot
+    type: optional
+    label: 刷新能力
+  - from: primary_set
+    to: plot_manager
+    type: data
+    label: 样本/原始数据
+  - from: result_objects
+    to: plot_manager
+    type: data
+    label: 结果/表格
+  - from: plot_manager
+    to: plot_records
+    type: primary
+    label: 记录渲染产物
+  - from: result_objects
+    to: export_manager
+    type: data
+    label: 表格来源
+  - from: plot_records
+    to: export_manager
+    type: data
+    label: 图片来源
+  - from: export_manager
+    to: delivery_records
+    type: primary
+    label: 记录交付产物

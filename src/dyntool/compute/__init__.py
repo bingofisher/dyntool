@@ -1,4 +1,4 @@
-"""Compute layer: reusable signal processing and evaluation algorithms."""
+"""计算层：提供可复用的信号处理与评价算法。"""
 
 from __future__ import annotations
 

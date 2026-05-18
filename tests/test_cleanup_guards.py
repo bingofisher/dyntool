@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 from pathlib import Path
+import subprocess
+import sys
 import tomllib
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -46,6 +49,28 @@ def test_pytest_imports_current_worktree_source() -> None:
     package_file = Path(dyntool.__file__).resolve()
     expected = (PROJECT_ROOT / "src" / "dyntool").resolve()
     assert expected in package_file.parents
+
+
+def test_sitecustomize_disables_bytecode_before_project_imports() -> None:
+    env = os.environ.copy()
+    env.pop("PYTHONDONTWRITEBYTECODE", None)
+    existing_pythonpath = env.get("PYTHONPATH")
+    env["PYTHONPATH"] = f"{PROJECT_ROOT}{os.pathsep}{existing_pythonpath}" if existing_pythonpath else str(PROJECT_ROOT)
+    process = subprocess.run(
+        [
+            sys.executable,
+            "-B",
+            "-c",
+            "import os, sys; print(os.environ.get('PYTHONDONTWRITEBYTECODE')); print(sys.dont_write_bytecode)",
+        ],
+        cwd=PROJECT_ROOT,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert process.stdout.splitlines() == ["1", "True"]
 
 
 def test_check_layer_imports_detects_importlib_dynamic_imports(tmp_path: Path) -> None:

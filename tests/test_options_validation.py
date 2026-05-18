@@ -7,6 +7,11 @@ from pathlib import Path
 import pytest
 
 from dyntool import AccelSeries, DefaultSample, DefaultSampleSet, PlotKind, SampleDomain, StorageMode
+from dyntool.infrastructure.storage_options import (
+    resolve_h5_dataset_options,
+    resolve_storage_data_options,
+)
+from dyntool.storage.types import StorageScheme
 
 
 def test_plot_payload_bridge_is_removed() -> None:
@@ -39,3 +44,34 @@ def test_storage_mode_requires_enum_value(tmp_path: Path) -> None:
         )
 
     sample_set.save(tmp_path / "samples.h5", mode=StorageMode.CREATE)
+
+
+def test_resolve_storage_data_options_rejects_unknown_keys() -> None:
+    with pytest.raises(ValueError, match="unsupported_key"):
+        resolve_storage_data_options(
+            StorageScheme.SET_H5,
+            {"unsupported_key": True},
+        )
+
+
+def test_resolve_storage_data_options_rejects_invalid_compression_level() -> None:
+    with pytest.raises(ValueError, match="h5_compression_level"):
+        resolve_storage_data_options(
+            StorageScheme.SET_H5,
+            {
+                "h5_compression": "lzf",
+                "h5_compression_level": 3,
+            },
+        )
+
+
+def test_resolve_h5_dataset_options_normalizes_default_gzip_settings() -> None:
+    resolved = resolve_h5_dataset_options(
+        dataset_options={"shuffle": True},
+        compression="gzip",
+        compression_level=4,
+    )
+
+    assert resolved["compression"] == "gzip"
+    assert resolved["compression_opts"] == 4
+    assert resolved["shuffle"] is True

@@ -101,6 +101,32 @@ def test_sample_schema_returns_storage_slot_names_only() -> None:
     assert schema.slot_names(include_storage_only=True) == ("accel",)
 
 
+def test_sample_schema_normalizes_slot_and_alias_declarations() -> None:
+    schema = SampleSchema(
+        name=" sample ",
+        metadata_type=Metadata,
+        slots=(
+            SampleSlotSpec(
+                name=" accel ",
+                model_type=AccelSeries,
+                aliases=(" a ",),
+                field=" accel ",
+                category=" accel ",
+            ),
+        ),
+        aliases={" raw_accel ": " accel "},
+    )
+
+    slot = schema.slot("raw_accel")
+
+    assert schema.aliases == {"raw_accel": "accel"}
+    assert slot.name == "accel"
+    assert slot.aliases == ("a",)
+    assert slot.field.value == "accel"
+    assert slot.category is not None
+    assert slot.category.value == "accel"
+
+
 def test_sample_structured_payload_includes_storable_freqspec_slot() -> None:
     sample = VibrationTestSample(
         metadata=VibrationTestMetadata(

@@ -29,7 +29,7 @@ from .types import NameResolver, StorageConnectOptions, StorageMode, StorageSche
 
 @dataclass(slots=True)
 class _ResolvedSampleSetConnectRequest:
-    """鏍锋湰闆嗚繍琛屾椂杩炴帴璇锋眰鐨勬爣鍑嗗寲缁撴灉銆?"""
+    """样本集运行时连接请求的标准化结果。"""
 
     base_dir: Path
     mode: StorageMode
@@ -49,7 +49,7 @@ def _resolve_sample_set_connect_request(
     name_resolver: NameResolver | None = None,
     set_filename: str | None = None,
 ) -> _ResolvedSampleSetConnectRequest:
-    """鏍囧噯鍖栨牱鏈泦 connect 璇锋眰銆?"""
+    """标准化样本集 connect 请求。"""
 
     resolved_base_dir = Path(base_dir)
     resolved_mode = mode
@@ -97,7 +97,7 @@ def _resolve_sample_set_path_request(
     set_filename: str | None = None,
     for_read: bool,
 ) -> _ResolvedSampleSetConnectRequest:
-    """鏍囧噯鍖栧甫 path 鐨勬牱鏈泦璇锋眰銆?"""
+    """标准化带 path 的样本集请求。"""
 
     target = Path(path)
     if for_read:

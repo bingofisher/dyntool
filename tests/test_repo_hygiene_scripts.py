@@ -10,6 +10,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 BROKEN_TITLE = "\u93cd\u56ec\ue57d"
 BROKEN_CHINESE_DOC = "\u6d93\ue15f\u6783\u7487\u5b58\u69d1"
 UNKNOWN_MOJIBAKE = "\u95c2\u5099\u7901\u943f\u7248\u7901\u95ae\u4f7d\u6751\u89e6"
+CURRENT_MOJIBAKE = "current 楠岃瘉澶辫触锛氭牱鏈暟涓嶄竴鑷淬€?"
 
 
 def _load_script_module(name: str, path: Path) -> object:
@@ -47,6 +48,23 @@ def test_fix_text_hygiene_reports_unknown_mojibake_for_manual_review(tmp_path: P
     output = capsys.readouterr().out
     assert "manual_review" in output
     assert UNKNOWN_MOJIBAKE in target.read_text(encoding="utf-8")
+
+
+def test_check_text_quality_detects_current_mojibake_fragments(tmp_path: Path, capsys) -> None:
+    script = _load_script_module(
+        "check_text_quality_current_mojibake_script", PROJECT_ROOT / "scripts" / "check_text_quality.py"
+    )
+    target = tmp_path / "scripts" / "demo.py"
+    target.parent.mkdir(parents=True)
+    target.write_text(f'raise AssertionError("{CURRENT_MOJIBAKE}")\n', encoding="utf-8")
+
+    script.PROJECT_ROOT = tmp_path
+    script.TEXT_GLOBS = ["scripts/**/*.py"]
+    script.STRICT_CHINESE_DOC_GLOBS = []
+
+    assert script.main() == 1
+    output = capsys.readouterr().out
+    assert "contains suspicious mojibake fragment" in output
 
 
 def test_clean_generated_artifacts_removes_only_allowed_paths(tmp_path: Path, capsys) -> None:
