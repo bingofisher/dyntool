@@ -18,8 +18,8 @@ def test_ci_workflow_exists_and_uses_quality_job() -> None:
     assert "name: CI" in text
     assert "quality:" in text
     assert "runs-on: windows-latest" in text
-    assert 'python-version: "3.12.12"' in text
-    assert "uv sync --python 3.12.12 --group dev --group docs" in text
+    assert 'python-version: "3.13"' in text
+    assert "uv sync --python 3.13 --group dev --group docs" in text
     assert 'PYTHONDONTWRITEBYTECODE: "1"' in text
 
 
