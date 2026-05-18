@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  PYTHONDONTWRITEBYTECODE: "1"
+
+jobs:
+  quality:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        run: python -m pip install --upgrade pip uv
+
+      - name: Sync dependencies
+        run: uv sync --group dev --group docs
+
+      - name: Prepare temp directories
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path .pytest_tmp | Out-Null
+
+      - name: Codex assets
+        run: uv run python -B scripts/check_codex_assets.py
+
+      - name: Ruff check
+        run: uv run ruff check --no-cache src/dyntool tests examples
+
+      - name: Ruff format check
+        run: uv run ruff format --check src/dyntool tests examples
+
+      - name: Layer imports
+        run: uv run python -B scripts/check_layer_imports.py
+
+      - name: Text quality
+        run: uv run python -B scripts/check_text_quality.py
+
+      - name: Docstring coverage
+        run: uv run python -B scripts/check_docstring_coverage.py
+
+      - name: Public API baseline
+        run: uv run python -B scripts/check_public_api_baseline.py
+
+      - name: Resource consistency
+        run: uv run python -B scripts/check_resource_consistency.py
+
+      - name: MkDocs site checks
+        run: uv run python -B scripts/check_mkdocs_site.py
+
+      - name: Repository governance
+        run: uv run python -B scripts/check_repository_governance.py
+
+      - name: Helper structure
+        run: uv run python -B scripts/check_helper_structure.py
+
+      - name: Pyright
+        run: uv run pyright src/dyntool tests/typing_public_api.py
+
+      - name: Build docs
+        shell: pwsh
+        run: uv run python -B -m mkdocs build --strict --site-dir .pytest_tmp/mkdocs-site
+
+      - name: Pytest
+        shell: pwsh
+        run: uv run python -B -m pytest -q --basetemp .pytest_tmp/pytest -p no:cacheprovider
+
+      - name: Clean generated artifacts
+        run: uv run python -B scripts/clean_generated_artifacts.py --apply

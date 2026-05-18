@@ -7,6 +7,7 @@
 - 版本线与迁移策略
 - 工程项目迁移验证
 - 发布清单与版本迁移说明
+- GitHub Rulesets 与发布治理
 - plotting 架构与执行任务
 - PySide6 GUI 骨架
 - GUI 前端架构与路线

@@ -15,6 +15,13 @@
 - `codex/gui-skeleton` 只承担 `v1.2.2` 的整合与收口，不承载后续长期开发
 - `1.1.x` 不常驻维护；如确需修旧版，从 `v1.1.2` tag 临时拉 hotfix 分支
 
+## GitHub 治理
+
+- GitHub 正式 branch ruleset 固定为 `Protect main`，目标为 `refs/heads/main`
+- GitHub 正式 tag ruleset 固定为 `Protect release tags`，目标为 `refs/tags/v*`
+- `main` 的 required check 在 CI 稳定后固定为 `quality`
+- 正式发布事实一律以 `v*` tag 为准，不再用长期 `release/*` branch 充当发布事实源
+
 ## 硬规则
 
 - 主目录 `AdvDynTool` 只允许挂 `main` 或当前合并后补丁分支

@@ -14,10 +14,10 @@ AGGREGATION_CLASS_HINTS = ("Parser", "Runtime", "Adapter", "Resolver", "Builder"
 BOM = bytes((0xEF, 0xBB, 0xBF))
 
 
-def _read_text(path: Path) -> str:
+def _read_text(path: Path, *, project_root: Path) -> str:
     raw = path.read_bytes()
     if raw.startswith(BOM):
-        raise SyntaxError(f"{path.relative_to(PROJECT_ROOT)}: contains UTF-8 BOM")
+        raise SyntaxError(f"{path.relative_to(project_root)}: contains UTF-8 BOM")
     return raw.decode("utf-8")
 
 
@@ -51,8 +51,8 @@ def _has_aggregation_class(tree: ast.Module) -> bool:
     return False
 
 
-def _detect_scattered_helpers(path: Path) -> str | None:
-    tree = ast.parse(_read_text(path), filename=str(path))
+def _detect_scattered_helpers(path: Path, *, project_root: Path) -> str | None:
+    tree = ast.parse(_read_text(path, project_root=project_root), filename=str(path))
     groups = _private_helper_group(tree)
     if _has_aggregation_class(tree):
         return None
@@ -61,7 +61,7 @@ def _detect_scattered_helpers(path: Path) -> str | None:
             continue
         names = ", ".join(node.name for node in nodes)
         return (
-            f"{path.relative_to(PROJECT_ROOT)}: contains scattered top-level helper cluster {prefix}* "
+            f"{path.relative_to(project_root)}: contains scattered top-level helper cluster {prefix}* "
             f"without private parser/runtime aggregation ({names})"
         )
     return None
@@ -71,7 +71,7 @@ def main(*, project_root: Path | None = None) -> int:
     root = (project_root or PROJECT_ROOT).resolve()
     violations: list[str] = []
     for path in _iter_source_files(root):
-        violation = _detect_scattered_helpers(path)
+        violation = _detect_scattered_helpers(path, project_root=root)
         if violation is not None:
             violations.append(violation)
     if violations:

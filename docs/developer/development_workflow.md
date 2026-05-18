@@ -19,6 +19,7 @@
 - 一个主题固定一条 branch。
 - 大实验、高风险改动和跨层重构默认必须使用 worktree 隔离。
 - 目标是“频繁改动但不频繁混”，而不是追求零改动工作区。
+- GitHub 上的正式主线治理以 `Protect main` ruleset、`Protect release tags` ruleset 和 `CI/quality` 为准。
 
 ## 三层 Git 模型
 
@@ -28,6 +29,10 @@
 - 用途：
   - 收口当前阶段已经确认的集成改动。
   - 作为后续新主题的基准面。
+- GitHub 约束：
+  - 通过 Pull Request 合并
+  - 至少一个 review
+  - CI required check 固定为 `quality`
 - 禁止事项：
   - 直接在主目录叠加新的未验证实验。
   - 把多个并行主题长期混在同一目录中。
