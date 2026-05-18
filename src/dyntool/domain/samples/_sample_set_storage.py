@@ -81,106 +81,103 @@ def matches_current_storage_target(
     return current_set_filename == resolved_target_set_filename
 
 
-def _conversion_fields(sample_set: Any, categories: list[Any] | None) -> list[SampleField]:
-    """返回转换前需要保证可用的内部槽位列表。"""
+class _SampleSetTransferPlanner:
+    """协调一次样本集存储转换所需的选择、补载与快照构建。"""
 
-    resolved = sample_set._categories_to_fields(categories)
-    if resolved is not None:
-        return resolved
-    return list(sample_set.storable_fields())
+    def __init__(
+        self,
+        sample_set: Any,
+        *,
+        categories: list[Any] | None,
+        filter_func: Callable[[Any], bool] | None,
+    ) -> None:
+        self._sample_set = sample_set
+        self._categories = categories
+        self._filter_func = filter_func
 
+    def selected_items(self) -> list[tuple[str, Any]]:
+        if self._filter_func is None:
+            return list(self._sample_set.items())
+        return [(uid, sample) for uid, sample in self._sample_set.items() if self._filter_func(sample)]
 
-def _filtered_items(
-    sample_set: Any,
-    *,
-    filter_func: Callable[[Any], bool] | None = None,
-) -> list[tuple[str, Any]]:
-    """返回符合筛选条件的样本条目。"""
+    def conversion_fields(self) -> list[SampleField]:
+        resolved = self._sample_set._categories_to_fields(self._categories)
+        if resolved is not None:
+            return resolved
+        return list(self._sample_set.storable_fields())
 
-    if filter_func is None:
-        return list(sample_set.items())
-    return [(uid, sample) for uid, sample in sample_set.items() if filter_func(sample)]
-
-
-def _ensure_conversion_source_ready(
-    sample_set: Any,
-    *,
-    items: list[tuple[str, Any]],
-    required_fields: list[SampleField],
-) -> None:
-    """确保转换前所需槽位已在内存中可用。"""
-
-    pending_uids: list[str] = []
-    for uid, sample in items:
-        pending_fields = [field for field in required_fields if not sample.is_loaded(field)]
-        if not pending_fields:
-            continue
-        source_storage = getattr(getattr(sample, "_storage_set", None), "storage", None)
-        if source_storage is None:
-            if sample.load_mode in {SampleLoadMode.LAZY, SampleLoadMode.METADATA_ONLY}:
-                raise RuntimeError("当前样本集存在未完全加载的样本，且缺少可用于补载的源存储连接，无法转换存储模式。")
-            continue
-        pending_uids.append(uid)
-
-    if not pending_uids or sample_set.storage is None:
-        return
-
-    loaded_map = sample_set.storage.load_many_fields(pending_uids, [str(field) for field in required_fields])
-    for uid, sample in items:
-        if uid not in loaded_map:
-            continue
-        for field in required_fields:
-            if sample.is_loaded(field):
+    def ensure_source_ready(
+        self,
+        *,
+        items: list[tuple[str, Any]],
+        required_fields: list[SampleField],
+    ) -> None:
+        pending_uids: list[str] = []
+        for uid, sample in items:
+            pending_fields = [field for field in required_fields if not sample.is_loaded(field)]
+            if not pending_fields:
                 continue
-            payload = loaded_map.get(uid, {}).get(str(field))
-            sample._replace_data_var_internal(field, cast(DataModelBase | None, payload))
-            sample._storage_presence[field] = payload is not None
-        if sample.load_mode is SampleLoadMode.METADATA_ONLY:
-            sample._set_load_mode_internal(SampleLoadMode.LAZY)
+            source_storage = getattr(getattr(sample, "_storage_set", None), "storage", None)
+            if source_storage is None:
+                if sample.load_mode in {SampleLoadMode.LAZY, SampleLoadMode.METADATA_ONLY}:
+                    raise RuntimeError(
+                        "当前样本集存在未完全加载的样本，且缺少可用于补载的源存储连接，无法转换存储模式。"
+                    )
+                continue
+            pending_uids.append(uid)
 
+        if not pending_uids or self._sample_set.storage is None:
+            return
 
-def _is_full_storage_conversion(
-    sample_set: Any,
-    *,
-    categories: list[Any] | None,
-    filter_func: Callable[[Any], bool] | None,
-) -> bool:
-    """判断当前转换是否覆盖整个样本集及全部可存储槽位。"""
+        loaded_map = self._sample_set.storage.load_many_fields(
+            pending_uids,
+            [str(field) for field in required_fields],
+        )
+        for uid, sample in items:
+            if uid not in loaded_map:
+                continue
+            for field in required_fields:
+                if sample.is_loaded(field):
+                    continue
+                payload = loaded_map.get(uid, {}).get(str(field))
+                sample._replace_data_var_internal(field, cast(DataModelBase | None, payload))
+                sample._storage_presence[field] = payload is not None
+            if sample.load_mode is SampleLoadMode.METADATA_ONLY:
+                sample._set_load_mode_internal(SampleLoadMode.LAZY)
 
-    if filter_func is not None:
-        return False
-    if categories is None:
-        return True
-    return set(_conversion_fields(sample_set, categories)) == set(sample_set.storable_fields())
+    def build_transfer_sample(
+        self,
+        *,
+        sample: Any,
+        required_fields: list[SampleField],
+        strict: bool,
+    ) -> Any:
+        data_vars: dict[SampleField, DataModelBase] = {}
+        for field in required_fields:
+            data = sample.get_data_var(field)
+            if data is None:
+                continue
+            data_vars[field] = data
 
+        transfer = sample.__class__(
+            alias=sample.alias,
+            metadata=sample.metadata.model_copy(deep=False),
+            strict=strict,
+            data_vars=data_vars,
+        )
+        transfer._set_load_mode_internal(SampleLoadMode.EAGER)
+        transfer._loaded_categories = set(data_vars)
+        transfer._storage_presence = {field: True for field in data_vars}
+        transfer._storage_set = None
+        transfer._storage_payload_id = None
+        return transfer
 
-def _build_transfer_sample(
-    *,
-    sample: Any,
-    required_fields: list[SampleField],
-    strict: bool,
-) -> Any:
-    """基于当前样本状态构建用于落盘的独立快照。"""
-
-    data_vars: dict[SampleField, DataModelBase] = {}
-    for field in required_fields:
-        data = sample.get_data_var(field)
-        if data is None:
-            continue
-        data_vars[field] = data
-
-    transfer = sample.__class__(
-        alias=sample.alias,
-        metadata=sample.metadata.model_copy(deep=False),
-        strict=strict,
-        data_vars=data_vars,
-    )
-    transfer._set_load_mode_internal(SampleLoadMode.EAGER)
-    transfer._loaded_categories = set(data_vars)
-    transfer._storage_presence = {field: True for field in data_vars}
-    transfer._storage_set = None
-    transfer._storage_payload_id = None
-    return transfer
+    def is_full_storage_conversion(self) -> bool:
+        if self._filter_func is not None:
+            return False
+        if self._categories is None:
+            return True
+        return set(self.conversion_fields()) == set(self._sample_set.storable_fields())
 
 
 def build_storage_report(
@@ -358,14 +355,19 @@ def convert_storage_sample_set(
         raise ValueError("convert_storage() 的目标路径与当前存储等价，请提供不同的目标路径或存储方案。")
 
     effective_strict = sample_set.strict if strict is None else strict
-    selected_items = _filtered_items(sample_set, filter_func=filter)
-    required_fields = _conversion_fields(sample_set, categories)
-    _ensure_conversion_source_ready(sample_set, items=selected_items, required_fields=required_fields)
+    planner = _SampleSetTransferPlanner(
+        sample_set,
+        categories=categories,
+        filter_func=filter,
+    )
+    selected_items = planner.selected_items()
+    required_fields = planner.conversion_fields()
+    planner.ensure_source_ready(items=selected_items, required_fields=required_fields)
 
     snapshot = sample_set.__class__()
     snapshot.strict = effective_strict
     for _, sample in selected_items:
-        transfer = _build_transfer_sample(
+        transfer = planner.build_transfer_sample(
             sample=sample,
             required_fields=required_fields,
             strict=effective_strict,
@@ -388,7 +390,7 @@ def convert_storage_sample_set(
         set_filename=set_filename,
     )
 
-    if _is_full_storage_conversion(sample_set, categories=categories, filter_func=filter):
+    if planner.is_full_storage_conversion():
         connect_storage_sample_set(
             sample_set,
             target_base_dir,

@@ -338,13 +338,13 @@ class SampleSetStorage:
 
     @ensure_connected
     def metadata_frame(self, *, uids: list[str] | None = None) -> pd.DataFrame:
-        """浠庡簳灞傜储寮曟瀯寤?metadata 琛ㄦ牸銆?"""
+        """从底层索引构建 metadata 表格。"""
 
         strategy = self._require_sample_storage().strategy
         metadata_frame = getattr(strategy, "metadata_frame", None)
         if callable(metadata_frame):
             return metadata_frame(uids=uids)
-        raise RuntimeError("褰撳墠瀛樺偍鏂规涓嶆敮鎸佺洿鎺ヨ鍙?metadata_frame")
+        raise RuntimeError("当前存储方案不支持直接读取 metadata_frame。")
 
     def _selected_items(
         self,

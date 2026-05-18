@@ -1,10 +1,10 @@
-"""领域对象统一计算入口与编排协议。"""
+"""领域对象统一计算入口与计算计划定义。"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, Iterable, Mapping
+from typing import TYPE_CHECKING, Any, Iterable, Mapping, Self
 
 import pandas as pd
 
@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 
 
 class ComputeSource(StrEnum):
-    """时序计算源枚举。"""
+    """时程序列计算源枚举。"""
 
     ACCEL = "accel"
     VEL = "vel"
@@ -54,7 +54,7 @@ class ComputeOperation(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class ComputeStep:
-    """计算计划中的单个步骤。"""
+    """表示计算计划中的单个步骤。"""
 
     group: str
     method: str
@@ -76,7 +76,7 @@ class ComputeStep:
         }
 
     @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> "ComputeStep":
+    def from_dict(cls, data: Mapping[str, Any]) -> Self:
         """从字典恢复步骤。"""
 
         return cls(
@@ -91,7 +91,7 @@ class ComputeStep:
 
 @dataclass(frozen=True, slots=True)
 class ComputePlan:
-    """可复用的计算计划。"""
+    """表示可复用的计算计划。"""
 
     name: str
     steps: tuple[ComputeStep, ...]
@@ -113,7 +113,7 @@ class ComputePlan:
         }
 
     @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> "ComputePlan":
+    def from_dict(cls, data: Mapping[str, Any]) -> Self:
         """从字典恢复计划。"""
 
         steps = tuple(ComputeStep.from_dict(item) for item in data.get("steps", ()))
@@ -127,71 +127,98 @@ class ComputePlan:
         )
 
 
-def _normalize_source(source: ComputeSource | str | None) -> str | None:
-    if source is None:
-        return None
-    return str(source)
+class _ComputeSourceResolver:
+    """集中处理样本中的时程序列来源解析。"""
 
+    _TIME_SERIES_SLOTS = ("accel", "vel", "disp", "force")
 
-def _time_series_slots(sample: "SampleBase") -> tuple[str, ...]:
-    slots: list[str] = []
-    for name in ("accel", "vel", "disp", "force"):
-        if sample.sample_schema.has_slot(name):
-            slots.append(name)
-    return tuple(slots)
+    def normalize(self, source: ComputeSource | str | None) -> str | None:
+        """统一规范化来源名称。"""
 
-
-def _resolve_sample_source(sample: "SampleBase", source: ComputeSource | str | None) -> str:
-    if source is not None:
+        if source is None:
+            return None
         return str(source)
-    for name in ("accel", "vel", "disp", "force"):
-        if sample.sample_schema.has_slot(name) and sample.get_data_var(name) is not None:
-            return name
-    raise ValueError("当前样本没有可用于计算的时序槽位")
+
+    def time_series_slots(self, sample: "SampleBase") -> tuple[str, ...]:
+        """返回样本已声明的时程序列槽位。"""
+
+        return tuple(name for name in self._TIME_SERIES_SLOTS if sample.sample_schema.has_slot(name))
+
+    def resolve_sample_source(self, sample: "SampleBase", source: ComputeSource | str | None) -> str:
+        """解析样本实际可用的时程序列来源。"""
+
+        normalized = self.normalize(source)
+        if normalized is not None:
+            return normalized
+        for name in self.time_series_slots(sample):
+            if sample.get_data_var(name) is not None:
+                return name
+        raise ValueError("当前样本没有可用于计算的时程序列槽位。")
+
+    def resolve_sample_timeseries(
+        self,
+        sample: "SampleBase",
+        source: ComputeSource | str | None,
+    ) -> tuple[str, "TimeSeries"]:
+        """解析并返回样本中的时程序列对象。"""
+
+        from .models import TimeSeries
+
+        resolved = self.resolve_sample_source(sample, source)
+        if not sample.sample_schema.has_slot(resolved):
+            raise ValueError(f"当前样本不支持时程序列槽位 '{resolved}'。")
+        model = sample.get_data_var(resolved)
+        if model is None:
+            raise ValueError(f"槽位 '{resolved}' 没有已加载的数据。")
+        if not isinstance(model, TimeSeries):
+            raise TypeError(f"槽位 '{resolved}' 不是时程序列模型。")
+        return resolved, model
 
 
-def _resolve_sample_timeseries(sample: "SampleBase", source: ComputeSource | str | None) -> tuple[str, "TimeSeries"]:
-    from .models import TimeSeries
-
-    resolved = _resolve_sample_source(sample, source)
-    if not sample.sample_schema.has_slot(resolved):
-        raise ValueError(f"当前样本不支持时序槽位 '{resolved}'")
-    model = sample.get_data_var(resolved)
-    if model is None:
-        raise ValueError(f"槽位 '{resolved}' 没有已加载的时序数据")
-    if not isinstance(model, TimeSeries):
-        raise TypeError(f"槽位 '{resolved}' 不是时序模型")
-    return resolved, model
+_SOURCE_RESOLVER = _ComputeSourceResolver()
 
 
-def _model_available_operations(model: "DataModelBase") -> tuple[ComputeOperation, ...]:
-    operations: list[ComputeOperation] = []
-    if all(hasattr(model, name) for name in ("truncate", "baseline_correct", "filter_highpass")):
-        operations.append(ComputeOperation.PROCESS)
-    if any(hasattr(model, name) for name in ("calc_vel", "calc_disp", "calc_accel")):
-        operations.append(ComputeOperation.DERIVE)
-    if hasattr(model, "calc_freqspec"):
-        operations.append(ComputeOperation.SPECTRUM)
-    if hasattr(model, "calc_respspec"):
-        operations.append(ComputeOperation.RESPONSE)
-    if hasattr(model, "eval_zvl"):
-        operations.append(ComputeOperation.EVALUATE_ZVL)
-    if hasattr(model, "eval_otovl"):
-        operations.append(ComputeOperation.EVALUATE_OTOVL)
-    if hasattr(model, "eval_fdmvl"):
-        operations.append(ComputeOperation.EVALUATE_FDMVL)
-    if hasattr(model, "eval_fpvdv"):
-        operations.append(ComputeOperation.EVALUATE_FPVDV)
-    if hasattr(model, "absmax"):
-        operations.append(ComputeOperation.FEATURE)
-    return tuple(dict.fromkeys(operations))
-
-
-class _ModelProcessNamespace:
-    """单模型处理分组。"""
+class DataModelComputeNamespace:
+    """`DataModelBase` 的统一计算入口。"""
 
     def __init__(self, model: "DataModelBase") -> None:
         self._model = model
+
+    @property
+    def process(self) -> Self:
+        """返回处理分组视图。"""
+
+        return self
+
+    @property
+    def derive(self) -> Self:
+        """返回派生分组视图。"""
+
+        return self
+
+    @property
+    def spectrum(self) -> Self:
+        """返回频谱分组视图。"""
+
+        return self
+
+    @property
+    def response(self) -> Self:
+        """返回响应谱分组视图。"""
+
+        return self
+
+    @property
+    def evaluate(self) -> Self:
+        """返回评价分组视图。"""
+
+        return self
+
+    @property
+    def feature(self) -> Self:
+        """返回特征分组视图。"""
+
+        return self
 
     def flow(self) -> ComputeFlow:
         """以当前模型启动处理流。"""
@@ -199,7 +226,7 @@ class _ModelProcessNamespace:
         return ComputeFlow(_result=self._model)
 
     def pipeline(self, **kwargs: Any) -> "DataModelBase":
-        """执行 one-shot 处理流程。"""
+        """执行 one-shot 处理流水线。"""
 
         flow = self.flow()
         truncate_range = kwargs.get("truncate_range")
@@ -221,159 +248,147 @@ class _ModelProcessNamespace:
             flow.bandpass(bandpass[0], bandpass[1], order=filter_order)
         result = flow.commit(replace=False)
         if not isinstance(result, type(self._model)):
-            raise TypeError("处理流未返回同类模型对象")
+            raise TypeError("处理流未返回同类模型对象。")
         return result
 
+    def _call_model_method(self, method_name: str, **kwargs: Any) -> Any:
+        method = getattr(self._model, method_name, None)
+        if method is None:
+            raise TypeError(f"{type(self._model).__name__} 不支持 {method_name}。")
+        return method(**kwargs)
 
-class _ModelDeriveNamespace:
-    """单模型派生分组。"""
-
-    def __init__(self, model: "DataModelBase") -> None:
-        self._model = model
+    def _model_values(self) -> Any:
+        getter = getattr(self._model, "get_value", None)
+        if getter is None:
+            raise TypeError(f"{type(self._model).__name__} 不支持通用数值特征计算。")
+        return getter()
 
     def vel(self, **kwargs: Any) -> Any:
         """计算速度。"""
 
-        return self._model.calc_vel(**kwargs)
+        return self._call_model_method("calc_vel", **kwargs)
 
     def disp(self, **kwargs: Any) -> Any:
         """计算位移。"""
 
-        return self._model.calc_disp(**kwargs)
+        return self._call_model_method("calc_disp", **kwargs)
 
     def accel(self, **kwargs: Any) -> Any:
         """计算加速度。"""
 
-        return self._model.calc_accel(**kwargs)
-
-
-class _ModelSpectrumNamespace:
-    """单模型频谱分组。"""
-
-    def __init__(self, model: "DataModelBase") -> None:
-        self._model = model
+        return self._call_model_method("calc_accel", **kwargs)
 
     def freqspec(self, **kwargs: Any) -> Any:
         """计算频谱。"""
 
-        return self._model.calc_freqspec(**kwargs)
-
-
-class _ModelResponseNamespace:
-    """单模型响应谱分组。"""
-
-    def __init__(self, model: "DataModelBase") -> None:
-        self._model = model
+        return self._call_model_method("calc_freqspec", **kwargs)
 
     def respspec(self, **kwargs: Any) -> Any:
         """计算响应谱。"""
 
-        return self._model.calc_respspec(**kwargs)
-
-
-class _ModelEvaluateNamespace:
-    """单模型评价分组。"""
-
-    def __init__(self, model: "DataModelBase") -> None:
-        self._model = model
+        return self._call_model_method("calc_respspec", **kwargs)
 
     def zvl(self, **kwargs: Any) -> Any:
-        return self._model.eval_zvl(**kwargs)
+        """执行 ZVL 评价。"""
+
+        return self._call_model_method("eval_zvl", **kwargs)
 
     def otovl(self, **kwargs: Any) -> Any:
-        return self._model.eval_otovl(**kwargs)
+        """执行 OTOVL 评价。"""
+
+        return self._call_model_method("eval_otovl", **kwargs)
 
     def fdmvl(self, **kwargs: Any) -> Any:
-        return self._model.eval_fdmvl(**kwargs)
+        """执行 FDMVL 评价。"""
+
+        return self._call_model_method("eval_fdmvl", **kwargs)
 
     def fpvdv(self, **kwargs: Any) -> Any:
-        return self._model.eval_fpvdv(**kwargs)
+        """执行 FPVDV 评价。"""
 
-
-class _ModelFeatureNamespace:
-    """单模型特征分组。"""
-
-    def __init__(self, model: "DataModelBase") -> None:
-        self._model = model
+        return self._call_model_method("eval_fpvdv", **kwargs)
 
     def absmax(self) -> float:
         """返回绝对峰值。"""
 
-        value = getattr(self._model, "absmax", None)
-        if value is None:
-            raise TypeError(f"{type(self._model).__name__} 不支持 absmax 特征")
-        return float(value)
+        return absmax_feature(self._model_values())["absmax"]
 
     def rms(self) -> float:
         """返回均方根。"""
 
-        return rms_feature(self._model.get_value())["rms"]
+        return rms_feature(self._model_values())["rms"]
 
     def mean(self) -> float:
         """返回均值。"""
 
-        return mean_feature(self._model.get_value())["mean"]
+        return mean_feature(self._model_values())["mean"]
 
     def std(self) -> float:
         """返回标准差。"""
 
-        return std_feature(self._model.get_value())["std"]
+        return std_feature(self._model_values())["std"]
 
     def crest_factor(self) -> float:
         """返回峰值因子。"""
 
-        return crest_factor_feature(self._model.get_value())["crest_factor"]
+        return crest_factor_feature(self._model_values())["crest_factor"]
 
     def zero_crossings(self) -> int:
         """返回零交叉次数。"""
 
-        return zero_crossings_feature(self._model.get_value())["zero_crossings"]
+        return zero_crossings_feature(self._model_values())["zero_crossings"]
 
     def peak(self, **kwargs: Any) -> dict[str, float | int]:
-        """返回主峰值信息。"""
+        """返回主峰结果。"""
 
-        return peak_feature(self._model.get_value(), **kwargs)
+        return peak_feature(self._model_values(), **kwargs)
 
     def peaks(self, **kwargs: Any) -> dict[str, Any]:
         """返回多峰检测结果。"""
 
-        return peaks_feature(self._model.get_value(), **kwargs)
+        return peaks_feature(self._model_values(), **kwargs)
 
     def envelope(self) -> dict[str, Any]:
         """返回包络序列。"""
 
-        return envelope_feature(self._model.get_value())
+        return envelope_feature(self._model_values())
 
     def band_rms(self, *, fs: float, center_freq: float, octave: float = 1.0 / 3.0) -> float:
-        """返回指定倍频带的均方根值。"""
+        """返回指定倍频带的均方根。"""
 
         return band_rms_feature(
-            self._model.get_value(),
+            self._model_values(),
             fs=fs,
             center_freq=center_freq,
             octave=octave,
         )["band_rms"]
 
-
-class DataModelComputeNamespace:
-    """DataModelBase 的统一计算入口。"""
-
-    def __init__(self, model: "DataModelBase") -> None:
-        self._model = model
-        self.process = _ModelProcessNamespace(model)
-        self.derive = _ModelDeriveNamespace(model)
-        self.spectrum = _ModelSpectrumNamespace(model)
-        self.response = _ModelResponseNamespace(model)
-        self.evaluate = _ModelEvaluateNamespace(model)
-        self.feature = _ModelFeatureNamespace(model)
-
     def available(self) -> tuple[ComputeOperation, ...]:
         """返回当前模型可执行的能力列表。"""
 
-        return _model_available_operations(self._model)
+        operations: list[ComputeOperation] = []
+        if all(hasattr(self._model, name) for name in ("truncate", "baseline_correct", "filter_highpass")):
+            operations.append(ComputeOperation.PROCESS)
+        if any(hasattr(self._model, name) for name in ("calc_vel", "calc_disp", "calc_accel")):
+            operations.append(ComputeOperation.DERIVE)
+        if hasattr(self._model, "calc_freqspec"):
+            operations.append(ComputeOperation.SPECTRUM)
+        if hasattr(self._model, "calc_respspec"):
+            operations.append(ComputeOperation.RESPONSE)
+        if hasattr(self._model, "eval_zvl"):
+            operations.append(ComputeOperation.EVALUATE_ZVL)
+        if hasattr(self._model, "eval_otovl"):
+            operations.append(ComputeOperation.EVALUATE_OTOVL)
+        if hasattr(self._model, "eval_fdmvl"):
+            operations.append(ComputeOperation.EVALUATE_FDMVL)
+        if hasattr(self._model, "eval_fpvdv"):
+            operations.append(ComputeOperation.EVALUATE_FPVDV)
+        if hasattr(self._model, "get_value"):
+            operations.append(ComputeOperation.FEATURE)
+        return tuple(dict.fromkeys(operations))
 
     def supports(self, operation: ComputeOperation | str, *, source: ComputeSource | str | None = None) -> bool:
-        """判断当前模型是否支持某项能力。"""
+        """判断当前模型是否支持指定能力。"""
 
         del source
         try:
@@ -383,40 +398,85 @@ class DataModelComputeNamespace:
         return normalized in self.available()
 
     def run(self, operation: ComputeOperation | str, **kwargs: Any) -> Any:
-        """按统一枚举调度模型计算。"""
+        """按统一枚举入口调度模型计算。"""
 
         normalized = ComputeOperation(str(operation))
         if normalized is ComputeOperation.PROCESS:
-            return self.process.pipeline(**kwargs)
+            return self.pipeline(**kwargs)
         if normalized is ComputeOperation.DERIVE:
-            raise ValueError("derive 需要显式指定具体方法")
+            raise ValueError("derive 需要显式指定具体方法。")
         if normalized is ComputeOperation.SPECTRUM:
-            return self.spectrum.freqspec(**kwargs)
+            return self.freqspec(**kwargs)
         if normalized is ComputeOperation.RESPONSE:
-            return self.response.respspec(**kwargs)
+            return self.respspec(**kwargs)
         if normalized is ComputeOperation.EVALUATE_ZVL:
-            return self.evaluate.zvl(**kwargs)
+            return self.zvl(**kwargs)
         if normalized is ComputeOperation.EVALUATE_OTOVL:
-            return self.evaluate.otovl(**kwargs)
+            return self.otovl(**kwargs)
         if normalized is ComputeOperation.EVALUATE_FDMVL:
-            return self.evaluate.fdmvl(**kwargs)
+            return self.fdmvl(**kwargs)
         if normalized is ComputeOperation.EVALUATE_FPVDV:
-            return self.evaluate.fpvdv(**kwargs)
+            return self.fpvdv(**kwargs)
         if normalized is ComputeOperation.FEATURE:
-            return self.feature.absmax()
+            return self.absmax()
         raise ValueError(f"不支持的计算操作: {normalized}")
 
 
-class _SampleProcessNamespace:
-    """单样本处理分组。"""
+class SampleComputeNamespace:
+    """`SampleBase` 的统一计算入口。"""
 
     def __init__(self, sample: "SampleBase") -> None:
         self._sample = sample
 
-    def flow(self, *, source: ComputeSource | str | None = None) -> ComputeFlow:
-        """以指定时序槽位启动处理流。"""
+    @property
+    def process(self) -> Self:
+        """返回处理分组视图。"""
 
-        resolved, model = _resolve_sample_timeseries(self._sample, source)
+        return self
+
+    @property
+    def spectrum(self) -> Self:
+        """返回频谱分组视图。"""
+
+        return self
+
+    @property
+    def response(self) -> Self:
+        """返回响应谱分组视图。"""
+
+        return self
+
+    @property
+    def evaluate(self) -> Self:
+        """返回评价分组视图。"""
+
+        return self
+
+    @property
+    def feature(self) -> Self:
+        """返回特征分组视图。"""
+
+        return self
+
+    @property
+    def plan(self) -> Self:
+        """返回计划分组视图。"""
+
+        return self
+
+    def _series(self, source: ComputeSource | str | None = None) -> "TimeSeries":
+        _, model = _SOURCE_RESOLVER.resolve_sample_timeseries(self._sample, source)
+        return model
+
+    def _ensure_accel_only(self, source: ComputeSource | str | None) -> None:
+        normalized = _SOURCE_RESOLVER.normalize(source)
+        if normalized not in {None, ComputeSource.ACCEL.value}:
+            raise ValueError("当前操作仅支持 accel 作为计算源。")
+
+    def flow(self, *, source: ComputeSource | str | None = None) -> ComputeFlow:
+        """以指定时程序列槽位启动处理流。"""
+
+        resolved, model = _SOURCE_RESOLVER.resolve_sample_timeseries(self._sample, source)
 
         def _commit_handler(result: Any, *, replace: bool) -> Any:
             if not replace:
@@ -434,7 +494,7 @@ class _SampleProcessNamespace:
         strict: bool | None = None,
         **kwargs: Any,
     ) -> "OperationResult[SampleBase]":
-        """执行 one-shot 处理流程。"""
+        """执行 one-shot 处理流水线。"""
 
         from .samples.batch import make_operation_result
 
@@ -465,7 +525,7 @@ class _SampleProcessNamespace:
                 message="处理完成",
                 value=self._sample,
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             return make_operation_result(
                 action="preprocess",
                 success=False,
@@ -474,111 +534,80 @@ class _SampleProcessNamespace:
                 error=exc,
             )
 
+    def freqspec(self, *, source: ComputeSource | str | None = None, **kwargs: Any) -> "OperationResult[SampleBase]":
+        """计算频谱。"""
 
-class _SampleSpectrumNamespace:
-    """单样本频谱分组。"""
-
-    def __init__(self, sample: "SampleBase") -> None:
-        self._sample = sample
-
-    def freqspec(self, **kwargs: Any) -> "OperationResult[SampleBase]":
-        kwargs.pop("source", None)
+        self._ensure_accel_only(source)
         return self._sample.calc_freqspec(**kwargs)
 
+    def respspec(self, *, source: ComputeSource | str | None = None, **kwargs: Any) -> "OperationResult[SampleBase]":
+        """计算响应谱。"""
 
-class _SampleResponseNamespace:
-    """单样本响应谱分组。"""
-
-    def __init__(self, sample: "SampleBase") -> None:
-        self._sample = sample
-
-    def respspec(self, **kwargs: Any) -> "OperationResult[SampleBase]":
-        kwargs.pop("source", None)
+        self._ensure_accel_only(source)
         return self._sample.calc_respspec(**kwargs)
 
-
-class _SampleEvaluateNamespace:
-    """单样本评价分组。"""
-
-    def __init__(self, sample: "SampleBase") -> None:
-        self._sample = sample
-
     def zvl(self, **kwargs: Any) -> "OperationResult[SampleBase]":
+        """执行 ZVL 评价。"""
+
         return self._sample.eval_zvl(**kwargs)
 
     def otovl(self, **kwargs: Any) -> "OperationResult[SampleBase]":
+        """执行 OTOVL 评价。"""
+
         return self._sample.eval_otovl(**kwargs)
 
     def fdmvl(self, **kwargs: Any) -> "OperationResult[SampleBase]":
+        """执行 FDMVL 评价。"""
+
         return self._sample.eval_fdmvl(**kwargs)
 
     def fpvdv(self, **kwargs: Any) -> "OperationResult[SampleBase]":
+        """执行 FPVDV 评价。"""
+
         return self._sample.eval_fpvdv(**kwargs)
 
-
-class _SampleFeatureNamespace:
-    """单样本特征分组。"""
-
-    def __init__(self, sample: "SampleBase") -> None:
-        self._sample = sample
-
-    def _legacy_pga(self) -> float:
-        """返回加速度绝对峰值。"""
-
-        accel = self._sample.get_data_var("accel")
-        if accel is None:
-            raise ValueError("当前样本没有 accel 槽位数据")
-        value = getattr(accel, "absmax", None)
-        if value is None:
-            raise TypeError("accel 槽位不支持 pga 特征")
-        return float(value)
-
-    def _series(self, source: ComputeSource | str | None = None) -> Any:
-        _, model = _resolve_sample_timeseries(self._sample, source)
-        return model
-
     def absmax(self, *, source: ComputeSource | str | None = None) -> float:
-        """返回时序槽位绝对最大值。"""
+        """返回时程序列绝对峰值。"""
 
         return absmax_feature(self._series(source).get_value())["absmax"]
 
     def rms(self, *, source: ComputeSource | str | None = None) -> float:
-        """返回时序槽位均方根。"""
+        """返回时程序列均方根。"""
 
         return rms_feature(self._series(source).get_value())["rms"]
 
     def mean(self, *, source: ComputeSource | str | None = None) -> float:
-        """返回时序槽位均值。"""
+        """返回时程序列均值。"""
 
         return mean_feature(self._series(source).get_value())["mean"]
 
     def std(self, *, source: ComputeSource | str | None = None) -> float:
-        """返回时序槽位标准差。"""
+        """返回时程序列标准差。"""
 
         return std_feature(self._series(source).get_value())["std"]
 
     def crest_factor(self, *, source: ComputeSource | str | None = None) -> float:
-        """返回时序槽位峰值因子。"""
+        """返回时程序列峰值因子。"""
 
         return crest_factor_feature(self._series(source).get_value())["crest_factor"]
 
     def zero_crossings(self, *, source: ComputeSource | str | None = None) -> int:
-        """返回时序槽位零交叉次数。"""
+        """返回时程序列零交叉次数。"""
 
         return zero_crossings_feature(self._series(source).get_value())["zero_crossings"]
 
     def peak(self, *, source: ComputeSource | str | None = None, **kwargs: Any) -> dict[str, float | int]:
-        """返回时序槽位主峰值信息。"""
+        """返回时程序列主峰结果。"""
 
         return peak_feature(self._series(source).get_value(), **kwargs)
 
     def peaks(self, *, source: ComputeSource | str | None = None, **kwargs: Any) -> dict[str, Any]:
-        """返回时序槽位多峰检测结果。"""
+        """返回时程序列多峰检测结果。"""
 
         return peaks_feature(self._series(source).get_value(), **kwargs)
 
     def envelope(self, *, source: ComputeSource | str | None = None) -> dict[str, Any]:
-        """返回时序槽位包络序列。"""
+        """返回时程序列包络结果。"""
 
         return envelope_feature(self._series(source).get_value())
 
@@ -590,7 +619,7 @@ class _SampleFeatureNamespace:
         octave: float = 1.0 / 3.0,
         source: ComputeSource | str | None = None,
     ) -> float:
-        """返回时序槽位指定倍频带的均方根值。"""
+        """返回指定倍频带的均方根。"""
 
         return band_rms_feature(
             self._series(source).get_value(),
@@ -598,10 +627,6 @@ class _SampleFeatureNamespace:
             center_freq=center_freq,
             octave=octave,
         )["band_rms"]
-
-
-class _SamplePlanNamespace:
-    """单样本计划分组。"""
 
     def create(
         self,
@@ -620,31 +645,14 @@ class _SamplePlanNamespace:
             metadata=dict(metadata or {}),
         )
 
-
-class SampleComputeNamespace:
-    """SampleBase 的统一计算入口。"""
-
-    def __init__(self, sample: "SampleBase") -> None:
-        self._sample = sample
-        self.process = _SampleProcessNamespace(sample)
-        self.spectrum = _SampleSpectrumNamespace(sample)
-        self.response = _SampleResponseNamespace(sample)
-        self.evaluate = _SampleEvaluateNamespace(sample)
-        self.feature = _SampleFeatureNamespace(sample)
-        self.plan = _SamplePlanNamespace()
-
     def available(self) -> tuple[ComputeOperation, ...]:
         """返回当前样本可执行的能力列表。"""
 
         operations: list[ComputeOperation] = []
-        if any(self._sample.get_data_var(name) is not None for name in _time_series_slots(self._sample)):
-            operations.extend(
-                (
-                    ComputeOperation.PROCESS,
-                    ComputeOperation.SPECTRUM,
-                    ComputeOperation.FEATURE,
-                )
-            )
+        if any(
+            self._sample.get_data_var(name) is not None for name in _SOURCE_RESOLVER.time_series_slots(self._sample)
+        ):
+            operations.extend((ComputeOperation.PROCESS, ComputeOperation.SPECTRUM, ComputeOperation.FEATURE))
         accel = self._sample.get_data_var("accel") if self._sample.sample_schema.has_slot("accel") else None
         if accel is not None:
             operations.extend(
@@ -665,7 +673,7 @@ class SampleComputeNamespace:
         return tuple(dict.fromkeys(operations))
 
     def supports(self, operation: ComputeOperation | str, *, source: ComputeSource | str | None = None) -> bool:
-        """判断当前样本是否支持某项能力。"""
+        """判断当前样本是否支持指定能力。"""
 
         try:
             normalized = ComputeOperation(str(operation))
@@ -680,41 +688,35 @@ class SampleComputeNamespace:
             ComputeOperation.EVALUATE_FDMVL,
             ComputeOperation.EVALUATE_FPVDV,
         }:
-            return _normalize_source(source) in {None, ComputeSource.ACCEL.value}
-        if normalized is ComputeOperation.SPECTRUM:
+            return _SOURCE_RESOLVER.normalize(source) in {None, ComputeSource.ACCEL.value}
+        if normalized in {ComputeOperation.PROCESS, ComputeOperation.SPECTRUM, ComputeOperation.FEATURE}:
             try:
-                _resolve_sample_timeseries(self._sample, source)
-            except Exception:
+                _SOURCE_RESOLVER.resolve_sample_timeseries(self._sample, source)
+            except Exception:  # noqa: BLE001
                 return False
-            return True
         return True
 
     def run(self, operation: ComputeOperation | str, **kwargs: Any) -> Any:
-        """按统一枚举调度样本计算。"""
+        """按统一枚举入口调度样本计算。"""
 
         normalized = ComputeOperation(str(operation))
         if normalized is ComputeOperation.PROCESS:
-            return self.process.pipeline(**kwargs)
+            return self.pipeline(**kwargs)
         if normalized is ComputeOperation.SPECTRUM:
-            return self.spectrum.freqspec(**kwargs)
+            return self.freqspec(**kwargs)
         if normalized is ComputeOperation.RESPONSE:
-            return self.response.respspec(**kwargs)
+            return self.respspec(**kwargs)
         if normalized is ComputeOperation.EVALUATE_ZVL:
-            return self.evaluate.zvl(**kwargs)
+            return self.zvl(**kwargs)
         if normalized is ComputeOperation.EVALUATE_OTOVL:
-            return self.evaluate.otovl(**kwargs)
+            return self.otovl(**kwargs)
         if normalized is ComputeOperation.EVALUATE_FDMVL:
-            return self.evaluate.fdmvl(**kwargs)
+            return self.fdmvl(**kwargs)
         if normalized is ComputeOperation.EVALUATE_FPVDV:
-            return self.evaluate.fpvdv(**kwargs)
+            return self.fpvdv(**kwargs)
         if normalized is ComputeOperation.FEATURE:
-            return self.feature.absmax()
+            return self.absmax(source=kwargs.get("source"))
         raise ValueError(f"不支持的计算操作: {normalized}")
-
-    def flow(self, *, source: ComputeSource | str | None = None) -> ComputeFlow:
-        """以当前样本启动处理流。"""
-
-        return self.process.flow(source=source)
 
     def run_plan(
         self,
@@ -727,20 +729,22 @@ class SampleComputeNamespace:
 
         from .samples.batch import make_operation_result
 
+        del strict
         try:
             for step in plan.steps:
                 source = step.source or plan.default_source
-                if step.group == "process":
-                    self.process.pipeline(source=source, replace=True, strict=strict, **step.params)
+                group = step.group.strip().lower()
+                if group == "process":
+                    self.pipeline(source=source, replace=True, **step.params)
                     continue
-                if step.group == "spectrum":
-                    self.spectrum.freqspec(source=source or "accel", overwrite=overwrite, **step.params)
+                if group == "spectrum":
+                    self.freqspec(source=source, overwrite=overwrite, **step.params)
                     continue
-                if step.group == "response":
-                    self.response.respspec(overwrite=overwrite, **step.params)
+                if group == "response":
+                    self.respspec(source=source, overwrite=overwrite, **step.params)
                     continue
-                if step.group == "evaluate":
-                    runner = getattr(self.evaluate, step.method)
+                if group == "evaluate":
+                    runner = getattr(self, step.method)
                     runner(overwrite=overwrite, **step.params)
                     continue
                 raise ValueError(f"不支持的计划步骤分组: {step.group}")
@@ -750,7 +754,7 @@ class SampleComputeNamespace:
                 message=f"计划 '{plan.name}' 执行完成",
                 value=self._sample,
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             return make_operation_result(
                 action="run_plan",
                 success=False,
@@ -760,55 +764,82 @@ class SampleComputeNamespace:
             )
 
 
-class _SampleSetProcessNamespace:
-    """样本集处理分组。"""
+class SampleSetComputeNamespace:
+    """`SampleSetBase` 的统一计算入口。"""
 
     def __init__(self, sample_set: "SampleSetBase[Any]") -> None:
         self._sample_set = sample_set
 
+    @property
+    def process(self) -> Self:
+        """返回处理分组视图。"""
+
+        return self
+
+    @property
+    def spectrum(self) -> Self:
+        """返回频谱分组视图。"""
+
+        return self
+
+    @property
+    def response(self) -> Self:
+        """返回响应谱分组视图。"""
+
+        return self
+
+    @property
+    def evaluate(self) -> Self:
+        """返回评价分组视图。"""
+
+        return self
+
+    @property
+    def plan(self) -> Self:
+        """返回计划分组视图。"""
+
+        return self
+
     def flow(self) -> ComputeFlow:
-        """以当前样本集启动批量处理流。"""
+        """以当前样本集启动批处理流。"""
 
         return ComputeFlow(_result=self._sample_set)
 
     def pipeline(self, **kwargs: Any) -> "BatchOperationReport[Any]":
+        """执行批量处理流水线。"""
+
         return self._sample_set._batch_process_pipeline(**kwargs)
 
-
-class _SampleSetSpectrumNamespace:
-    def __init__(self, sample_set: "SampleSetBase[Any]") -> None:
-        self._sample_set = sample_set
-
     def freqspec(self, **kwargs: Any) -> "BatchOperationReport[Any]":
+        """执行批量频谱计算。"""
+
         return self._sample_set.calc_freqspec(**kwargs)
 
-
-class _SampleSetResponseNamespace:
-    def __init__(self, sample_set: "SampleSetBase[Any]") -> None:
-        self._sample_set = sample_set
-
     def respspec(self, **kwargs: Any) -> "BatchOperationReport[Any]":
+        """执行批量响应谱计算。"""
+
         return self._sample_set.calc_respspec(**kwargs)
 
-
-class _SampleSetEvaluateNamespace:
-    def __init__(self, sample_set: "SampleSetBase[Any]") -> None:
-        self._sample_set = sample_set
-
     def zvl(self, **kwargs: Any) -> "BatchOperationReport[Any]":
+        """执行批量 ZVL 评价。"""
+
         return self._sample_set.eval_zvl(**kwargs)
 
     def otovl(self, **kwargs: Any) -> "BatchOperationReport[Any]":
+        """执行批量 OTOVL 评价。"""
+
         return self._sample_set.eval_otovl(**kwargs)
 
     def fdmvl(self, **kwargs: Any) -> "BatchOperationReport[Any]":
+        """执行批量 FDMVL 评价。"""
+
         return self._sample_set.eval_fdmvl(**kwargs)
 
     def fpvdv(self, **kwargs: Any) -> "BatchOperationReport[Any]":
+        """执行批量 FPVDV 评价。"""
+
         return self._sample_set.eval_fpvdv(**kwargs)
 
-
-class _SampleSetPlanNamespace:
     def create(
         self,
         *,
@@ -817,6 +848,8 @@ class _SampleSetPlanNamespace:
         default_source: ComputeSource | str | None = None,
         metadata: Mapping[str, Any] | None = None,
     ) -> ComputePlan:
+        """构建批量计算计划。"""
+
         return ComputePlan(
             name=name,
             steps=tuple(steps),
@@ -824,20 +857,8 @@ class _SampleSetPlanNamespace:
             metadata=dict(metadata or {}),
         )
 
-
-class SampleSetComputeNamespace:
-    """SampleSetBase 的统一计算入口。"""
-
-    def __init__(self, sample_set: "SampleSetBase[Any]") -> None:
-        self._sample_set = sample_set
-        self.process = _SampleSetProcessNamespace(sample_set)
-        self.spectrum = _SampleSetSpectrumNamespace(sample_set)
-        self.response = _SampleSetResponseNamespace(sample_set)
-        self.evaluate = _SampleSetEvaluateNamespace(sample_set)
-        self.plan = _SampleSetPlanNamespace()
-
     def available(self) -> tuple[ComputeOperation, ...]:
-        """返回当前样本集中至少一个样本可执行的计算操作。"""
+        """返回样本集中至少一个样本可执行的能力列表。"""
 
         operations: list[ComputeOperation] = []
         for sample in self._sample_set.values():
@@ -845,7 +866,7 @@ class SampleSetComputeNamespace:
         return tuple(dict.fromkeys(operations))
 
     def supports(self, operation: ComputeOperation | str, *, source: ComputeSource | str | None = None) -> bool:
-        """判断样本集中是否存在可执行指定操作的样本。"""
+        """判断样本集中是否存在可执行指定能力的样本。"""
 
         try:
             normalized = ComputeOperation(str(operation))
@@ -854,23 +875,23 @@ class SampleSetComputeNamespace:
         return any(sample.compute.supports(normalized, source=source) for sample in self._sample_set.values())
 
     def run(self, operation: ComputeOperation | str, **kwargs: Any) -> Any:
-        """按统一调度入口执行批量计算操作。"""
+        """按统一枚举入口调度批量计算。"""
 
         normalized = ComputeOperation(str(operation))
         if normalized is ComputeOperation.PROCESS:
-            return self.process.pipeline(**kwargs)
+            return self.pipeline(**kwargs)
         if normalized is ComputeOperation.SPECTRUM:
-            return self.spectrum.freqspec(**kwargs)
+            return self.freqspec(**kwargs)
         if normalized is ComputeOperation.RESPONSE:
-            return self.response.respspec(**kwargs)
+            return self.respspec(**kwargs)
         if normalized is ComputeOperation.EVALUATE_ZVL:
-            return self.evaluate.zvl(**kwargs)
+            return self.zvl(**kwargs)
         if normalized is ComputeOperation.EVALUATE_OTOVL:
-            return self.evaluate.otovl(**kwargs)
+            return self.otovl(**kwargs)
         if normalized is ComputeOperation.EVALUATE_FDMVL:
-            return self.evaluate.fdmvl(**kwargs)
+            return self.fdmvl(**kwargs)
         if normalized is ComputeOperation.EVALUATE_FPVDV:
-            return self.evaluate.fpvdv(**kwargs)
+            return self.fpvdv(**kwargs)
         raise ValueError(f"不支持的计算操作: {normalized}")
 
 
@@ -889,11 +910,11 @@ def ensure_multiindex_metadata(
 
 
 def normalize_series_frame(model: "DataModelBase") -> pd.DataFrame:
-    """按模型自己的命名协议导出序列表。"""
+    """按模型自身协议导出序列表格。"""
 
     frame = model.to_series_frame()
     if not isinstance(frame, pd.DataFrame):
-        raise TypeError(f"{type(model).__name__} 的序列导出结果必须是 DataFrame")
+        raise TypeError(f"{type(model).__name__} 的序列导出结果必须是 DataFrame。")
     return frame
 
 

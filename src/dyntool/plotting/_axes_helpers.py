@@ -14,8 +14,8 @@ from ._axes_common import AxisFormatMode, AxisSide
 from ._axes_formatters import AxisNumberFormatter, DiscreteAxisFormatter, TickPlanner
 
 
-class LegendHelper:
-    """图例收集、过滤、重命名与后处理辅助工具。"""
+class _LegendComposer:
+    """图例收集、过滤、重命名与后处理组合器。"""
 
     def __init__(self, ax: Axes | None = None, *, params: Mapping[str, Any] | None = None) -> None:
         self._ax = ax
@@ -150,12 +150,12 @@ class LegendHelper:
     def _resolve_ax(self, ax: Axes | None) -> Axes:
         target_ax = ax or self._ax
         if target_ax is None:
-            raise ValueError("LegendHelper 尚未绑定 Axes。")
+            raise ValueError("图例组合器尚未绑定 Axes。")
         return target_ax
 
 
-class AxisHelper:
-    """公开数值轴、离散轴与图例辅助工具。"""
+class _AxisTickController:
+    """公开数值轴、离散轴与图例刻度控制。"""
 
     def __init__(self, ax: Axes) -> None:
         self._ax = ax
@@ -251,9 +251,9 @@ class AxisHelper:
         handles: Sequence[Any] | None = None,
         labels: Sequence[str] | None = None,
     ) -> Legend:
-        """兼容入口：委托给 ``LegendHelper``。"""
+        """兼容入口：委托给 ``_LegendComposer``。"""
 
-        helper = LegendHelper(self._ax)
+        helper = _LegendComposer(self._ax)
         return helper.apply(legend_options=legend_options, handles=handles, labels=labels)
 
     def _format_continuous_side(
