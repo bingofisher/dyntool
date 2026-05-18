@@ -13,7 +13,7 @@
 - GUI 前端架构与路线
 - GUI 按钮矩阵
 - GUI 视觉参考
-- GUI 生图 Prompt 包
+- GUI 生图 Prompt 区
 - Web 工作台实验线（冻结）
 - Skill 治理与主入口
 - API 设计与公开面约束
