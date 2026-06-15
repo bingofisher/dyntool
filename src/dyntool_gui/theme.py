@@ -20,15 +20,15 @@ class ThemeTokens:
         '"Microsoft YaHei UI", "Microsoft YaHei", "Noto Sans SC", "Noto Sans CJK SC", '
         '"SimHei", "SimSun", "SongTNR", sans-serif'
     )
-    window_background: str = "#F0F2F5"
-    panel_background: str = "#F7F8FA"
+    window_background: str = "#F4F6F8"
+    panel_background: str = "#F8FAFC"
     card_background: str = "#FFFFFF"
     border_color: str = "#E2E8F0"
     muted_border: str = "#CBD5E1"
     divider_color: str = "#E8ECF1"
-    title_background: str = "#EBF0F7"
-    header_gradient_start: str = "#2563EB"
-    header_gradient_end: str = "#3B82F6"
+    title_background: str = "#EEF2F6"
+    header_gradient_start: str = "#273142"
+    header_gradient_end: str = "#273142"
     accent_color: str = "#2563EB"
     accent_hover: str = "#3B82F6"
     accent_light: str = "#DBEAFE"
@@ -345,6 +345,24 @@ QPushButton[buttonRole="ghost"]:hover {
     background: %(hover_background)s;
     color: %(text_color)s;
 }
+QPushButton[buttonRole="segmented"] {
+    min-height: 28px;
+    border: 1px solid %(muted_border)s;
+    border-radius: %(radius_sm)spx;
+    background: %(card_background)s;
+    color: %(muted_text)s;
+    font-weight: 600;
+    padding: 4px 10px;
+}
+QPushButton[buttonRole="segmented"]:hover {
+    background: %(hover_background)s;
+    color: %(text_color)s;
+}
+QPushButton[buttonRole="segmented"]:checked {
+    background: %(accent_surface)s;
+    border-color: %(accent_color)s;
+    color: %(accent_color)s;
+}
 
 /* ── 模块导航按钮 ── */
 QPushButton[navButton="true"] {
@@ -373,7 +391,6 @@ QPushButton[navButton="true"][current="true"] {
 /* ── 分组框（卡片） ── */
 QGroupBox {
     border: 1px solid %(border_color)s;
-    border-left: 3px solid %(accent_color)s;
     border-radius: %(radius_md)spx;
     margin-top: 18px;
     padding: 12px 10px 10px 12px;
@@ -402,8 +419,7 @@ QLineEdit, QPlainTextEdit, QComboBox {
 }
 QLineEdit:focus, QPlainTextEdit:focus, QComboBox:focus {
     border-color: %(accent_color)s;
-    border-width: 2px;
-    padding: 3px 7px;
+    background: %(accent_surface)s;
 }
 
 /* ── Dock ── */
@@ -521,46 +537,125 @@ QLabel[cardRole="heroSummary"] {
     padding: 6px 12px;
 }
 QLabel[cardRole="status"] {
-    background: %(card_background)s;
-    border: 1px solid %(border_color)s;
-    border-radius: %(radius_md)spx;
-    padding: 6px 10px;
+    background: transparent;
+    border: none;
+    color: %(muted_text)s;
+    padding: 2px 0;
     line-height: 1.5;
 }
 QLabel[cardRole="emptyState"] {
     background: %(panel_background)s;
-    border: 2px dashed %(muted_border)s;
-    border-radius: %(radius_lg)spx;
+    border: 1px dashed %(muted_border)s;
+    border-radius: %(radius_md)spx;
     color: %(subtle_text)s;
-    padding: 24px 16px;
-    font-size: %(header_font_pt)spt;
+    padding: 14px 16px;
+    font-size: %(body_font_pt)spt;
+}
+QLabel[cardRole="inlineEmptyState"] {
+    background: %(panel_background)s;
+    border: 1px solid %(divider_color)s;
+    border-radius: %(radius_sm)spx;
+    color: %(muted_text)s;
+    padding: 7px 10px;
+    font-size: %(body_font_pt)spt;
+}
+QLabel[cardRole="inlineStatus"],
+QLabel[cardRole="summaryText"] {
+    background: transparent;
+    border: none;
+    color: %(muted_text)s;
+    font-size: %(body_font_pt)spt;
 }
 
 /* ── 上下文条 ── */
 QFrame#contextBar {
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-        stop:0 %(header_gradient_start)s,
-        stop:1 %(header_gradient_end)s);
+    background: %(header_gradient_start)s;
+    border-bottom: 1px solid #1F2937;
     min-height: %(context_bar_height)spx;
     max-height: %(context_bar_height)spx;
 }
-QFrame#contextBar QLabel {
-    color: white;
+QLabel#ContextBarTitleLabel {
+    background: transparent;
+    color: #F8FAFC;
+    font-size: %(header_font_pt)spt;
+    font-weight: 600;
+    padding-left: 16px;
+}
+QLabel#ContextBarProgressLabel {
+    background: transparent;
+    color: #CBD5E1;
+    font-size: %(body_font_pt)spt;
+    padding-right: 16px;
+}
+QWidget#ModuleNavigationBar {
+    background: %(card_background)s;
+    border-bottom: 1px solid %(border_color)s;
 }
 
 /* ── 面板容器 ── */
 QWidget[pageHeader="true"],
 QWidget[surfaceRole="pageHeader"] {
     background: %(card_background)s;
-    border: 1px solid %(border_color)s;
-    border-radius: %(radius_lg)spx;
+    border: none;
+    border-bottom: 1px solid %(border_color)s;
+    border-radius: 0;
 }
-QWidget[surfaceRole="actionPanel"],
+QWidget[surfaceRole="actionPanel"] {
+    background: %(panel_background)s;
+    border: 1px solid %(divider_color)s;
+    border-radius: %(radius_md)spx;
+}
 QWidget[surfaceRole="resultPanel"],
 QWidget[surfaceRole="summaryPanel"] {
+    background: %(card_background)s;
+    border: 1px solid %(border_color)s;
+    border-radius: %(radius_md)spx;
+}
+QFrame[surfaceRole="summaryStrip"] {
+    background: %(panel_background)s;
+    border: 1px solid %(divider_color)s;
+    border-radius: %(radius_sm)spx;
+}
+QWidget[surfaceRole="plotCanvas"] {
+    background: %(card_background)s;
+    border: 1px solid %(divider_color)s;
+    border-radius: %(radius_sm)spx;
+}
+QFrame[surfaceRole="section"] {
+    background: transparent;
+    border: 1px solid %(divider_color)s;
+    border-radius: %(radius_sm)spx;
+}
+QFrame[surfaceRole="booleanGroupControls"] {
+    background: %(panel_background)s;
+    border: 1px solid %(divider_color)s;
+    border-radius: %(radius_sm)spx;
+}
+QFrame[surfaceRole="conditionBlock"] {
+    background: %(card_background)s;
+    border: 1px solid %(divider_color)s;
+    border-left: 2px solid %(muted_border)s;
+    border-radius: %(radius_sm)spx;
+}
+QWidget[surfaceRole="segmentedControl"] {
     background: %(panel_background)s;
     border: 1px solid %(border_color)s;
-    border-radius: %(radius_lg)spx;
+    border-radius: %(radius_md)spx;
+    padding: 3px;
+}
+QLabel[cardRole="sectionTitle"] {
+    color: %(text_color)s;
+    font-size: %(header_font_pt)spt;
+    font-weight: 700;
+}
+QLabel[cardRole="conditionTitle"] {
+    color: %(text_color)s;
+    font-weight: 700;
+    padding-bottom: 1px;
+}
+QLabel[cardRole="fieldLabel"] {
+    color: %(muted_text)s;
+    font-weight: 600;
 }
 
 /* ── 状态栏 ── */

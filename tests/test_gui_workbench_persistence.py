@@ -16,7 +16,15 @@ from PySide6.QtWidgets import QApplication
 from dyntool_gui.main_window import MainWindow
 from dyntool_gui.persistence.project_store import ProjectFileStore
 from dyntool_gui.persistence.settings_store import AppSettingsStore
-from dyntool_gui.session import FilterSpec, ImportKind, ImportStep, ProjectSession, SampleSetSummary
+from dyntool_gui.session import (
+    FilterGroup,
+    FilterPredicate,
+    FilterSpec,
+    ImportKind,
+    ImportStep,
+    ProjectSession,
+    SampleSetSummary,
+)
 from dyntool_gui.widgets import ProcessingWorkspace
 from dyntool_gui.widgets.step_indicator import StepIndicator
 
@@ -104,6 +112,52 @@ def test_project_file_store_round_trip_preserves_filter_sorting_and_paging(tmp_p
     assert restored.subset_state.filter_spec.sort_desc is True
     assert restored.subset_state.filter_spec.limit == 50
     assert restored.subset_state.filter_spec.offset == 100
+
+
+def test_project_file_store_round_trip_preserves_filter_query_tree(tmp_path: Path) -> None:
+    """GUI 项目文件应显式保存 query_version/query 并恢复查询树。"""
+
+    session = ProjectSession.build_demo()
+    session.subset_state.filter_spec = FilterSpec(
+        query=FilterGroup(
+            operator="or",
+            children=(
+                FilterPredicate("metadata.point", "=", "桥中点"),
+                FilterPredicate("result.zvl", "exists"),
+            ),
+        )
+    )
+
+    store = ProjectFileStore()
+    project_file = tmp_path / "filter_query_project.dyntool.json"
+
+    store.save(session, project_file)
+    raw_text = project_file.read_text(encoding="utf-8")
+    restored = store.load(project_file)
+
+    assert '"query_version": 2' in raw_text
+    assert '"query"' in raw_text
+    assert isinstance(restored.subset_state.filter_spec.query, FilterGroup)
+    assert restored.subset_state.filter_spec.query.operator == "or"
+    assert restored.subset_state.filter_spec.query.children[0] == FilterPredicate("metadata.point", "=", "桥中点")
+
+
+def test_project_file_store_loads_legacy_metadata_filters_as_queryless_filter_spec(tmp_path: Path) -> None:
+    """旧 metadata_filters 项目文件仍应加载为兼容 metadata_clauses，且 query 为空。"""
+
+    session = ProjectSession.build_demo()
+    store = ProjectFileStore()
+    project_file = tmp_path / "legacy_metadata_filters.dyntool.json"
+    store.save(session, project_file)
+    payload = project_file.read_text(encoding="utf-8")
+    payload = payload.replace('"metadata_clauses": []', '"metadata_filters": [["point", ["桥中点"]]]')
+    payload = payload.replace('"query_version": 2,\n      "query": null,\n      ', "")
+    project_file.write_text(payload, encoding="utf-8")
+
+    restored = store.load(project_file)
+
+    assert restored.subset_state.filter_spec.query is None
+    assert restored.subset_state.filter_spec.metadata_filters == (("point", ("桥中点",)),)
 
 
 def test_project_file_store_repairs_loaded_runtime_restore_context(tmp_path: Path) -> None:

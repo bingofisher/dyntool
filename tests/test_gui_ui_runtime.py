@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import FrozenInstanceError
 import os
 from pathlib import Path
 
@@ -25,6 +26,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from dyntool_gui._session_types import (
+    GuiCommandSnapshot,
+    GuiSelectionSnapshot,
+    GuiTaskSnapshot,
+    ProcessingRequestSnapshot,
+)
 from dyntool_gui.main_window import MainWindow
 from dyntool_gui.screenshot import GuiScreenshotOptions, capture_main_window_screenshot, resolve_gui_font_family
 from dyntool_gui.session import ProjectSession
@@ -98,6 +105,40 @@ def test_internal_gui_screenshot_captures_rendered_png(qapp: QApplication, tmp_p
     assert not image.isNull()
     assert image.width() == 1280
     assert image.height() == 720
+
+
+def test_gui_internal_command_snapshot_groups_selection_and_task_feedback() -> None:
+    """GUI Internal 操作快照应聚合当前范围与任务反馈，而不是散落成无语义字段。"""
+
+    snapshot = GuiCommandSnapshot(
+        label="initial",
+        selection=GuiSelectionSnapshot(current_module="project", scope_kind="all_samples"),
+        task=GuiTaskSnapshot(
+            manager_busy={"import_manager": False},
+            status_task_text="当前任务：准备就绪",
+            task_rows=1,
+            log_rows=1,
+            issue_rows=0,
+            export_rows=0,
+        ),
+    )
+
+    assert snapshot.selection.current_module == "project"
+    assert snapshot.selection.scope_kind == "all_samples"
+    assert snapshot.task.manager_busy["import_manager"] is False
+    assert snapshot.task.status_task_text == "当前任务：准备就绪"
+
+
+def test_gui_internal_command_and_processing_snapshots_are_frozen() -> None:
+    """GUI Internal 命令快照和处理请求快照不应被执行链原地改写。"""
+
+    command_snapshot = GuiCommandSnapshot(label="initial")
+    processing_snapshot = ProcessingRequestSnapshot(action_name="calc_freqspec")
+
+    with pytest.raises(FrozenInstanceError):
+        command_snapshot.status = "changed"
+    with pytest.raises(FrozenInstanceError):
+        processing_snapshot.resolved_uids = ("sample_1",)
 
 
 def test_main_window_layout_audit_covers_maximize_size_and_dock_restore(
@@ -213,7 +254,7 @@ def test_main_flow_buttons_are_present_and_not_placeholder_copy(qapp: QApplicati
 
 
 def test_plotting_workspace_exposes_formal_empty_state_copy(qapp: QApplication) -> None:
-    """图形页空态应使用正式状态卡，而不是大面积无说明留白。"""
+    """图形页空态应使用紧凑状态条，而不是大面积说明卡。"""
 
     del qapp
     widget = PlottingWorkspace()
@@ -222,7 +263,8 @@ def test_plotting_workspace_exposes_formal_empty_state_copy(qapp: QApplication) 
     empty_state = widget.findChild(QLabel, "PlottingEmptyStateLabel")
 
     assert empty_state is not None
-    assert empty_state.property("cardRole") == "emptyState"
+    assert empty_state.property("cardRole") == "inlineEmptyState"
+    assert empty_state.maximumHeight() <= 42
     assert "渲染" in empty_state.text()
     assert "补算" in empty_state.text()
 

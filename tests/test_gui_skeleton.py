@@ -12,17 +12,24 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 
+from matplotlib.figure import Figure
 from PySide6.QtCore import QRect, Qt
+from PySide6.QtGui import QCloseEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import (
     QApplication,
+    QDialog,
     QFrame,
     QFormLayout,
+    QGridLayout,
     QGroupBox,
     QLabel,
     QMessageBox,
     QProgressBar,
+    QPushButton,
+    QRadioButton,
     QScrollArea,
+    QSizePolicy,
     QSplitter,
     QTableWidget,
     QTableView,
@@ -34,18 +41,23 @@ from PySide6.QtWidgets import (
 from dyntool_gui.facades import GuiImportFacade, ImportPreview, SampleSetImportRequest
 from dyntool_gui.layout import LANDSCAPE_1080P_PROFILE, LANDSCAPE_2K_PROFILE, resolve_workbench_layout_profile
 from dyntool_gui.main_window import MainWindow
-from dyntool_gui.managers import ExportManager, PlotManager, ProcessingManager
-from dyntool_gui.managers.processing_manager import ProcessingTaskController
+from dyntool_gui.managers import ExportManager, ImportManager, PlotManager, ProcessingManager
+from dyntool_gui.managers.processing_manager import ProcessingCancelledError, ProcessingTaskController
 from dyntool_gui.managers.task_manager import TaskManager
 from dyntool_gui.models import PanelDataBuilder
 from dyntool_gui.session import (
+    FilterGroup,
+    FilterPredicate,
     FilterSpec,
     ImportKind,
+    MetadataHookSpec,
     MODULE_LABELS,
     ModuleKey,
+    PlotRequestSnapshot,
     ProcessingRequestSnapshot,
     ProjectSession,
     SubsetDefinition,
+    resolve_scope_uids,
 )
 from dyntool_gui.widgets import (
     ExportWorkspace,
@@ -53,6 +65,9 @@ from dyntool_gui.widgets import (
     ImportWorkflowWidget,
     ModuleWorkspace,
     PlottingWorkspace,
+    ProcessingWorkspace,
+    SubsetWorkspace,
+    WorkspaceSection,
 )
 from dyntool_gui.widgets.step_indicator import StepIndicator
 
@@ -255,6 +270,166 @@ def test_status_bar_exposes_global_progress_for_busy_tasks(qapp: QApplication) -
     window.processing_manager._thread = None
 
 
+def test_processing_cleanup_state_change_refreshes_global_busy_feedback(qapp: QApplication) -> None:
+    """处理线程清理完成后应同步收起全局忙碌反馈和中止入口。"""
+
+    del qapp
+    window = MainWindow(ProjectSession.build_demo())
+    progress = window.statusBar().findChild(QProgressBar, "GlobalTaskProgressBar")
+    assert progress is not None
+
+    window.session.processing_state.busy = True
+    window.processing_manager._thread = object()  # type: ignore[assignment]
+    window._refresh_window_context()
+    window._update_action_states()
+
+    assert not progress.isHidden()
+    assert "处理进行中" in window._status_task.text()
+    assert window.actions_map["中止当前任务"].isEnabled()
+
+    window.session.processing_state.busy = False
+    window.session.bus.processing_state_changed.emit()
+    assert not progress.isHidden()
+    assert "处理进行中" in window._status_task.text()
+
+    window.processing_manager._thread = None
+    window.processing_manager.state_changed.emit()
+
+    assert progress.isHidden()
+    assert "处理进行中" not in window._status_task.text()
+    assert not window.actions_map["中止当前任务"].isEnabled()
+
+
+@pytest.mark.parametrize(
+    ("manager_name", "state_name", "state_signal_name", "busy_text"),
+    (
+        ("plot_manager", "plot_state", "plot_state_changed", "绘图进行中"),
+        ("export_manager", "export_state", "export_state_changed", "导出进行中"),
+    ),
+)
+def test_non_cancellable_task_cleanup_state_change_refreshes_global_busy_feedback(
+    qapp: QApplication,
+    manager_name: str,
+    state_name: str,
+    state_signal_name: str,
+    busy_text: str,
+) -> None:
+    """绘图和导出线程清理完成后应同步收起全局忙碌反馈。"""
+
+    del qapp
+    window = MainWindow(ProjectSession.build_demo())
+    progress = window.statusBar().findChild(QProgressBar, "GlobalTaskProgressBar")
+    assert progress is not None
+    manager = getattr(window, manager_name)
+    state = getattr(window.session, state_name)
+    state_signal = getattr(window.session.bus, state_signal_name)
+
+    state.busy = True
+    manager._thread = object()  # type: ignore[attr-defined]
+    window._refresh_window_context()
+    window._update_action_states()
+
+    assert not progress.isHidden()
+    assert busy_text in window._status_task.text()
+    assert not window.actions_map["新建项目"].isEnabled()
+    assert not window.actions_map["中止当前任务"].isEnabled()
+
+    state.busy = False
+    state_signal.emit()
+    assert not progress.isHidden()
+    assert busy_text in window._status_task.text()
+
+    manager._thread = None  # type: ignore[attr-defined]
+    manager.state_changed.emit()
+
+    assert progress.isHidden()
+    assert busy_text not in window._status_task.text()
+    assert window.actions_map["新建项目"].isEnabled()
+
+
+def test_import_manager_cleanup_keeps_global_busy_feedback_until_thread_idle(qapp: QApplication) -> None:
+    """导入状态写回后仍应等待导入线程真正清理完成再恢复全局入口。"""
+
+    del qapp
+    window = MainWindow(ProjectSession.build_demo())
+    progress = window.statusBar().findChild(QProgressBar, "GlobalTaskProgressBar")
+    assert progress is not None
+
+    window.session.finish_import_activity()
+    window.import_manager._thread = object()  # type: ignore[assignment]
+    window._refresh_window_context()
+    window._update_action_states()
+
+    assert not progress.isHidden()
+    assert "导入收尾中" in window._status_task.text()
+    assert not window.actions_map["新建项目"].isEnabled()
+    assert not window.actions_map["中止当前任务"].isEnabled()
+
+    window.import_manager._thread = None
+    window.import_manager.state_changed.emit()
+
+    assert progress.isHidden()
+    assert "导入收尾中" not in window._status_task.text()
+    assert window.actions_map["新建项目"].isEnabled()
+
+
+def test_import_manager_rejects_second_operation_while_thread_active(
+    monkeypatch: pytest.MonkeyPatch, qapp: QApplication
+) -> None:
+    """导入 manager 已有活动线程时不应覆盖线程引用并启动第二个任务。"""
+
+    del qapp
+    from dyntool_gui.managers import import_manager as import_manager_module
+
+    class _UnexpectedThread:
+        def __init__(self, *_: object) -> None:
+            raise AssertionError("不应在已有导入线程时创建新线程")
+
+    monkeypatch.setattr(import_manager_module, "QThread", _UnexpectedThread)
+    session = ProjectSession.build_demo()
+    manager = ImportManager(session)
+    manager._thread = object()  # type: ignore[assignment]
+
+    with pytest.raises(ValueError, match="当前已有导入任务正在进行或收尾，请等待完成。"):
+        manager.start_operation(
+            task_title="重复导入",
+            detail="不应启动",
+            mode="preview",
+            operation=lambda _: object(),
+        )
+
+
+def test_import_preview_rejects_request_while_import_thread_is_finalizing(
+    monkeypatch: pytest.MonkeyPatch, qapp: QApplication, tmp_path: Path
+) -> None:
+    """导入线程收尾中再次触发导入预览时应失败且不覆盖当前线程。"""
+
+    del qapp
+    window = MainWindow(ProjectSession.build_demo())
+    project_dir = tmp_path / "project"
+    source_dir = tmp_path / "source"
+    project_dir.mkdir()
+    source_dir.mkdir()
+    window.session.set_project_directory(project_dir)
+    window.workspace.import_workflow.set_project_directory(project_dir)
+    window.session.set_import_source(source_dir)
+    window.workspace.import_workflow.set_source_path(source_dir)
+    original_thread = object()
+    window.import_manager._thread = original_thread  # type: ignore[assignment]
+    starts: list[object] = []
+    warnings: list[tuple[str, str]] = []
+
+    monkeypatch.setattr(window.import_manager, "start_operation", lambda **kwargs: starts.append(kwargs))
+    monkeypatch.setattr(QMessageBox, "warning", lambda _, title, message: warnings.append((title, message)))
+
+    window._preview_import()
+
+    assert starts == []
+    assert warnings == [("导入预览失败", "当前已有导入任务正在进行或收尾，请等待完成。")]
+    assert window.import_manager._thread is original_thread
+    window.import_manager._thread = None
+
+
 def test_import_execute_success_enters_visible_finalizing_phase(
     monkeypatch: pytest.MonkeyPatch, qapp: QApplication
 ) -> None:
@@ -398,6 +573,51 @@ def test_main_window_disables_session_replacement_actions_while_busy(qapp: QAppl
         assert window.actions_map[action_name].isEnabled()
 
 
+@pytest.mark.parametrize(
+    ("manager_name", "state_name"),
+    (
+        ("import_manager", "import_state"),
+        ("processing_manager", "processing_state"),
+        ("plot_manager", "plot_state"),
+        ("export_manager", "export_state"),
+    ),
+)
+def test_write_task_guard_blocks_all_busy_managers(qapp: QApplication, manager_name: str, state_name: str) -> None:
+    """处理和导出写任务应被任一后台任务或线程收尾状态拦截。"""
+
+    del qapp
+    window = MainWindow(ProjectSession.build_demo())
+    manager = getattr(window, manager_name)
+    state = getattr(window.session, state_name)
+    state.busy = False
+    manager._thread = object()  # type: ignore[attr-defined]
+
+    with pytest.raises(ValueError, match="当前已有后台任务正在运行或收尾，请等待完成。"):
+        window._ensure_write_task_available()
+
+    manager._thread = None  # type: ignore[attr-defined]
+
+
+def test_main_window_blocks_close_while_non_import_task_is_busy(
+    monkeypatch: pytest.MonkeyPatch, qapp: QApplication
+) -> None:
+    """非导入后台任务运行时主窗口不应直接关闭。"""
+
+    del qapp
+    window = MainWindow(ProjectSession.build_demo())
+    warnings: list[tuple[str, str]] = []
+    event = QCloseEvent()
+    window.session.processing_state.busy = True
+    window.processing_manager._thread = object()  # type: ignore[assignment]
+    monkeypatch.setattr(QMessageBox, "warning", lambda _, title, message: warnings.append((title, message)))
+
+    window.closeEvent(event)
+
+    assert not event.isAccepted()
+    assert warnings == [("无法关闭", "当前有后台任务正在运行，请等待完成或先中止任务。")]
+    window.processing_manager._thread = None
+
+
 def test_background_managers_register_running_task_before_worker_finishes(
     monkeypatch: pytest.MonkeyPatch, qapp: QApplication
 ) -> None:
@@ -475,6 +695,53 @@ def test_processing_execute_reports_per_sample_progress() -> None:
     assert getattr(updates[-1], "total") == 2
 
 
+def test_processing_preview_stops_at_cancel_checkpoint_before_table_read() -> None:
+    """处理预览收到中止请求后，不能继续读取结果表。"""
+
+    class _Runtime:
+        def scalar_frame(self, **_: object) -> object:
+            raise AssertionError("取消后的预览不应继续读取 scalar_frame")
+
+    session = ProjectSession.build_empty()
+    session.primary_runtime = _Runtime()  # type: ignore[assignment]
+    controller = ProcessingTaskController()
+    controller.request_cancel()
+
+    with pytest.raises(ProcessingCancelledError):
+        ProcessingManager(session).build_preview_sync(
+            preview_kind="scalar_frame",
+            preview_scope="all",
+            uids_text="",
+            metadata_fields=(),
+            features=(),
+            data_var="freqspec",
+            peak_source="accel",
+            controller=controller,
+        )
+
+
+def test_processing_execute_rejects_non_enumerable_full_write_task() -> None:
+    """无法枚举 UID 的主样本集不能回退到不可中止的全量写任务。"""
+
+    calls: list[str] = []
+
+    class _Runtime:
+        def __len__(self) -> int:
+            return 10
+
+        def calc_freqspec(self, *, strict: bool, overwrite: bool) -> None:
+            del strict, overwrite
+            calls.append("full")
+
+    session = ProjectSession.build_empty()
+    session.primary_runtime = _Runtime()  # type: ignore[assignment]
+
+    with pytest.raises(ValueError, match="无法枚举 UID"):
+        ProcessingManager(session).execute_sync(action_name="calc_freqspec")
+
+    assert calls == []
+
+
 def test_module_workspace_emits_processing_request(qapp: QApplication) -> None:
     """处理页按钮应发出真实处理请求。"""
 
@@ -505,6 +772,25 @@ def test_processing_workspace_shows_cancel_button_while_busy(qapp: QApplication)
     assert button is not None
     assert not button.isHidden()
     assert button.isEnabled()
+
+
+def test_processing_cancel_request_switches_to_pending_cancel_feedback(qapp: QApplication) -> None:
+    """请求中止后应立即禁用重复点击，并显示等待安全检查点。"""
+
+    del qapp
+    session = ProjectSession.build_demo()
+    manager = ProcessingManager(session)
+    manager._controller = ProcessingTaskController()  # type: ignore[attr-defined]
+    session.processing_state.busy = True
+    widget = ProcessingWorkspace()
+
+    manager.request_cancel()
+    widget.load_session(session)
+
+    assert session.processing_state.cancel_requested is True
+    assert widget._cancel_button.text() == "正在中止..."
+    assert not widget._cancel_button.isEnabled()
+    assert "等待安全检查点" in widget._phase_label.text()
 
 
 def test_module_workspace_uses_import_filter_composite_page(qapp: QApplication) -> None:
@@ -547,7 +833,7 @@ def test_demo_session_no_longer_uses_placeholder_contract_wording() -> None:
 
 
 def test_import_workflow_shows_busy_progress_and_chinese_titles(qapp: QApplication) -> None:
-    """导入页忙碌时应显示进度提示，且主要分区标题使用中文。"""
+    """导入页忙碌时应显示进度提示，且主要分区标题使用中文轻量区块。"""
 
     del qapp
     widget = ImportWorkflowWidget()
@@ -571,22 +857,27 @@ def test_import_workflow_shows_busy_progress_and_chinese_titles(qapp: QApplicati
     assert widget._advanced_toggle.isHidden()
 
 
-def test_import_workflow_uses_task_cards_not_step_indicator(qapp: QApplication) -> None:
-    """数据接入页应去向导化，改为命名任务卡片。"""
+def test_import_workflow_uses_dialogs_and_lightweight_sections_not_step_indicator(qapp: QApplication) -> None:
+    """数据接入页应去向导化，复杂参数进弹窗，主界面只保留轻量区块。"""
 
     del qapp
     widget = ImportWorkflowWidget()
 
-    titles = [box.title() for box in widget.findChildren(QGroupBox)]
+    main_titles = [
+        section.title()
+        for section in widget.findChildren(WorkspaceSection)
+        if section.parent() is not widget.findChild(QDialog, "ImportParameterDialog")
+    ]
 
     assert not widget.findChildren(StepIndicator)
-    assert "项目上下文" in titles
-    assert "接入来源" in titles
-    assert "检查结果" in titles
-    assert "绑定结果" in titles
-    assert "当前项目上下文" not in titles
-    assert "接入模式与来源" not in titles
-    assert "绑定与执行" not in titles
+    assert "项目上下文" in main_titles
+    assert "接入来源" in main_titles
+    assert "检查结果" in main_titles
+    assert "绑定结果" in main_titles
+    assert "当前项目上下文" not in main_titles
+    assert "接入模式与来源" not in main_titles
+    assert "绑定与执行" not in main_titles
+    assert widget.findChildren(QGroupBox) == []
 
 
 def test_project_overview_exposes_next_step_actions(qapp: QApplication) -> None:
@@ -912,6 +1203,110 @@ def test_subset_workspace_builds_metadata_hook_fields_from_session(qapp: QApplic
     assert len(field_names) == len(session.primary_sampleset.metadata_fields)
 
 
+def test_subset_workspace_empty_metadata_state_is_actionable(qapp: QApplication) -> None:
+    """没有 metadata 字段时，子集页应显示短空态而不是空白输入区。"""
+
+    del qapp
+    session = ProjectSession.build_empty()
+    widget = ModuleWorkspace().subset_workspace
+
+    widget.load_session(session)
+    empty_label = widget.findChild(QLabel, "SubsetMetadataEmptyStateLabel")
+
+    assert empty_label is not None
+    assert not empty_label.isHidden()
+    assert empty_label.text() == "当前数据没有可筛选 metadata 字段"
+
+
+def test_subset_workspace_boolean_query_builder_emits_v2_query(qapp: QApplication) -> None:
+    """子集页规则构建器应生成 v2 查询树并保留旧 hook 条件兼容。"""
+
+    del qapp
+    session = ProjectSession.build_demo()
+    widget = ModuleWorkspace().subset_workspace
+    widget.load_session(session)
+    widget._rule_editor.clear_rules()
+    first_row = widget._rule_editor.add_predicate_row(FilterPredicate("metadata.case", "in", ("case_a", "case_b")))
+    second_row = widget._rule_editor.add_predicate_row(FilterPredicate("data.accel", "exists", ()))
+    group = widget._rule_editor.add_group(FilterGroup("or", (FilterPredicate("result.otovl", "not_exists", ()),)))
+    widget._set_combo_value(widget._query_operator_combo, "and")
+
+    filter_spec = widget.scope_editor_values()
+
+    assert first_row.field_path() == "metadata.case"
+    assert second_row.field_path() == "data.accel"
+    assert group.query() == FilterGroup("or", (FilterPredicate("result.otovl", "not_exists", ()),))
+    assert filter_spec.query_version == 2
+    assert isinstance(filter_spec.query, FilterGroup)
+    assert filter_spec.query.operator == "and"
+    assert filter_spec.query.children[0] == FilterPredicate("metadata.case", "in", ("case_a", "case_b"))
+    assert filter_spec.query.children[1] == FilterPredicate("data.accel", "exists", ())
+    assert isinstance(filter_spec.query.children[2], FilterGroup)
+    assert filter_spec.query.children[2].children == (FilterPredicate("result.otovl", "not_exists", ()),)
+
+
+def test_subset_rule_editor_supports_dynamic_metadata_rules(qapp: QApplication) -> None:
+    """规则编辑器应支持增删多条 metadata 条件，不再受固定槽位限制。"""
+
+    del qapp
+    session = ProjectSession.build_demo()
+    widget = ModuleWorkspace().subset_workspace
+    widget.load_session(session)
+    widget._rule_editor.clear_rules()
+
+    metadata_rows = [
+        widget._rule_editor.add_predicate_row(FilterPredicate(f"metadata.field_{index}", "=", f"value_{index}"))
+        for index in range(6)
+    ]
+
+    filter_spec = widget.scope_editor_values()
+
+    assert isinstance(filter_spec.query, FilterGroup)
+    assert len(filter_spec.query.children) == 6
+    assert metadata_rows[-1].field_path() == "metadata.field_5"
+    assert filter_spec.query.children[-1] == FilterPredicate("metadata.field_5", "=", "value_5")
+
+
+def test_subset_rule_editor_can_copy_and_reorder_rules(qapp: QApplication) -> None:
+    """规则管理器应支持复制、删除和排序，查询树顺序必须同步变化。"""
+
+    del qapp
+    widget = ModuleWorkspace().subset_workspace
+    widget.load_session(ProjectSession.build_demo())
+    widget._rule_editor.clear_rules()
+    first = widget._rule_editor.add_predicate_row(FilterPredicate("metadata.case", "=", "A"))
+    second = widget._rule_editor.add_predicate_row(FilterPredicate("metadata.point", "=", "P2"))
+
+    first._copy_button.click()
+    second._up_button.click()
+    copied_query = widget.scope_editor_values().query
+
+    assert isinstance(copied_query, FilterGroup)
+    assert copied_query.children == (
+        FilterPredicate("metadata.case", "=", "A"),
+        FilterPredicate("metadata.point", "=", "P2"),
+        FilterPredicate("metadata.case", "=", "A"),
+    )
+
+
+def test_subset_rule_editor_uses_metadata_value_candidates(qapp: QApplication) -> None:
+    """metadata 分类字段应给规则值编辑器提供候选值。"""
+
+    del qapp
+    session = ProjectSession.build_demo()
+    session.subset_state.metadata_hook_specs = (MetadataHookSpec("case", "categorical", "case", ("case_a", "case_b")),)
+    widget = ModuleWorkspace().subset_workspace
+    widget.load_session(session)
+    widget._rule_editor.clear_rules()
+    row = widget._rule_editor.add_predicate_row(FilterPredicate("metadata.case", "in", ()))
+
+    completer = row.value_edit.completer()
+    assert completer is not None
+    model = completer.model()
+    values = tuple(str(model.data(model.index(index, 0))) for index in range(model.rowCount()))
+    assert values == ("case_a", "case_b")
+
+
 def test_subset_workspace_uses_metadata_table_preview(qapp: QApplication) -> None:
     """子集页预览主表应展示 metadata_df 风格列。"""
 
@@ -1060,6 +1455,105 @@ def test_export_workspace_removes_report_package_entry(qapp: QApplication) -> No
     assert export_kinds == ["scalar_frame", "series_frame", "peaks_frame", "current_plot_image"]
 
 
+def test_export_workspace_moves_parameters_to_dialog(qapp: QApplication) -> None:
+    """导出工作区复杂参数应进入弹窗，主界面只保留摘要和主动作。"""
+
+    del qapp
+    widget = ExportWorkspace()
+    dialog = widget.findChild(QDialog, "ExportParameterDialog")
+    button = widget.findChild(QPushButton, "ExportParameterButton")
+    run_button = widget.findChild(QPushButton, "ExportRunButton")
+    summary = widget.findChild(QLabel, "ExportParameterSummary")
+
+    assert dialog is not None
+    assert button is not None
+    assert button.text() == "导出参数"
+    assert run_button is not None
+    assert run_button.text() == "执行导出"
+    assert summary is not None
+    assert "范围" in summary.text()
+    assert widget._scope_kind_combo.parent() is not widget
+    assert widget._output_edit.parent() is not widget
+    assert widget.findChildren(QGroupBox) == []
+
+
+def test_export_parameter_dialog_reject_restores_previous_values(
+    monkeypatch: pytest.MonkeyPatch, qapp: QApplication
+) -> None:
+    """导出参数弹窗取消后不应污染导出请求值。"""
+
+    del qapp
+    widget = ExportWorkspace()
+    before = (widget.export_request_values(), widget.validation_request_values(), widget._parameter_summary.text())
+
+    def fake_exec() -> QDialog.DialogCode:
+        widget._scope_target_edit.setText("subset-cancelled")
+        widget._kind_combo.setCurrentIndex(3)
+        widget._output_edit.setText("cancelled-output")
+        widget._format_combo.setCurrentText("pdf")
+        widget._include_plots.setChecked(True)
+        return QDialog.DialogCode.Rejected
+
+    monkeypatch.setattr(widget._parameter_dialog, "exec", fake_exec)
+    widget._open_parameter_dialog()
+
+    assert (
+        widget.export_request_values(),
+        widget.validation_request_values(),
+        widget._parameter_summary.text(),
+    ) == before
+
+
+def test_current_plot_image_export_does_not_require_primary_runtime(
+    monkeypatch: pytest.MonkeyPatch, qapp: QApplication, tmp_path: Path
+) -> None:
+    """已有图形导出只依赖当前 Figure，不应强制要求主样本集运行态。"""
+
+    del qapp
+    from matplotlib.figure import Figure
+
+    window = MainWindow(ProjectSession.build_demo())
+    window.session.primary_runtime = None
+    window._current_plot_figure = Figure(figsize=(2.0, 1.5))
+    window.session.plot_state.plot_mode = "single_sample"
+    window.session.plot_state.source_kind = "sample_model"
+    window.session.plot_state.source_name = "accel"
+    window.session.plot_state.selected_uid = "demo-001"
+    window.session.plot_state.render_complete = True
+    window.session.plot_state.rendered_request = PlotRequestSnapshot(
+        plot_mode="single_sample",
+        source_kind="sample_model",
+        source_name="accel",
+        selected_uid="demo-001",
+        scoped_uids=(),
+        point_limit=20000,
+        save_mode="preview",
+    )
+    window.workspace.plotting_workspace.set_figure(window._current_plot_figure)
+    window.workspace.plotting_workspace.load_session(window.session)
+    saved_paths: list[Path] = []
+    warnings: list[str] = []
+
+    monkeypatch.setattr(window.plot_manager, "save_figure", lambda _, path: saved_paths.append(Path(path)))
+    monkeypatch.setattr(QMessageBox, "warning", lambda *args: warnings.append(str(args[2])))
+
+    window._run_export(
+        "current_plot_image",
+        str(tmp_path / "current_plot.png"),
+        "png",
+        (),
+        (),
+        "",
+        "",
+        False,
+        False,
+    )
+
+    assert warnings == []
+    assert saved_paths == [tmp_path / "current_plot.png"]
+    assert window.session.exports[0].name == "当前图形"
+
+
 def test_bottom_panel_filters_rows_by_current_module(qapp: QApplication) -> None:
     """切到导入页后底部区应保留导入上下文记录。"""
 
@@ -1185,15 +1679,17 @@ def test_navigation_and_page_headers_use_compact_visual_contract(qapp: QApplicat
 
 
 def test_context_bar_uses_high_contrast_title_strip(qapp: QApplication) -> None:
-    """顶部项目上下文条必须是深色标题条，避免浅底白字不可读。"""
+    """顶部项目上下文条应由全局主题接管，避免硬编码蓝色块割裂页面。"""
 
     del qapp
     workspace = ModuleWorkspace()
 
     assert workspace._context_bar.property("surfaceRole") == "contextBar"
     assert workspace._context_label.objectName() == "ContextBarTitleLabel"
-    assert "#1E3A8A" in workspace._context_bar.styleSheet()
-    assert "#FFFFFF" in workspace._context_label.styleSheet()
+    assert workspace._context_bar.styleSheet() == ""
+    assert workspace._context_label.styleSheet() == ""
+    assert workspace._progress_label.styleSheet() == ""
+    assert workspace._nav_bar.styleSheet() == ""
 
 
 def test_formal_pages_keep_landscape_page_header_height(qapp: QApplication) -> None:
@@ -1209,7 +1705,7 @@ def test_formal_pages_keep_landscape_page_header_height(qapp: QApplication) -> N
 
 
 def test_project_overview_uses_two_column_dashboard_grid(qapp: QApplication) -> None:
-    """总览页应使用两列网格仪表盘布局，包含主集卡片和快速操作按钮。"""
+    """总览页应使用两列网格仪表盘布局，包含主集摘要和快速操作按钮。"""
 
     del qapp
     widget = ModuleWorkspace().project_overview
@@ -1219,6 +1715,7 @@ def test_project_overview_uses_two_column_dashboard_grid(qapp: QApplication) -> 
     assert hasattr(widget, "_action_card")
     assert hasattr(widget, "_next_step_buttons")
     assert len(widget._next_step_buttons) >= 4
+    assert widget.findChildren(QGroupBox) == []
 
 
 def test_plotting_workspace_uses_three_pane_workbench_layout(qapp: QApplication) -> None:
@@ -1299,12 +1796,21 @@ def test_processing_workspace_keeps_primary_actions_above_preview_group(qapp: QA
     action_region = widget.findChild(QScrollArea, "ProcessingActionRegion")
 
     assert action_region is not None
-    panel = action_region.widget()
-    assert panel is not None
-    layout = panel.layout()
-    assert layout is not None
-    assert layout.indexOf(widget._run_button) < layout.indexOf(widget._preview_button)
-    assert layout.indexOf(widget._run_button) < layout.indexOf(widget._summary)
+    action_section = next(section for section in widget.findChildren(WorkspaceSection) if section.title() == "处理动作")
+    section_layout = action_section.body_layout()
+
+    def nested_index(target: QWidget) -> int:
+        for index in range(section_layout.count()):
+            item = section_layout.itemAt(index)
+            if item.widget() is target:
+                return index
+            nested_layout = item.layout()
+            if nested_layout is not None and nested_layout.indexOf(target) >= 0:
+                return index
+        return -1
+
+    assert 0 <= nested_index(widget._run_button) < nested_index(widget._preview_button)
+    assert nested_index(widget._cancel_button) == nested_index(widget._run_button)
 
 
 def test_processing_workspace_uses_compact_status_summary_without_large_numbers(qapp: QApplication) -> None:
@@ -1322,6 +1828,26 @@ def test_processing_workspace_uses_compact_status_summary_without_large_numbers(
     assert not hasattr(widget, "_metric_done")
     assert not hasattr(widget, "_metric_gap")
     assert not hasattr(widget, "_metric_time")
+
+
+def test_processing_workspace_uses_theme_roles_for_status_and_buttons(qapp: QApplication) -> None:
+    """处理页状态条和主动作按钮应使用统一主题角色，不写散装局部样式。"""
+
+    del qapp
+    widget = ModuleWorkspace().processing_workspace
+    metrics_frame = widget.findChild(QFrame, "ProcessingMetricsFrame")
+    phase_label = widget.findChild(QLabel, "ProcessingPhaseLabel")
+
+    assert metrics_frame is not None
+    assert metrics_frame.property("surfaceRole") == "summaryStrip"
+    assert metrics_frame.styleSheet() == ""
+    assert phase_label is not None
+    assert phase_label.property("cardRole") == "inlineStatus"
+    assert phase_label.styleSheet() == ""
+    assert widget._run_button.objectName() == "ProcessingRunButton"
+    assert widget._run_button.property("buttonRole") == "primary"
+    assert widget._preview_button.objectName() == "ProcessingPreviewButton"
+    assert widget._preview_button.property("buttonRole") == "secondary"
 
 
 def test_processing_workspace_can_restore_runtime_before_execute(qapp: QApplication, tmp_path: Path) -> None:
@@ -1439,6 +1965,52 @@ def test_main_window_use_subset_scope_routes_to_processing_page(qapp: QApplicati
     assert request.scope_target == subset_id
 
 
+def test_main_window_global_busy_disables_workspace_write_buttons_with_reason(qapp: QApplication) -> None:
+    """任一后台任务忙碌时，页面级写入口应禁用并说明原因。"""
+
+    del qapp
+    window = MainWindow(ProjectSession.build_demo())
+    window.session.begin_import_activity(
+        "导入样本集",
+        "正在接入数据。",
+        operation_id="test-busy",
+        cancellable=True,
+    )
+
+    window._update_action_states()
+
+    reason = "当前已有后台任务正在运行或收尾，请等待完成。"
+    assert not window.workspace.processing_workspace._run_button.isEnabled()
+    assert window.workspace.processing_workspace._run_button.toolTip() == reason
+    assert not window.workspace.plotting_workspace._render_button.isEnabled()
+    assert window.workspace.plotting_workspace._render_button.toolTip() == reason
+    assert not window.workspace.subset_workspace._preview_button.isEnabled()
+    assert window.workspace.subset_workspace._preview_button.toolTip() == reason
+
+
+def test_restore_runtime_failure_clears_processing_and_plot_pending_requests(
+    monkeypatch: pytest.MonkeyPatch, qapp: QApplication
+) -> None:
+    """恢复运行态失败后，处理和绘图挂起请求都必须清空。"""
+
+    del qapp
+    window = MainWindow(ProjectSession.build_demo())
+    warnings: list[str] = []
+    window.import_manager._mode = "restore_runtime"  # type: ignore[attr-defined]
+    window._pending_processing_request = ProcessingRequestSnapshot(action_name="calc_freqspec")
+    window._pending_plot_kwargs = {"source_name": "accel"}
+    window._pending_plot_scope = ("all_samples", "")
+
+    monkeypatch.setattr(QMessageBox, "warning", lambda *args: warnings.append(str(args[2])))
+
+    window._handle_import_failure("恢复失败", cancelled=False)
+
+    assert warnings == ["恢复失败"]
+    assert window._pending_processing_request is None
+    assert window._pending_plot_kwargs is None
+    assert window._pending_plot_scope is None
+
+
 def test_plotting_workspace_can_restore_runtime_before_render(qapp: QApplication, tmp_path: Path) -> None:
     """项目有可恢复导入来源时，图形页应允许恢复运行态后渲染。"""
 
@@ -1458,6 +2030,56 @@ def test_plotting_workspace_can_restore_runtime_before_render(qapp: QApplication
     assert "恢复运行态" in widget._empty_state_label.text()
 
 
+def test_plot_runtime_restore_resumes_with_frozen_scope_snapshot(
+    monkeypatch: pytest.MonkeyPatch, qapp: QApplication, tmp_path: Path
+) -> None:
+    """绘图恢复运行态期间切换页面控件，不应改变已点击任务的范围快照。"""
+
+    del qapp
+    source_dir = tmp_path / "data"
+    source_dir.mkdir()
+    session = ProjectSession.build_demo()
+    restored_runtime = session.primary_runtime
+    session.primary_runtime = None
+    session.import_state.import_kind = ImportKind.SAMPLE_SET
+    session.import_state.source_path = source_dir
+    window = MainWindow(session)
+    starts: list[dict[str, object]] = []
+    plot_starts: list[tuple[dict[str, object], str, tuple[str, ...]]] = []
+    scope_values = [("saved_subset", "subset-a")]
+
+    monkeypatch.setattr(window.import_manager, "start_operation", lambda **kwargs: starts.append(kwargs))
+    monkeypatch.setattr(
+        window.workspace.plotting_workspace,
+        "plot_request_values",
+        lambda: {
+            "plot_mode": "multi_sample",
+            "source_kind": "sample_model",
+            "source_name": "accel",
+            "selected_uids": (),
+            "point_limit": 20000,
+            "save_mode": "preview",
+        },
+    )
+    monkeypatch.setattr(window.workspace.plotting_workspace, "scope_selection", lambda: scope_values[0])
+    monkeypatch.setattr(
+        window.plot_manager,
+        "start",
+        lambda **kwargs: plot_starts.append(
+            (kwargs, window.session.current_scope.scope_kind, window.session.current_scope.subset_ids)
+        ),
+    )
+
+    window._render_plot()
+    scope_values[0] = ("all_samples", "")
+    window.session.primary_runtime = restored_runtime
+    window._resume_plot_after_runtime_restore()
+
+    assert starts
+    assert plot_starts
+    assert plot_starts[0][1:] == ("saved_subset", ("subset-a",))
+
+
 def test_plotting_workspace_uses_narrow_control_rail_and_limited_result_tabs(qapp: QApplication) -> None:
     """图形页左侧配置栏默认收窄但可拉伸，底部结果页签不挤压画布。"""
 
@@ -1470,7 +2092,22 @@ def test_plotting_workspace_uses_narrow_control_rail_and_limited_result_tabs(qap
     assert splitter is not None
     assert splitter.sizes()[0] <= 340
     assert action_region.maximumWidth() >= LANDSCAPE_2K_PROFILE.side_panel_max_width
-    assert widget._result_tabs.maximumHeight() <= LANDSCAPE_2K_PROFILE.result_tabs_max_height
+    assert widget._result_tabs.maximumHeight() <= LANDSCAPE_1080P_PROFILE.result_tabs_max_height
+
+
+def test_plotting_workspace_keeps_canvas_feedback_compact(qapp: QApplication) -> None:
+    """绘图页空态说明应保持短摘要，不应在画布上方形成第二张大卡片。"""
+
+    del qapp
+    widget = PlottingWorkspace()
+    empty_state = widget.findChild(QLabel, "PlottingEmptyStateLabel")
+    canvas = widget.findChild(QWidget, "PlottingCanvasSurface")
+
+    assert empty_state is not None
+    assert empty_state.maximumHeight() <= 42
+    assert empty_state.property("cardRole") == "inlineEmptyState"
+    assert canvas is not None
+    assert canvas.property("surfaceRole") == "plotCanvas"
 
 
 def test_plotting_workspace_exposes_canvas_center_empty_hint(qapp: QApplication) -> None:
@@ -1495,6 +2132,410 @@ def test_plotting_workspace_supports_single_and_multi_sample_modes(qapp: QApplic
     modes = [widget._plot_mode_combo.itemData(index) for index in range(widget._plot_mode_combo.count())]
     assert modes == ["single_sample", "multi_sample"]
     assert widget._result_tabs.count() >= 3
+
+
+def test_plotting_workspace_uses_centered_segmented_mode_control(qapp: QApplication) -> None:
+    """绘图模式应使用居中的等宽分段控件，而不是默认 Qt radio。"""
+
+    widget = PlottingWorkspace()
+    widget.resize(1200, 720)
+    widget.show()
+    qapp.processEvents()
+    segmented = widget.findChild(QWidget, "PlotModeSegmentedControl")
+    buttons = [button for button in segmented.findChildren(QPushButton) if button.text()] if segmented else []
+
+    assert segmented is not None
+    assert [button.text() for button in buttons] == ["单样本", "多样本对比"]
+    assert segmented.maximumWidth() == 260
+    assert widget.findChildren(QRadioButton) == []
+    assert widget.findChildren(QGroupBox) == []
+    assert all(button.minimumWidth() == 108 for button in buttons)
+    assert {button.sizePolicy().horizontalPolicy() for button in buttons} == {QSizePolicy.Policy.Expanding}
+    assert len({button.width() for button in buttons}) == 1
+
+    buttons[1].click()
+
+    assert widget.plot_mode() == "multi_sample"
+    assert widget._mode_stack.currentIndex() == 1
+
+
+def test_plotting_mode_switch_refreshes_summary_and_disables_stale_save(qapp: QApplication) -> None:
+    """切换绘图模式后，旧图不应继续表现为当前设置的可保存结果。"""
+
+    del qapp
+    session = ProjectSession.build_demo()
+    session.plot_state.plot_mode = "single_sample"
+    session.plot_state.source_kind = "sample_model"
+    session.plot_state.source_name = "accel"
+    session.plot_state.selected_uid = "demo-001"
+    session.plot_state.render_complete = True
+    session.plot_state.rendered_request = PlotRequestSnapshot(
+        plot_mode="single_sample",
+        source_kind="sample_model",
+        source_name="accel",
+        selected_uid="demo-001",
+        scoped_uids=tuple(resolve_scope_uids(session)),
+        point_limit=20000,
+        save_mode="preview",
+    )
+    session.plot_state.last_message = "已渲染单样本图：demo-001 / accel"
+    widget = PlottingWorkspace()
+    widget.set_figure(Figure())
+    widget.load_session(session)
+
+    assert widget._save_button.isEnabled()
+
+    widget._plot_mode_segment.buttons()[1].click()
+
+    assert widget.plot_mode() == "multi_sample"
+    assert "当前设置尚未渲染" in widget._summary_label.text()
+    assert not widget._save_button.isEnabled()
+
+
+def test_plotting_point_limit_change_disables_stale_save(qapp: QApplication) -> None:
+    """点数上限改变后，画布仍显示旧结果，保存按钮必须禁用并给出原因。"""
+
+    del qapp
+    session = ProjectSession.build_demo()
+    session.plot_state.plot_mode = "single_sample"
+    session.plot_state.source_kind = "sample_model"
+    session.plot_state.source_name = "accel"
+    session.plot_state.selected_uid = "demo-001"
+    session.plot_state.render_complete = True
+    session.plot_state.rendered_request = PlotRequestSnapshot(
+        plot_mode="single_sample",
+        source_kind="sample_model",
+        source_name="accel",
+        selected_uid="demo-001",
+        scoped_uids=tuple(resolve_scope_uids(session)),
+        point_limit=20000,
+        save_mode="preview",
+    )
+    widget = PlottingWorkspace()
+    widget.set_figure(Figure())
+    widget.load_session(session)
+
+    assert widget._save_button.isEnabled()
+
+    widget._point_limit_edit.setText("128")
+
+    assert not widget._save_button.isEnabled()
+    assert widget._save_button.toolTip() == "当前设置尚未重新渲染"
+
+
+def test_save_plot_slot_blocks_stale_canvas_without_file_dialog(
+    monkeypatch: pytest.MonkeyPatch, qapp: QApplication
+) -> None:
+    """保存 slot 必须复用绘图快照校验，旧图状态下不能继续打开保存对话框。"""
+
+    del qapp
+    from dyntool_gui import main_window as main_window_module
+
+    window = MainWindow(ProjectSession.build_demo())
+    window._current_plot_figure = Figure()
+    window.session.plot_state.plot_mode = "single_sample"
+    window.session.plot_state.source_kind = "sample_model"
+    window.session.plot_state.source_name = "accel"
+    window.session.plot_state.selected_uid = "demo-001"
+    window.session.plot_state.render_complete = True
+    window.session.plot_state.rendered_request = PlotRequestSnapshot(
+        plot_mode="single_sample",
+        source_kind="sample_model",
+        source_name="accel",
+        selected_uid="demo-001",
+        scoped_uids=tuple(resolve_scope_uids(window.session)),
+        point_limit=20000,
+        save_mode="preview",
+    )
+    window.workspace.plotting_workspace.set_figure(window._current_plot_figure)
+    window.workspace.plotting_workspace.load_session(window.session)
+    window.workspace.plotting_workspace._point_limit_edit.setText("128")
+    dialogs: list[str] = []
+    warnings: list[str] = []
+
+    monkeypatch.setattr(
+        main_window_module.QFileDialog,
+        "getSaveFileName",
+        lambda *args, **kwargs: dialogs.append("opened") or ("", ""),
+    )
+    monkeypatch.setattr(QMessageBox, "warning", lambda *args: warnings.append(str(args[2])))
+
+    window._save_plot("png")
+
+    assert dialogs == []
+    assert warnings == ["当前设置尚未重新渲染"]
+
+
+def test_plotting_workspace_control_sections_use_lightweight_surfaces(qapp: QApplication) -> None:
+    """图形页左侧配置区应使用轻量 section，而不是普通 GroupBox 卡片。"""
+
+    del qapp
+    widget = PlottingWorkspace()
+
+    section_titles = [section.title_label.text() for section in widget.findChildren(WorkspaceSection)]
+
+    assert "绘图模式" in section_titles
+    assert "来源与范围" in section_titles
+    assert "动作" in section_titles
+    assert widget.findChildren(QGroupBox) == []
+
+
+def test_workspace_splitters_prioritize_primary_result_regions(qapp: QApplication) -> None:
+    """处理、绘图和子集页初始比例应明显优先给主表或主画布。"""
+
+    processing = ProcessingWorkspace()
+    plotting = PlottingWorkspace()
+    subset = SubsetWorkspace()
+    for widget in (processing, plotting, subset):
+        widget.resize(1600, 900)
+        widget.show()
+    qapp.processEvents()
+
+    processing_sizes = processing.findChild(QSplitter, "ProcessingWorkspaceSplitter").sizes()
+    plotting_sizes = plotting.findChild(QSplitter, "PlottingWorkspaceSplitter").sizes()
+    subset_sizes = subset.findChild(QSplitter, "SubsetWorkspaceSplitter").sizes()
+
+    assert processing_sizes[1] / sum(processing_sizes) >= 0.75
+    assert plotting_sizes[1] / sum(plotting_sizes) >= 0.78
+    assert subset_sizes[1] / sum(subset_sizes) >= 0.58
+    assert (subset_sizes[0] + subset_sizes[2]) / sum(subset_sizes) <= 0.42
+    assert subset.findChild(QWidget, "SubsetPreviewRegion").property("surfaceRole") == "resultPanel"
+    assert subset.findChild(QWidget, "SubsetSavedPanel").property("surfaceRole") == "summaryPanel"
+
+
+def test_processing_workspace_moves_complex_parameters_to_dialog(qapp: QApplication) -> None:
+    """处理页复杂参数应进入弹窗，左栏只保留动作摘要和主按钮。"""
+
+    del qapp
+    widget = ProcessingWorkspace()
+    dialog = widget.findChild(QDialog, "ProcessingConfigDialog")
+    button = widget.findChild(QPushButton, "ProcessingConfigButton")
+    dialog_titles = [section.title_label.text() for section in dialog.findChildren(WorkspaceSection)] if dialog else []
+
+    assert dialog is not None
+    assert button is not None
+    assert button.text() == "处理参数"
+    assert "范围与执行" in dialog_titles
+    assert "动作专属参数" in dialog_titles
+    assert "结果预览参数" in dialog_titles
+    assert widget.findChildren(QGroupBox) == []
+
+
+def test_processing_config_dialog_reject_restores_previous_values(
+    monkeypatch: pytest.MonkeyPatch, qapp: QApplication
+) -> None:
+    """处理参数弹窗取消后不应污染处理和预览请求值。"""
+
+    del qapp
+    widget = ProcessingWorkspace()
+    before = (widget.processing_request_values(), widget.preview_request_values())
+
+    def fake_exec() -> QDialog.DialogCode:
+        widget._scope_target_edit.setText("cancelled-scope")
+        widget._uids_edit.setText("uid-cancelled")
+        widget._strict_check.setChecked(False)
+        widget._overwrite_check.setChecked(False)
+        widget._metadata_fields_edit.setText("case,point")
+        widget._features_edit.setText("peak")
+        return QDialog.DialogCode.Rejected
+
+    monkeypatch.setattr(widget._processing_config_dialog, "exec", fake_exec)
+    widget._open_processing_config_dialog()
+
+    assert (widget.processing_request_values(), widget.preview_request_values()) == before
+
+
+def test_import_workflow_moves_source_parameters_to_dialog(qapp: QApplication) -> None:
+    """导入页来源参数应进入弹窗，来源区只保留入口和主动作。"""
+
+    del qapp
+    widget = ImportWorkflowWidget()
+    dialog = widget.findChild(QDialog, "ImportParameterDialog")
+    button = widget.findChild(QPushButton, "ImportParameterButton")
+
+    assert dialog is not None
+    assert button is not None
+    assert button.text() == "导入参数"
+    assert widget._sample_set_group.parent() is dialog
+    assert widget._sample_csv_group.parent() is dialog
+    assert widget._advanced_group.parent() is dialog
+    assert widget.findChildren(QGroupBox) == []
+
+
+def test_import_parameter_dialog_reject_restores_previous_values(
+    monkeypatch: pytest.MonkeyPatch, qapp: QApplication
+) -> None:
+    """导入参数弹窗取消后不应污染导入请求值。"""
+
+    del qapp
+    widget = ImportWorkflowWidget()
+    before = (widget.csv_read_options, widget.requested_scheme, widget.load_mode, widget.workers, widget.strict)
+
+    def fake_exec() -> QDialog.DialogCode:
+        widget._csv_sep.setText(";")
+        widget._workers_edit.setText("9")
+        widget._strict_check.setChecked(False)
+        widget._scheme_combo.setCurrentIndex(2)
+        return QDialog.DialogCode.Rejected
+
+    monkeypatch.setattr(widget._parameter_dialog, "exec", fake_exec)
+    widget._open_parameter_dialog()
+
+    assert (widget.csv_read_options, widget.requested_scheme, widget.load_mode, widget.workers, widget.strict) == before
+
+
+def test_plotting_workspace_moves_render_settings_to_dialog(qapp: QApplication) -> None:
+    """图形页渲染与保存设置应进入弹窗，不常驻挤压画布。"""
+
+    del qapp
+    widget = PlottingWorkspace()
+    dialog = widget.findChild(QDialog, "PlotSettingsDialog")
+    button = widget.findChild(QPushButton, "PlotSettingsButton")
+    dialog_titles = [section.title_label.text() for section in dialog.findChildren(WorkspaceSection)] if dialog else []
+
+    assert dialog is not None
+    assert button is not None
+    assert button.text() == "绘图设置"
+    assert dialog_titles == ["渲染与保存"]
+    assert widget._theme_path_edit.parent() is not widget
+    assert widget._point_limit_edit.parent() is not widget
+    assert widget.findChildren(QGroupBox) == []
+
+
+def test_plot_settings_dialog_reject_restores_previous_values(
+    monkeypatch: pytest.MonkeyPatch, qapp: QApplication
+) -> None:
+    """绘图设置弹窗取消后不应污染绘图请求值。"""
+
+    del qapp
+    widget = PlottingWorkspace()
+    before = (widget.plot_request_values(), widget._save_format_combo.currentText())
+
+    def fake_exec() -> QDialog.DialogCode:
+        widget._theme_path_edit.setText("theme.toml")
+        widget._point_limit_edit.setText("128")
+        widget._save_mode_combo.setCurrentIndex(1)
+        widget._save_format_combo.setCurrentText("pdf")
+        return QDialog.DialogCode.Rejected
+
+    monkeypatch.setattr(widget._plot_settings_dialog, "exec", fake_exec)
+    widget._open_plot_settings_dialog()
+
+    assert (widget.plot_request_values(), widget._save_format_combo.currentText()) == before
+
+
+def test_subset_filter_editor_uses_dialog_and_keeps_main_panel_compact(qapp: QApplication) -> None:
+    """子集筛选和保存细节应进入弹窗，主界面只保留摘要和主动作。"""
+
+    del qapp
+    widget = SubsetWorkspace()
+
+    assert widget.findChildren(QGroupBox) == []
+    widget._rule_editor.clear_rules()
+    first_row = widget._rule_editor.add_predicate_row()
+    filter_panel_titles = [
+        item.widget().title_label.text()
+        for index in range(widget._filter_panel_layout.count())
+        if (item := widget._filter_panel_layout.itemAt(index)) is not None
+        and isinstance(item.widget(), WorkspaceSection)
+    ]
+    dialog = widget.findChild(QDialog, "SubsetFilterRulesDialog")
+    save_dialog = widget.findChild(QDialog, "SubsetSaveDialog")
+    save_button = widget.findChild(QPushButton, "SubsetSaveDialogButton")
+    save_summary = widget.findChild(QLabel, "SubsetSaveSummaryLabel")
+    assert dialog is not None
+    assert save_dialog is not None
+    assert save_button is not None
+    assert save_button.text() == "保存子集"
+    assert save_summary is not None
+    assert widget._subset_name_edit.parent() is not widget
+    assert widget._note_edit.parent() is not widget
+    query_section_titles = [section.title_label.text() for section in dialog.findChildren(WorkspaceSection)]
+    condition_blocks = widget.findChildren(QFrame, "SubsetBooleanConditionBlock")
+    condition_titles = [
+        label.text()
+        for block in condition_blocks
+        for label in block.findChildren(QLabel)
+        if label.property("cardRole") == "conditionTitle"
+    ]
+    first_layout = condition_blocks[0].layout()
+    field_label = condition_blocks[0].findChild(QLabel, "SubsetBooleanFieldLabel")
+    operator_label = condition_blocks[0].findChild(QLabel, "SubsetBooleanOperatorLabel")
+    value_label = condition_blocks[0].findChild(QLabel, "SubsetBooleanValueLabel")
+
+    assert filter_panel_titles == ["筛选规则", "子集保存"]
+    assert widget.findChild(QLabel, "SubsetFilterSummaryLabel") is not None
+    assert widget.findChild(QPushButton, "SubsetFilterEditButton") is not None
+    assert not any(title in {"metadata 字段筛选", "辅助条件"} for title in filter_panel_titles)
+    assert "metadata 字段筛选" in query_section_titles
+    assert "布尔筛选" in query_section_titles
+    assert "辅助条件" in query_section_titles
+    assert widget._query_operator_combo.objectName() == "SubsetBooleanRootOperatorCombo"
+    assert widget._query_not_check.objectName() == "SubsetBooleanRootNotCheck"
+    assert [widget._query_operator_combo.itemText(index) for index in range(widget._query_operator_combo.count())] == [
+        "全部满足 AND",
+        "任一满足 OR",
+    ]
+    assert widget._query_not_check.text() == "整体取反 NOT"
+    assert len(condition_blocks) == 1
+    assert condition_titles == ["条件"]
+    assert field_label is not None
+    assert operator_label is not None
+    assert value_label is not None
+    assert isinstance(first_layout, QGridLayout)
+    assert first_layout.indexOf(field_label) >= 0
+    assert first_layout.indexOf(operator_label) >= 0
+    assert first_layout.indexOf(value_label) >= 0
+    assert first_layout.getItemPosition(first_layout.indexOf(field_label))[0] == 1
+    assert first_layout.getItemPosition(first_layout.indexOf(operator_label))[0] == 2
+    assert first_layout.getItemPosition(first_layout.indexOf(value_label))[0] == 3
+    assert first_row.field_combo.minimumWidth() == 0
+    assert first_row.operator_combo.minimumWidth() == 0
+    assert first_row.value_edit.placeholderText() == "值；in/not in 使用逗号分隔"
+
+
+def test_subset_workspace_disables_saved_subset_actions_without_selection(qapp: QApplication) -> None:
+    """未选择已保存子集时，相关按钮应禁用并给出原因，避免点击无反应。"""
+
+    del qapp
+    widget = SubsetWorkspace()
+    session = ProjectSession.build_demo()
+    session.subset_state.selected_subset_id = ""
+
+    widget.load_session(session)
+    widget._saved_table.clearSelection()
+
+    reason = "请先选择已保存子集。"
+    assert not widget._use_current_button.isEnabled()
+    assert widget._use_current_button.toolTip() == reason
+    assert not widget._recalc_button.isEnabled()
+    assert widget._recalc_button.statusTip() == reason
+    assert not widget._delete_button.isEnabled()
+    assert widget._delete_button.toolTip() == reason
+
+
+def test_subset_save_dialog_reject_restores_previous_values(
+    monkeypatch: pytest.MonkeyPatch, qapp: QApplication
+) -> None:
+    """保存子集弹窗取消后不应污染保存兼容值。"""
+
+    del qapp
+    widget = SubsetWorkspace()
+    widget._subset_name_edit.setText("已确认子集")
+    widget._note_edit.setText("已确认说明")
+    before = widget.save_editor_values()
+    before_summary = widget._save_summary_label.text()
+
+    def fake_exec() -> QDialog.DialogCode:
+        widget._subset_name_edit.setText("取消的子集")
+        widget._note_edit.setText("取消的说明")
+        return QDialog.DialogCode.Rejected
+
+    monkeypatch.setattr(widget._save_dialog, "exec", fake_exec)
+    widget._open_save_dialog()
+
+    assert widget.save_editor_values() == before
+    assert widget._save_summary_label.text() == before_summary
 
 
 def test_plotting_sample_candidates_do_not_rescan_runtime_per_uid(qapp: QApplication) -> None:

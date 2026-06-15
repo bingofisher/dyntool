@@ -5,7 +5,6 @@ from __future__ import annotations
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QGridLayout,
-    QGroupBox,
     QLabel,
     QPushButton,
     QScrollArea,
@@ -17,6 +16,7 @@ from PySide6.QtWidgets import (
 from ..layout import LANDSCAPE_2K_PROFILE
 from ..session import ProjectSession
 from .page_header import PageHeader
+from .workspace_surfaces import WorkspaceSection
 
 
 class ProjectOverviewWidget(QWidget):
@@ -50,31 +50,31 @@ class ProjectOverviewWidget(QWidget):
         self._primary_body = QLabel(content)
         self._primary_body.setWordWrap(True)
         self._primary_body.setProperty("cardRole", "status")
-        self._primary_card = self._card("当前主样本集", self._primary_body)
+        self._primary_card = self._summary_section("当前主样本集", self._primary_body)
         grid.addWidget(self._primary_card, 0, 0)
 
         self._capability_body = QLabel(content)
         self._capability_body.setWordWrap(True)
         self._capability_body.setProperty("cardRole", "status")
-        self._capability_card = self._card("当前能力", self._capability_body)
+        self._capability_card = self._summary_section("当前能力", self._capability_body)
         grid.addWidget(self._capability_card, 0, 1)
 
         self._project_body = QLabel(content)
         self._project_body.setWordWrap(True)
         self._project_body.setProperty("cardRole", "status")
-        self._project_card = self._card("项目上下文", self._project_body)
+        self._project_card = self._summary_section("项目上下文", self._project_body)
         grid.addWidget(self._project_card, 1, 0)
 
         self._subset_body = QLabel(content)
         self._subset_body.setWordWrap(True)
         self._subset_body.setProperty("cardRole", "status")
-        self._subset_card = self._card("子样本集", self._subset_body)
+        self._subset_card = self._summary_section("子样本集", self._subset_body)
         grid.addWidget(self._subset_card, 1, 1)
 
         self._recent_body = QLabel(content)
         self._recent_body.setWordWrap(True)
         self._recent_body.setProperty("cardRole", "status")
-        self._recent_card = self._card("最近记录", self._recent_body)
+        self._recent_card = self._summary_section("最近记录", self._recent_body)
         grid.addWidget(self._recent_card, 2, 0)
 
         self._action_card = self._build_action_card(content)
@@ -153,20 +153,17 @@ class ProjectOverviewWidget(QWidget):
             recent_lines.append(f"最近交付：{session.export_state.last_message}")
         self._recent_body.setText("\n".join(recent_lines))
 
-    def _card(self, title: str, body: QLabel) -> QGroupBox:
-        box = QGroupBox(title)
-        box.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        layout = QVBoxLayout(box)
-        layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(4)
-        layout.addWidget(body)
-        return box
+    def _summary_section(self, title: str, body: QLabel) -> WorkspaceSection:
+        section = WorkspaceSection(title)
+        section.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        section.body_layout().addWidget(body)
+        return section
 
-    def _build_action_card(self, parent: QWidget) -> QGroupBox:
-        box = QGroupBox("快速操作", parent)
+    def _build_action_card(self, parent: QWidget) -> WorkspaceSection:
+        box = WorkspaceSection("快速操作", parent)
         box.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        layout = QGridLayout(box)
-        layout.setContentsMargins(10, 10, 10, 10)
+        layout = QGridLayout()
+        box.body_layout().addLayout(layout)
         layout.setHorizontalSpacing(8)
         layout.setVerticalSpacing(8)
         actions = (

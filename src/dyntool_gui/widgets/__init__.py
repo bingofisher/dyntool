@@ -26,6 +26,7 @@ from .project_overview import ProjectOverviewWidget
 from .resource_tree import ResourceTreeWidget
 from .step_indicator import StepIndicator
 from .subset_workspace import SubsetWorkspace
+from .workspace_surfaces import SegmentedControl, WorkspaceSection
 
 __all__ = [
     "BottomPanel",
@@ -49,7 +50,9 @@ __all__ = [
     "ResourceTreeWidget",
     "ResultPreviewDialog",
     "SettingsDialog",
+    "SegmentedControl",
     "StepIndicator",
     "SubsetWorkspace",
     "TableDialog",
+    "WorkspaceSection",
 ]

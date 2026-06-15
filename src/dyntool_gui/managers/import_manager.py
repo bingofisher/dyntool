@@ -85,6 +85,8 @@ class ImportManager(QObject):
     ) -> None:
         """启动新的导入后台任务。"""
 
+        if self.busy:
+            raise ValueError("当前已有导入任务正在进行或收尾，请等待完成。")
         controller = ImportOperationController()
         self._session.begin_import_activity(
             task_title,

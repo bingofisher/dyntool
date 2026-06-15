@@ -14,7 +14,6 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFormLayout,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -33,6 +32,7 @@ from PySide6.QtWidgets import (
 from ..persistence import AppSettingsStore
 from ..session import ProjectSession
 from ..theme import ThemeManager
+from .workspace_surfaces import WorkspaceSection
 
 
 def _configure_resizable_dialog(dialog: QDialog, title: str, width: int, height: int) -> None:
@@ -114,9 +114,10 @@ class SettingsDialog(QDialog):
         summary.setWordWrap(True)
         layout.addWidget(summary)
 
-        panel = QGroupBox("常用偏好", self)
+        panel = WorkspaceSection("常用偏好", self)
         panel.setObjectName("SettingsGeneralPanel")
-        form = QFormLayout(panel)
+        form = QFormLayout()
+        panel.body_layout().addLayout(form)
         self._theme_name_edit = QLineEdit(theme_name, panel)
         self._theme_name_edit.setReadOnly(True)
         self._recent_projects_edit = QPlainTextEdit("\n".join(str(item) for item in recent_projects), panel)
@@ -415,8 +416,8 @@ class ExportPrecheckDialog(QDialog):
         )
         layout.addWidget(summary)
 
-        missing_group = QGroupBox("缺失项", self)
-        missing_layout = QVBoxLayout(missing_group)
+        missing_group = WorkspaceSection("缺失项", self)
+        missing_layout = missing_group.body_layout()
         self._missing_list = QListWidget(missing_group)
         self._missing_list.setObjectName("ExportPrecheckMissingList")
         if state.missing_requirements:

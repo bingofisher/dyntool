@@ -1,4 +1,4 @@
-"""导出页协调器。"""
+"""导出能力协调器。"""
 
 from __future__ import annotations
 
@@ -32,6 +32,49 @@ class ExportResult:
     output_path: Path
     message: str
     duration_ms: int
+
+
+@dataclass(slots=True)
+class _ExportScopeRuntime:
+    """导出命令冻结范围对应的运行态视图。"""
+
+    sample_set: Any
+    scoped_uids: tuple[str, ...]
+    fallback_slots: tuple[str, ...]
+
+    def export_sample_set(self) -> Any:
+        """返回导出实际使用的样本集视图。"""
+
+        return _scoped_sample_set(self.sample_set, list(self.scoped_uids))
+
+    def has_series_frame(self, data_var: str) -> bool:
+        """检查当前范围是否能生成指定序列表。"""
+
+        if not data_var:
+            return True
+        if data_var in self.fallback_slots:
+            return True
+        try:
+            frame = self.sample_set.series_frame(data_var, uids=self._uids_or_none(), strict=False)
+        except (AttributeError, KeyError, TypeError, ValueError):
+            return False
+        return not frame.empty
+
+    def has_peaks_frame(self, source: str) -> bool:
+        """检查当前范围是否能生成指定峰值表。"""
+
+        if not source:
+            return True
+        if source in self.fallback_slots:
+            return True
+        try:
+            frame = self.sample_set.peaks_frame(source=source, uids=self._uids_or_none(), strict=False)
+        except (AttributeError, KeyError, TypeError, ValueError):
+            return False
+        return not frame.empty
+
+    def _uids_or_none(self) -> tuple[str, ...] | None:
+        return self.scoped_uids or None
 
 
 class _ExportWorker(QObject):
@@ -106,12 +149,16 @@ class ExportManager(QObject):
         output_path: str | Path,
         data_var: str,
         source: str,
+        scoped_uids: tuple[str, ...] = (),
     ) -> ExportValidationResult:
         """同步校验导出前置条件。"""
 
         sample_set = self._require_runtime()
-        scoped_sample_set = _scoped_sample_set(sample_set, resolve_scope_uids(self._session))
-        del scoped_sample_set
+        export_scope = _ExportScopeRuntime(
+            sample_set,
+            tuple(scoped_uids) if scoped_uids else tuple(resolve_scope_uids(self._session)),
+            self._session.capability_snapshot.data_slots,
+        )
         started = perf_counter()
         missing: list[str] = []
         pending_generation_action = ""
@@ -120,18 +167,17 @@ class ExportManager(QObject):
         if not target_text:
             missing.append("输出路径不能为空")
 
-        available_slots = set(self._session.capability_snapshot.data_slots)
-        if export_kind == "series_frame" and data_var and data_var not in available_slots:
+        if export_kind == "series_frame" and not export_scope.has_series_frame(data_var):
             missing.append(f"缺少序列表来源：{data_var}")
             pending_generation_action = _required_action(data_var)
-        elif export_kind == "peaks_frame" and source and source not in available_slots:
+        elif export_kind == "peaks_frame" and not export_scope.has_peaks_frame(source):
             missing.append(f"缺少峰值来源：{source}")
             pending_generation_action = _required_action(source)
         elif export_kind == "report_package":
-            if data_var and data_var not in available_slots:
+            if not export_scope.has_series_frame(data_var):
                 missing.append(f"缺少序列表来源：{data_var}")
                 pending_generation_action = _required_action(data_var)
-            if source and source not in available_slots:
+            if not export_scope.has_peaks_frame(source):
                 missing.append(f"缺少峰值来源：{source}")
                 pending_generation_action = pending_generation_action or _required_action(source)
 
@@ -167,6 +213,7 @@ class ExportManager(QObject):
         source: str,
         include_plots: bool,
         include_eval_summary: bool,
+        scoped_uids: tuple[str, ...] = (),
     ) -> ExportResult:
         """同步执行导出动作。"""
 
@@ -175,11 +222,17 @@ class ExportManager(QObject):
             output_path=output_path,
             data_var=data_var,
             source=source,
+            scoped_uids=scoped_uids,
         )
         if not validation.valid:
             raise ValueError("；".join(validation.missing_requirements))
 
-        sample_set = _scoped_sample_set(self._require_runtime(), resolve_scope_uids(self._session))
+        export_scope = _ExportScopeRuntime(
+            self._require_runtime(),
+            tuple(scoped_uids) if scoped_uids else tuple(resolve_scope_uids(self._session)),
+            self._session.capability_snapshot.data_slots,
+        )
+        sample_set = export_scope.export_sample_set()
         started = perf_counter()
         target_path: Path
         if export_kind == "scalar_frame":
@@ -265,8 +318,16 @@ def _now_text() -> str:
 
 
 def _scoped_sample_set(sample_set: Any, scoped_uids: list[str]) -> Any:
-    if not scoped_uids or len(scoped_uids) == len(sample_set):
+    if not scoped_uids:
         return sample_set
+    try:
+        if len(scoped_uids) == len(sample_set):
+            return sample_set
+    except TypeError:
+        pass
+    finder = getattr(sample_set, "find_many", None)
+    if callable(finder):
+        return finder(uids=tuple(scoped_uids))
     selected = {uid: sample for uid, sample in sample_set.items() if str(uid) in set(scoped_uids)}
     try:
         return type(sample_set)(selected)

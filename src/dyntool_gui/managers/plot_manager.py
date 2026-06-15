@@ -14,8 +14,11 @@ from PySide6.QtCore import QObject, QThread, Signal, Slot
 
 from dyntool.plotting import BoxPlotter, FramePlotter, OneThirdOctavePlotter, PlotDataset, PlotTheme
 
-from ..session import ProjectSession, resolve_scope_uids
+from ..session import PlotRequestSnapshot, ProjectSession, resolve_scope_uids
 from ..theme import ThemeManager
+
+
+_PRIMARY_FRAME_COMPONENTS = frozenset({"amp", "value"})
 
 
 @dataclass(slots=True)
@@ -27,6 +30,71 @@ class PlotRenderResult:
     source_name: str
     duration_ms: int
     sample_uids: tuple[str, ...]
+
+
+@dataclass(slots=True)
+class _SampleFramePlotAdapter:
+    """把样本集表格适配为 plotting 可消费的数据帧。"""
+
+    frame: pd.DataFrame
+    point_limit: int
+
+    def to_frame(self) -> pd.DataFrame:
+        """返回数值化、列索引标准化和抽样后的绘图表格。"""
+
+        numeric_frame = self.frame.select_dtypes(include=["number"])
+        if numeric_frame.empty:
+            raise ValueError("当前表格没有可绘制的数值列。")
+        plot_frame = self._normalize_columns(numeric_frame)
+        return self._limit_rows(plot_frame)
+
+    def _normalize_columns(self, frame: pd.DataFrame) -> pd.DataFrame:
+        if not isinstance(frame.columns, pd.MultiIndex) or frame.columns.nlevels <= 2:
+            return frame
+
+        columns = list(frame.columns)
+        selected_columns, include_component = self._select_multiindex_columns(columns)
+        normalized = frame.loc[:, selected_columns].copy()
+        column_names = self._column_names(selected_columns, include_component=include_component)
+        normalized.columns = pd.MultiIndex.from_tuples(
+            [("sample", name) for name in column_names],
+            names=["category", "name"],
+        )
+        return normalized
+
+    def _select_multiindex_columns(self, columns: list[tuple[Any, ...]]) -> tuple[list[tuple[Any, ...]], bool]:
+        preferred = [column for column in columns if str(column[-1]).strip().lower() in _PRIMARY_FRAME_COMPONENTS]
+        if preferred:
+            return preferred, False
+        return columns, True
+
+    def _column_names(self, columns: list[tuple[Any, ...]], *, include_component: bool) -> list[str]:
+        names = [self._column_name(column, include_component=include_component) for column in columns]
+        if len(set(names)) != len(names):
+            names = [self._column_name(column, include_component=True) for column in columns]
+        return self._deduplicate_names(names)
+
+    @staticmethod
+    def _column_name(column: tuple[Any, ...], *, include_component: bool) -> str:
+        parts = column if include_component else column[:-1]
+        tokens = [str(part).strip() for part in parts if str(part).strip()]
+        return " / ".join(tokens) or "series"
+
+    @staticmethod
+    def _deduplicate_names(names: list[str]) -> list[str]:
+        counts: dict[str, int] = {}
+        unique_names: list[str] = []
+        for name in names:
+            counts[name] = counts.get(name, 0) + 1
+            suffix = f" #{counts[name]}" if counts[name] > 1 else ""
+            unique_names.append(f"{name}{suffix}")
+        return unique_names
+
+    def _limit_rows(self, frame: pd.DataFrame) -> pd.DataFrame:
+        if len(frame) <= self.point_limit:
+            return frame
+        step = max(len(frame) // self.point_limit, 1)
+        return frame.iloc[::step].head(self.point_limit).copy()
 
 
 class _PlotWorker(QObject):
@@ -104,6 +172,7 @@ class PlotManager(QObject):
         source_name: str,
         selected_uid: str = "",
         selected_uids: tuple[str, ...] = (),
+        scoped_uids: tuple[str, ...] = (),
         theme_path: str | None = None,
         point_limit: int = 20000,
         save_mode: str = "preview",
@@ -124,6 +193,7 @@ class PlotManager(QObject):
                 theme=theme,
                 source_name=source_name,
                 selected_uid=selected_uid,
+                scoped_uids=scoped_uids,
                 point_limit=point_limit,
             )
         elif plot_mode == "multi_sample":
@@ -134,6 +204,7 @@ class PlotManager(QObject):
                 source_kind=source_kind,
                 source_name=source_name,
                 selected_uids=selected_uids,
+                scoped_uids=scoped_uids,
                 point_limit=point_limit,
             )
         else:
@@ -146,6 +217,17 @@ class PlotManager(QObject):
         state.source_name = source_name
         state.selected_uid = result.sample_uids[0] if plot_mode == "single_sample" and result.sample_uids else ""
         state.selected_uids = result.sample_uids if plot_mode == "multi_sample" else ()
+        state.rendered_request = PlotRequestSnapshot(
+            plot_mode=plot_mode,
+            source_kind=source_kind,
+            source_name=source_name,
+            selected_uid=state.selected_uid,
+            selected_uids=state.selected_uids,
+            scoped_uids=tuple(scoped_uids),
+            theme_path=str(theme_path or ""),
+            point_limit=point_limit,
+            save_mode=save_mode,
+        )
         state.point_limit = point_limit
         state.save_mode = save_mode
         state.render_requested = True
@@ -192,11 +274,12 @@ class PlotManager(QObject):
         theme: PlotTheme,
         source_name: str,
         selected_uid: str,
+        scoped_uids: tuple[str, ...],
         point_limit: int,
     ) -> PlotRenderResult:
-        uid_token = selected_uid or _first_scope_uid(self._session)
+        uid_token = selected_uid or (scoped_uids[0] if scoped_uids else _first_scope_uid(self._session))
         uid, sample = _resolve_sample(sample_set, uid_token)
-        model = getattr(sample, source_name, None)
+        model = _sample_model(sample, source_name)
         if model is None:
             raise ValueError(f"当前样本缺少可绘制数据：{source_name}")
         dataset = _dataset_from_model(model, name=str(sample.alias), source_name=source_name, point_limit=point_limit)
@@ -222,9 +305,10 @@ class PlotManager(QObject):
         source_kind: str,
         source_name: str,
         selected_uids: tuple[str, ...],
+        scoped_uids: tuple[str, ...],
         point_limit: int,
     ) -> PlotRenderResult:
-        scoped_uids = tuple(selected_uids) or tuple(resolve_scope_uids(self._session))
+        scoped_uids = tuple(selected_uids) or tuple(scoped_uids) or tuple(resolve_scope_uids(self._session))
         if source_kind == "sample_model":
             target_uids = scoped_uids
             if len(target_uids) < 2:
@@ -238,7 +322,7 @@ class PlotManager(QObject):
             )
             for uid_token in target_uids:
                 uid, sample = _resolve_sample(sample_set, uid_token)
-                model = getattr(sample, source_name, None)
+                model = _sample_model(sample, source_name)
                 if model is None:
                     raise ValueError(f"样本 {sample.alias} 缺少可绘制数据：{source_name}")
                 dataset = _dataset_from_model(
@@ -322,6 +406,13 @@ def _resolve_sample(sample_set: Any, selected_uid: str) -> tuple[str, object]:
     return str(uid), sample
 
 
+def _sample_model(sample: object, source_name: str) -> object | None:
+    getter = getattr(sample, "get_data_var", None)
+    if callable(getter):
+        return getter(source_name)
+    return getattr(sample, source_name, None)
+
+
 def _dataset_from_model(model: Any, *, name: str, source_name: str, point_limit: int) -> PlotDataset:
     combined_component = _combined_plot_component(model)
     if combined_component is not None:
@@ -370,10 +461,7 @@ def _sample_axis_value(axis: np.ndarray, value: np.ndarray, *, point_limit: int)
 
 
 def _sample_frame(frame: pd.DataFrame, point_limit: int) -> pd.DataFrame:
-    if len(frame) <= point_limit:
-        return frame
-    step = max(len(frame) // point_limit, 1)
-    return frame.iloc[::step].copy()
+    return _SampleFramePlotAdapter(frame, point_limit).to_frame()
 
 
 def _uids_from_frame_index(frame: pd.DataFrame) -> tuple[str, ...]:

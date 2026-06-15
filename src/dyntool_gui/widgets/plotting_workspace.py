@@ -6,16 +6,15 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolb
 from matplotlib.figure import Figure
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QButtonGroup,
     QComboBox,
+    QDialog,
+    QDialogButtonBox,
     QFrame,
     QFormLayout,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QPushButton,
-    QRadioButton,
     QScrollArea,
     QSizePolicy,
     QSplitter,
@@ -26,9 +25,10 @@ from PySide6.QtWidgets import (
 )
 
 from ..layout import LANDSCAPE_2K_PROFILE
-from ..session import ProjectSession, describe_scope, resolve_scope_uids
+from ..session import PlotRequestSnapshot, ProjectSession, describe_scope, resolve_scope_uids
 from ..theme import ThemeManager
 from .page_header import PageHeader
+from .workspace_surfaces import SegmentedControl, WorkspaceSection
 
 
 class PlottingWorkspace(QWidget):
@@ -59,7 +59,7 @@ class PlottingWorkspace(QWidget):
         self._splitter.addWidget(self._preview_panel)
         self._splitter.setStretchFactor(0, 0)
         self._splitter.setStretchFactor(1, 1)
-        self._splitter.setSizes([320, 1400])
+        self._splitter.setSizes([300, 1500])
         layout.addWidget(self._splitter)
         self._sync_mode_ui()
 
@@ -87,32 +87,27 @@ class PlottingWorkspace(QWidget):
         scroll.setWidget(container)
         return scroll
 
-    def _build_mode_group(self) -> QGroupBox:
-        box = QGroupBox("绘图模式", self)
-        layout = QVBoxLayout(box)
+    def _build_mode_group(self) -> WorkspaceSection:
+        box = WorkspaceSection("绘图模式", self)
+        layout = box.body_layout()
         self._plot_mode_combo = QComboBox(box)
         self._plot_mode_combo.addItem("单样本图", "single_sample")
         self._plot_mode_combo.addItem("多样本图", "multi_sample")
         self._plot_mode_combo.currentIndexChanged.connect(self._sync_mode_ui)
         self._plot_mode_combo.hide()
-        self._mode_group = QButtonGroup(self)
-        self._single_radio = QRadioButton("单样本", box)
-        self._multi_radio = QRadioButton("多样本对比", box)
-        self._mode_group.addButton(self._single_radio, 0)
-        self._mode_group.addButton(self._multi_radio, 1)
-        self._single_radio.setChecked(True)
-        self._mode_group.idClicked.connect(self._on_radio_mode_changed)
-        radio_row = QHBoxLayout()
-        radio_row.addWidget(self._single_radio)
-        radio_row.addWidget(self._multi_radio)
-        radio_row.addStretch(1)
-        layout.addLayout(radio_row)
+        self._plot_mode_segment = SegmentedControl(box)
+        self._plot_mode_segment.setObjectName("PlotModeSegmentedControl")
+        self._plot_mode_segment.add_option("单样本", "single_sample")
+        self._plot_mode_segment.add_option("多样本对比", "multi_sample")
+        self._plot_mode_segment.value_changed.connect(self._on_segment_mode_changed)
+        self._plot_mode_segment.setMaximumWidth(260)
+        layout.addWidget(self._plot_mode_segment, 0, Qt.AlignmentFlag.AlignHCenter)
         layout.addWidget(self._plot_mode_combo)
         return box
 
-    def _build_mode_stack(self) -> QGroupBox:
-        box = QGroupBox("来源与范围", self)
-        layout = QVBoxLayout(box)
+    def _build_mode_stack(self) -> WorkspaceSection:
+        box = WorkspaceSection("来源与范围", self)
+        layout = box.body_layout()
         self._mode_stack = QStackedWidget(box)
         self._mode_stack.addWidget(self._build_single_mode_page())
         self._mode_stack.addWidget(self._build_multi_mode_page())
@@ -125,9 +120,13 @@ class PlottingWorkspace(QWidget):
         self._single_source_name_combo = QComboBox(page)
         self._single_source_name_combo.setEditable(True)
         self._single_source_name_combo.currentIndexChanged.connect(self._sync_compute_action)
+        self._single_source_name_combo.currentIndexChanged.connect(self._refresh_plot_summary)
+        self._single_source_name_combo.currentTextChanged.connect(self._refresh_plot_summary)
         self._single_sample_combo = QComboBox(page)
+        self._single_sample_combo.currentIndexChanged.connect(self._refresh_plot_summary)
         self._single_uid_edit = QLineEdit(page)
         self._single_uid_edit.setPlaceholderText("可输入 UID 或 alias 覆盖下拉选择")
+        self._single_uid_edit.textChanged.connect(self._refresh_plot_summary)
         form.addRow("来源名称", self._single_source_name_combo)
         form.addRow("目标样本", self._single_sample_combo)
         form.addRow("样本搜索", self._single_uid_edit)
@@ -142,18 +141,24 @@ class PlottingWorkspace(QWidget):
         self._multi_scope_kind_combo.addItem("多个子样本集", "multi_subset_union")
         self._multi_scope_kind_combo.addItem("临时手选", "temporary_selection")
         self._multi_scope_kind_combo.currentIndexChanged.connect(self._sync_compute_action)
+        self._multi_scope_kind_combo.currentIndexChanged.connect(self._refresh_plot_summary)
         self._multi_scope_target_edit = QLineEdit(page)
         self._multi_scope_target_edit.setPlaceholderText("子样本集 ID，或逗号分隔 UID / alias")
+        self._multi_scope_target_edit.textChanged.connect(self._refresh_plot_summary)
         self._multi_source_kind_combo = QComboBox(page)
         self._multi_source_kind_combo.addItem("同来源多样本比较", "sample_model")
         self._multi_source_kind_combo.addItem("标量表", "scalar_frame")
         self._multi_source_kind_combo.addItem("序列表", "series_frame")
         self._multi_source_kind_combo.currentIndexChanged.connect(self._sync_multi_source_candidates)
+        self._multi_source_kind_combo.currentIndexChanged.connect(self._refresh_plot_summary)
         self._multi_source_name_combo = QComboBox(page)
         self._multi_source_name_combo.setEditable(True)
         self._multi_source_name_combo.currentIndexChanged.connect(self._sync_compute_action)
+        self._multi_source_name_combo.currentIndexChanged.connect(self._refresh_plot_summary)
+        self._multi_source_name_combo.currentTextChanged.connect(self._refresh_plot_summary)
         self._multi_selected_uids_edit = QLineEdit(page)
         self._multi_selected_uids_edit.setPlaceholderText("留空 = 使用当前范围；或逗号分隔 UID / alias")
+        self._multi_selected_uids_edit.textChanged.connect(self._refresh_plot_summary)
         form.addRow("范围来源", self._multi_scope_kind_combo)
         form.addRow("范围目标", self._multi_scope_target_edit)
         form.addRow("来源类型", self._multi_source_kind_combo)
@@ -161,29 +166,23 @@ class PlottingWorkspace(QWidget):
         form.addRow("样本勾选", self._multi_selected_uids_edit)
         return page
 
-    def _build_render_group(self) -> QGroupBox:
-        box = QGroupBox("动作", self)
-        layout = QVBoxLayout(box)
-        form = QFormLayout()
-        self._theme_path_edit = QLineEdit(box)
-        self._theme_path_edit.setPlaceholderText("留空 = 默认主题")
-        self._point_limit_edit = QLineEdit("20000", box)
-        self._save_mode_combo = QComboBox(box)
-        self._save_mode_combo.addItem("使用当前预览", "preview")
-        self._save_mode_combo.addItem("重新高精度渲染", "full")
-        self._save_format_combo = QComboBox(box)
-        self._save_format_combo.addItems(("png", "svg", "pdf"))
-        form.addRow("主题文件", self._theme_path_edit)
-        form.addRow("点数上限", self._point_limit_edit)
-        form.addRow("保存模式", self._save_mode_combo)
-        form.addRow("保存格式", self._save_format_combo)
-        layout.addLayout(form)
+    def _build_render_group(self) -> WorkspaceSection:
+        box = WorkspaceSection("动作", self)
+        layout = box.body_layout()
+        self._build_plot_settings_dialog()
+        self._plot_settings_button = QPushButton("绘图设置", box)
+        self._plot_settings_button.setObjectName("PlotSettingsButton")
+        self._plot_settings_button.setProperty("buttonRole", "secondary")
+        self._plot_settings_button.clicked.connect(self._open_plot_settings_dialog)
+        layout.addWidget(self._plot_settings_button)
 
         button_row = QHBoxLayout()
         self._render_button = QPushButton("渲染", box)
+        self._render_button.setObjectName("PlotRenderButton")
         self._render_button.setProperty("buttonRole", "primary")
         self._render_button.clicked.connect(self.plot_requested.emit)
         self._save_button = QPushButton("保存图片", box)
+        self._save_button.setObjectName("PlotSaveButton")
         self._save_button.setProperty("buttonRole", "secondary")
         self._save_button.clicked.connect(self._emit_save_request)
         button_row.addWidget(self._render_button)
@@ -191,11 +190,67 @@ class PlottingWorkspace(QWidget):
         layout.addLayout(button_row)
 
         self._compute_button = QPushButton("计算所需结果", box)
+        self._compute_button.setObjectName("PlotComputeRequiredButton")
         self._compute_button.setProperty("buttonRole", "ghost")
         self._compute_button.clicked.connect(self._emit_compute_request)
         self._compute_button.hide()
         layout.addWidget(self._compute_button)
         return box
+
+    def _build_plot_settings_dialog(self) -> None:
+        self._plot_settings_dialog = QDialog(self)
+        self._plot_settings_dialog.setObjectName("PlotSettingsDialog")
+        self._plot_settings_dialog.setWindowTitle("绘图设置")
+        self._plot_settings_dialog.resize(520, 360)
+        self._plot_settings_dialog.setSizeGripEnabled(True)
+        layout = QVBoxLayout(self._plot_settings_dialog)
+        layout.setContentsMargins(10, 10, 10, 10)
+        settings = WorkspaceSection("渲染与保存", self._plot_settings_dialog)
+        form = QFormLayout()
+        settings.body_layout().addLayout(form)
+        self._theme_path_edit = QLineEdit(settings)
+        self._theme_path_edit.setPlaceholderText("留空 = 默认主题")
+        self._point_limit_edit = QLineEdit("20000", settings)
+        self._save_mode_combo = QComboBox(settings)
+        self._save_mode_combo.addItem("使用当前预览", "preview")
+        self._save_mode_combo.addItem("重新高精度渲染", "full")
+        self._save_format_combo = QComboBox(settings)
+        self._save_format_combo.addItems(("png", "svg", "pdf"))
+        form.addRow("主题文件", self._theme_path_edit)
+        form.addRow("点数上限", self._point_limit_edit)
+        form.addRow("保存模式", self._save_mode_combo)
+        form.addRow("保存格式", self._save_format_combo)
+        layout.addWidget(settings)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("确定")
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("取消")
+        buttons.accepted.connect(self._plot_settings_dialog.accept)
+        buttons.rejected.connect(self._plot_settings_dialog.reject)
+        layout.addWidget(buttons)
+        self._theme_path_edit.textChanged.connect(self._refresh_plot_summary)
+        self._point_limit_edit.textChanged.connect(self._refresh_plot_summary)
+        self._save_mode_combo.currentIndexChanged.connect(self._refresh_plot_summary)
+        self._save_format_combo.currentIndexChanged.connect(self._refresh_plot_summary)
+
+    def _open_plot_settings_dialog(self) -> None:
+        state_before = self._plot_settings_dialog_state()
+        if self._plot_settings_dialog.exec() != QDialog.DialogCode.Accepted:
+            self._restore_plot_settings_dialog_state(state_before)
+
+    def _plot_settings_dialog_state(self) -> dict[str, object]:
+        return {
+            "theme_path": self._theme_path_edit.text(),
+            "point_limit": self._point_limit_edit.text(),
+            "save_mode": self._save_mode_combo.currentData(),
+            "save_format": self._save_format_combo.currentText(),
+        }
+
+    def _restore_plot_settings_dialog_state(self, state: dict[str, object]) -> None:
+        self._theme_path_edit.setText(str(state["theme_path"]))
+        self._point_limit_edit.setText(str(state["point_limit"]))
+        self._set_combo_value(self._save_mode_combo, str(state["save_mode"]))
+        self._save_format_combo.setCurrentText(str(state["save_format"]))
+        self._refresh_plot_summary()
 
     def _build_preview_panel(self) -> QWidget:
         container = QWidget(self)
@@ -217,12 +272,14 @@ class PlottingWorkspace(QWidget):
         self._empty_state_label.setText(empty_text)
         self._empty_state_label.setObjectName("PlottingEmptyStateLabel")
         self._empty_state_label.setWordWrap(True)
-        self._empty_state_label.setProperty("cardRole", "emptyState")
+        self._empty_state_label.setProperty("cardRole", "inlineEmptyState")
         self._empty_state_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._empty_state_label.setMinimumHeight(80)
+        self._empty_state_label.setMaximumHeight(42)
         layout.addWidget(self._empty_state_label)
 
         self._canvas_container = _CanvasContainer(container)
+        self._canvas_container.setObjectName("PlottingCanvasSurface")
+        self._canvas_container.setProperty("surfaceRole", "plotCanvas")
         canvas_layout = QVBoxLayout(self._canvas_container)
         canvas_layout.setContentsMargins(0, 0, 0, 0)
         canvas_layout.setSpacing(0)
@@ -251,7 +308,7 @@ class PlottingWorkspace(QWidget):
         self._result_tabs.addTab(self._wrap_label_tab(self._summary_label), "图形摘要")
         self._result_tabs.addTab(self._wrap_label_tab(self._sample_list_label), "样本列表")
         self._result_tabs.addTab(self._wrap_label_tab(self._detail_label), "渲染结果")
-        self._result_tabs.setMaximumHeight(LANDSCAPE_2K_PROFILE.result_tabs_max_height)
+        self._result_tabs.setMaximumHeight(108)
         layout.addWidget(self._result_tabs)
         return container
 
@@ -282,6 +339,7 @@ class PlottingWorkspace(QWidget):
         self._set_combo_value(self._plot_mode_combo, state.plot_mode or "single_sample")
         self._set_combo_value(self._save_mode_combo, state.save_mode or "preview")
         self._point_limit_edit.setText(str(state.point_limit))
+        self._theme_path_edit.setText("" if state.rendered_request is None else state.rendered_request.theme_path)
         self._sync_mode_ui()
         self._rebuild_source_candidates(session)
         self._rebuild_sample_candidates(session)
@@ -295,7 +353,6 @@ class PlottingWorkspace(QWidget):
         elif not self._multi_selected_uids_edit.hasFocus():
             self._multi_selected_uids_edit.clear()
 
-        self._theme_path_edit.setText("")
         self._set_combo_value(self._multi_scope_kind_combo, session.current_scope.scope_kind)
         self._set_scope_target_text(session)
         self._set_result_texts(session)
@@ -305,7 +362,7 @@ class PlottingWorkspace(QWidget):
         enabled = (session.primary_runtime is not None or can_restore_runtime) and not state.busy
         self._render_button.setEnabled(enabled)
         self._render_button.setText("恢复并渲染" if can_restore_runtime else "渲染")
-        self._save_button.setEnabled(self._has_figure and state.render_complete)
+        self._apply_save_button_availability(session)
         self._empty_state_label.setVisible(not state.render_complete)
         self._canvas_hint_label.setVisible(not state.render_complete)
         if state.last_failure_message:
@@ -357,22 +414,74 @@ class PlottingWorkspace(QWidget):
             "save_mode": str(self._save_mode_combo.currentData()),
         }
 
+    def plot_request_snapshot(self, scoped_uids: tuple[str, ...] = ()) -> PlotRequestSnapshot:
+        """返回当前绘图设置的可比较快照。"""
+
+        values = self.plot_request_values()
+        return PlotRequestSnapshot(
+            plot_mode=str(values["plot_mode"]),
+            source_kind=str(values["source_kind"]),
+            source_name=str(values["source_name"]),
+            selected_uid=str(values["selected_uid"]),
+            selected_uids=tuple(str(uid) for uid in values["selected_uids"]),  # type: ignore[arg-type]
+            scoped_uids=tuple(str(uid) for uid in scoped_uids),
+            theme_path=str(values["theme_path"] or ""),
+            point_limit=int(values["point_limit"]),
+            save_mode=str(values["save_mode"]),
+        )
+
+    def save_availability(self, session: ProjectSession) -> tuple[bool, str]:
+        """返回当前画布是否可保存，以及不可保存原因。"""
+
+        state = session.plot_state
+        if not self._has_figure:
+            return False, "当前还没有可保存的图像"
+        if state.busy:
+            return False, "绘图任务正在运行"
+        if not state.render_complete:
+            return False, "当前设置尚未渲染"
+        if not self._current_request_matches_rendered_state(session):
+            return False, "当前设置尚未重新渲染"
+        return True, ""
+
+    def set_global_task_state(self, *, busy: bool, reason: str = "") -> None:
+        """同步 GUI 全局任务状态到绘图页主入口。"""
+
+        if busy:
+            self._set_button_available(self._plot_settings_button, False, reason)
+            self._set_button_available(self._render_button, False, reason)
+            self._set_button_available(self._compute_button, False, reason)
+            self._set_button_available(self._save_button, False, reason)
+            return
+        self._set_button_available(self._plot_settings_button, True, "")
+        self._set_button_available(self._compute_button, True, "")
+        if self._current_session is None:
+            self._set_button_available(self._render_button, True, "")
+            self._set_button_available(self._save_button, False, "当前还没有可保存的图像")
+            return
+        state = self._current_session.plot_state
+        can_restore_runtime = (
+            self._current_session.primary_runtime is None and self._current_session.import_state.source_path is not None
+        )
+        render_enabled = (self._current_session.primary_runtime is not None or can_restore_runtime) and not state.busy
+        self._set_button_available(self._render_button, render_enabled, "缺少主样本集运行态")
+        self._apply_save_button_availability(self._current_session)
+
     def plot_mode(self) -> str:
         """返回当前绘图模式。"""
 
         return str(self._plot_mode_combo.currentData())
 
-    def _on_radio_mode_changed(self, button_id: int) -> None:
-        mode = "multi_sample" if button_id == 1 else "single_sample"
+    def _on_segment_mode_changed(self, mode: str) -> None:
         self._set_combo_value(self._plot_mode_combo, mode)
 
     def _sync_mode_ui(self) -> None:
         is_multi = self.plot_mode() == "multi_sample"
         self._mode_stack.setCurrentIndex(1 if is_multi else 0)
         self._preview_title.setText("图形预览" if not is_multi else "多样本图形预览")
-        self._multi_radio.setChecked(is_multi)
-        self._single_radio.setChecked(not is_multi)
+        self._plot_mode_segment.set_value("multi_sample" if is_multi else "single_sample")
         self._sync_compute_action()
+        self._refresh_plot_summary()
 
     def _sync_multi_source_candidates(self) -> None:
         if self._current_session is None:
@@ -429,14 +538,20 @@ class PlottingWorkspace(QWidget):
         current_source = self._current_source_name() or "-"
         selected_tokens = self._selected_tokens_for_display(session)
         sample_lines = selected_tokens or ["尚未显式选中样本，将按当前范围解析。"]
-        next_action = "保存图片" if state.render_complete else "点击渲染生成图形"
+        settings_changed = state.render_complete and not self._current_request_matches_rendered_state(session)
+        if settings_changed:
+            status_text = "当前设置尚未渲染，画布仍显示上一次结果。"
+            next_action = "点击渲染更新图形"
+        else:
+            status_text = state.last_message or "尚未渲染图形。"
+            next_action = "保存图片" if state.render_complete else "点击渲染生成图形"
         if self._compute_button.isVisible():
             next_action = "先计算所需结果，再重新渲染"
 
         self._summary_label.setText(
             "\n".join(
                 (
-                    f"当前状态：{state.last_message or '尚未渲染图形。'}",
+                    f"当前状态：{status_text}",
                     f"模式：{'单样本图' if self.plot_mode() == 'single_sample' else '多样本图'}",
                     f"来源名称：{current_source}",
                     f"下一步：{next_action}",
@@ -457,6 +572,26 @@ class PlottingWorkspace(QWidget):
                 )
             )
         )
+
+    def _refresh_plot_summary(self, *_: object) -> None:
+        if self._current_session is None:
+            return
+        self._sync_compute_action()
+        self._set_result_texts(self._current_session)
+        self._apply_save_button_availability(self._current_session)
+
+    def _can_save_current_figure(self, session: ProjectSession) -> bool:
+        return self.save_availability(session)[0]
+
+    def _apply_save_button_availability(self, session: ProjectSession) -> None:
+        enabled, reason = self.save_availability(session)
+        self._set_button_available(self._save_button, enabled, reason)
+
+    def _current_request_matches_rendered_state(self, session: ProjectSession) -> bool:
+        rendered = session.plot_state.rendered_request
+        if not session.plot_state.render_complete or rendered is None:
+            return False
+        return self.plot_request_snapshot(tuple(resolve_scope_uids(session))) == rendered
 
     def _selected_tokens_for_display(self, session: ProjectSession) -> list[str]:
         if self.plot_mode() == "single_sample":
@@ -521,6 +656,11 @@ class PlottingWorkspace(QWidget):
         index = combo.findData(value)
         if index >= 0:
             combo.setCurrentIndex(index)
+
+    def _set_button_available(self, button: QPushButton, enabled: bool, reason: str) -> None:
+        button.setEnabled(enabled)
+        button.setToolTip("" if enabled else reason)
+        button.setStatusTip("" if enabled else reason)
 
 
 class _CanvasContainer(QWidget):

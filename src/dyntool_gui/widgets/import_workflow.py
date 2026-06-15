@@ -8,9 +8,10 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QDialog,
+    QDialogButtonBox,
     QFormLayout,
     QFrame,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -29,6 +30,7 @@ from dyntool.storage import SampleLoadMode
 
 from ..layout import LANDSCAPE_2K_PROFILE
 from ..session import ImportKind, ImportState, ProjectSession
+from .workspace_surfaces import WorkspaceSection
 
 
 class ImportWorkflowWidget(QWidget):
@@ -89,6 +91,7 @@ class ImportWorkflowWidget(QWidget):
         self._advanced_toggle.toggled.connect(self._toggle_advanced_group)
         self._advanced_group = self._build_advanced_group()
         self._advanced_group.hide()
+        self._build_parameter_dialog()
 
         self._busy_status = QLabel("", self)
         self._busy_status.setWordWrap(True)
@@ -334,11 +337,9 @@ class ImportWorkflowWidget(QWidget):
         layout.addWidget(self._stage_summary, 1)
         return container
 
-    def _build_project_card(self) -> QGroupBox:
-        box = QGroupBox("项目上下文")
-        layout = QVBoxLayout(box)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(6)
+    def _build_project_card(self) -> WorkspaceSection:
+        box = WorkspaceSection("项目上下文")
+        layout = box.body_layout()
         row = QHBoxLayout()
         row.addWidget(self._project_directory_edit, 1)
         button = QPushButton("选择项目目录")
@@ -348,11 +349,9 @@ class ImportWorkflowWidget(QWidget):
         layout.addWidget(self._project_status)
         return box
 
-    def _build_source_card(self) -> QGroupBox:
-        box = QGroupBox("接入来源")
-        layout = QVBoxLayout(box)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(6)
+    def _build_source_card(self) -> WorkspaceSection:
+        box = WorkspaceSection("接入来源")
+        layout = box.body_layout()
 
         form = QFormLayout()
         form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
@@ -367,29 +366,81 @@ class ImportWorkflowWidget(QWidget):
 
         parameter_layout = QVBoxLayout()
         parameter_layout.setSpacing(6)
-        parameter_layout.addWidget(self._sample_set_group)
-        parameter_layout.addWidget(self._sample_csv_group)
+        self._parameter_button = QPushButton("导入参数", box)
+        self._parameter_button.setObjectName("ImportParameterButton")
+        self._parameter_button.setProperty("buttonRole", "secondary")
+        self._parameter_button.clicked.connect(self._open_parameter_dialog)
+        parameter_layout.addWidget(self._parameter_button)
         layout.addLayout(parameter_layout)
-        layout.addWidget(self._advanced_toggle)
-        layout.addWidget(self._advanced_group)
         layout.addWidget(self._source_hint)
         return box
 
-    def _build_preview_card(self) -> QGroupBox:
-        self._preview_group = QGroupBox("检查结果", self)
-        layout = QVBoxLayout(self._preview_group)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(6)
-        layout.addWidget(self._build_text_card("预览摘要", self._preview_text))
-        layout.addWidget(self._build_text_card("单位检查", self._units_text))
-        layout.addWidget(self._build_text_card("参数与耗时", self._parameter_text))
+    def _build_parameter_dialog(self) -> None:
+        self._parameter_dialog = QDialog(self)
+        self._parameter_dialog.setObjectName("ImportParameterDialog")
+        self._parameter_dialog.setWindowTitle("导入参数")
+        self._parameter_dialog.resize(560, 620)
+        self._parameter_dialog.setSizeGripEnabled(True)
+        layout = QVBoxLayout(self._parameter_dialog)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(8)
+        layout.addWidget(self._sample_set_group)
+        layout.addWidget(self._sample_csv_group)
+        layout.addWidget(self._advanced_toggle)
+        layout.addWidget(self._advanced_group)
+        layout.addStretch(1)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("确定")
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("取消")
+        buttons.accepted.connect(self._parameter_dialog.accept)
+        buttons.rejected.connect(self._parameter_dialog.reject)
+        layout.addWidget(buttons)
+
+    def _open_parameter_dialog(self) -> None:
+        state_before = self._parameter_dialog_state()
+        if self._parameter_dialog.exec() != QDialog.DialogCode.Accepted:
+            self._restore_parameter_dialog_state(state_before)
+
+    def _parameter_dialog_state(self) -> dict[str, object]:
+        return {
+            "scheme": self._scheme_combo.currentData(),
+            "load_mode": self._load_mode_combo.currentData(),
+            "workers": self._workers_edit.text(),
+            "strict": self._strict_check.isChecked(),
+            "csv_sep": self._csv_sep.text(),
+            "csv_header": self._csv_header.text(),
+            "csv_index_col": self._csv_index_col.text(),
+            "csv_encoding": self._csv_encoding.text(),
+            "csv_skiprows": self._csv_skiprows.text(),
+            "csv_decimal": self._csv_decimal.text(),
+            "advanced_expanded": self._advanced_toggle.isChecked(),
+        }
+
+    def _restore_parameter_dialog_state(self, state: dict[str, object]) -> None:
+        self._set_combo_value(self._scheme_combo, state["scheme"])
+        self._set_combo_value(self._load_mode_combo, state["load_mode"])
+        self._workers_edit.setText(str(state["workers"]))
+        self._strict_check.setChecked(bool(state["strict"]))
+        self._csv_sep.setText(str(state["csv_sep"]))
+        self._csv_header.setText(str(state["csv_header"]))
+        self._csv_index_col.setText(str(state["csv_index_col"]))
+        self._csv_encoding.setText(str(state["csv_encoding"]))
+        self._csv_skiprows.setText(str(state["csv_skiprows"]))
+        self._csv_decimal.setText(str(state["csv_decimal"]))
+        self._advanced_toggle.setChecked(bool(state["advanced_expanded"]))
+        self._toggle_advanced_group(bool(state["advanced_expanded"]))
+
+    def _build_preview_card(self) -> WorkspaceSection:
+        self._preview_group = WorkspaceSection("检查结果", self)
+        layout = self._preview_group.body_layout()
+        layout.addWidget(self._build_text_section("预览摘要", self._preview_text))
+        layout.addWidget(self._build_text_section("单位检查", self._units_text))
+        layout.addWidget(self._build_text_section("参数与耗时", self._parameter_text))
         return self._preview_group
 
-    def _build_result_card(self) -> QGroupBox:
-        box = QGroupBox("绑定结果", self)
-        layout = QVBoxLayout(box)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(6)
+    def _build_result_card(self) -> WorkspaceSection:
+        box = WorkspaceSection("绑定结果", self)
+        layout = box.body_layout()
         layout.addWidget(QLabel("目标绑定：当前项目主样本集"))
         layout.addWidget(self._busy_status)
         layout.addWidget(self._busy_progress)
@@ -414,9 +465,10 @@ class ImportWorkflowWidget(QWidget):
         )
         self._stage_summary.setText(" / ".join(parts))
 
-    def _build_sample_set_group(self) -> QGroupBox:
-        box = QGroupBox("样本集来源参数")
-        form = QFormLayout(box)
+    def _build_sample_set_group(self) -> WorkspaceSection:
+        box = WorkspaceSection("样本集来源参数")
+        form = QFormLayout()
+        box.body_layout().addLayout(form)
         form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         self._scheme_combo = QComboBox()
         self._scheme_combo.addItem("自动识别", None)
@@ -437,9 +489,10 @@ class ImportWorkflowWidget(QWidget):
         form.addRow("严格校验", self._strict_check)
         return box
 
-    def _build_csv_basic_group(self) -> QGroupBox:
-        box = QGroupBox("样本来源参数")
-        form = QFormLayout(box)
+    def _build_csv_basic_group(self) -> WorkspaceSection:
+        box = WorkspaceSection("样本来源参数")
+        form = QFormLayout()
+        box.body_layout().addLayout(form)
         form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         self._csv_sep = QLineEdit(",")
         self._csv_header = QLineEdit("0")
@@ -451,11 +504,9 @@ class ImportWorkflowWidget(QWidget):
         form.addRow("编码", self._csv_encoding)
         return box
 
-    def _build_advanced_group(self) -> QGroupBox:
-        box = QGroupBox("高级参数")
-        layout = QVBoxLayout(box)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(6)
+    def _build_advanced_group(self) -> WorkspaceSection:
+        box = WorkspaceSection("高级参数")
+        layout = box.body_layout()
         self._advanced_stack = QStackedWidget()
         self._advanced_stack.addWidget(QWidget())
         self._advanced_stack.addWidget(self._build_sample_advanced_page())
@@ -472,12 +523,10 @@ class ImportWorkflowWidget(QWidget):
         layout.addRow("小数点符号", self._csv_decimal)
         return page
 
-    def _build_text_card(self, title: str, editor: QPlainTextEdit) -> QGroupBox:
-        box = QGroupBox(title)
-        layout = QVBoxLayout(box)
-        layout.setContentsMargins(6, 6, 6, 6)
-        layout.addWidget(editor)
-        return box
+    def _build_text_section(self, title: str, editor: QPlainTextEdit) -> WorkspaceSection:
+        section = WorkspaceSection(title)
+        section.body_layout().addWidget(editor)
+        return section
 
     def _toggle_advanced_group(self, checked: bool) -> None:
         sample_mode = self.import_kind is ImportKind.SAMPLE

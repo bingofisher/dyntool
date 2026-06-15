@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING
 from dyntool_gui._session_types import (
     CapabilitySnapshot,
     ExportState,
+    FilterGroup,
+    FilterPredicate,
     FilterSpec,
     ImportKind,
     ImportPreviewLike,
@@ -22,6 +24,7 @@ from dyntool_gui._session_types import (
     MODULE_LABELS,
     PlotNode,
     PlotRecord,
+    PlotRequestSnapshot,
     PlotState,
     ProcessingActionSpec,
     ProcessingParameterSpec,
@@ -284,12 +287,13 @@ class ProjectSession:
 
         self._refresh_subset_hook_specs()
         rows = self._build_subset_preview_rows(filter_spec)
+        resolved_uids = self._resolve_subset_uids(filter_spec)
         self.subset_state.filter_spec = filter_spec
         self.subset_state.preview_rows = rows
         self.subset_state.preview_columns = build_metadata_preview_columns(self.primary_sampleset)
-        self.subset_state.preview_count = len(rows)
+        self.subset_state.preview_count = len(resolved_uids)
         self.subset_state.current_condition_summary = describe_filter_spec(filter_spec)
-        self.subset_state.last_message = f"已命中 {len(rows)} 个样本。"
+        self.subset_state.last_message = f"已命中 {len(resolved_uids)} 个样本。"
         self.subset_state.last_failure_message = ""
         self._upsert_task("筛选预览", "已完成", "1 / 1", self.subset_state.last_message)
         self._prepend_log("INFO", "gui.subset", self.subset_state.last_message)
@@ -308,8 +312,7 @@ class ProjectSession:
     ) -> SubsetDefinition:
         """保存或更新子样本集定义。"""
 
-        rows = self.subset_state.preview_rows or self._build_subset_preview_rows(self.subset_state.filter_spec)
-        resolved_uids = tuple(row[0] for row in rows)
+        resolved_uids = self._resolve_subset_uids(self.subset_state.filter_spec)
         now = now_text()
         target_id = subset_id or slugify_subset_name(name)
         definition = SubsetDefinition(
@@ -367,12 +370,13 @@ class ProjectSession:
         if definition.mode == "frozen":
             raise ValueError("冻结快照不能重算，请保存新的动态子集。")
         rows = self._build_subset_preview_rows(definition.filter_spec)
+        resolved_uids = self._resolve_subset_uids(definition.filter_spec)
         updated = SubsetDefinition(
             id=definition.id,
             name=definition.name,
             filter_spec=definition.filter_spec,
-            resolved_uids=tuple(row[0] for row in rows),
-            sample_count=len(rows),
+            resolved_uids=resolved_uids,
+            sample_count=len(resolved_uids),
             created_at=definition.created_at,
             updated_at=now_text(),
             note=definition.note,
@@ -383,7 +387,7 @@ class ProjectSession:
         self.subset_state.subsets = tuple(subsets)
         self.subset_state.selected_subset_id = subset_id
         self.subset_state.preview_rows = rows
-        self.subset_state.preview_count = len(rows)
+        self.subset_state.preview_count = len(resolved_uids)
         self.subset_state.last_message = f"已重算子样本集：{updated.name}"
         self._upsert_task("重算子样本集", "已完成", "1 / 1", self.subset_state.last_message)
         self._prepend_log("INFO", "gui.subset", self.subset_state.last_message)
@@ -952,17 +956,7 @@ class ProjectSession:
     def _build_subset_preview_rows(self, filter_spec: FilterSpec) -> tuple[tuple[str, ...], ...]:
         """构造符合筛选条件的预览行。"""
 
-        if self.primary_runtime is None:
-            return ()
-        matched: list[tuple[str, object]] = []
-        for uid, sample in self.primary_runtime.items():
-            if sample_matches_filter(sample, uid=str(uid), filter_spec=filter_spec):
-                matched.append((str(uid), sample))
-        if filter_spec.sort_by:
-            matched.sort(
-                key=lambda item: metadata_sort_value(item[1], filter_spec.sort_by),
-                reverse=filter_spec.sort_desc,
-            )
+        matched = self._matching_subset_samples(filter_spec)
         if filter_spec.offset > 0:
             matched = matched[filter_spec.offset :]
         row_limit = filter_spec.limit if filter_spec.limit is not None else 200
@@ -972,6 +966,29 @@ class ProjectSession:
         for uid, sample in matched[:row_limit]:
             rows.append(build_metadata_preview_row(uid=str(uid), sample=sample, metadata_fields=metadata_fields))
         return tuple(rows)
+
+    def _resolve_subset_uids(self, filter_spec: FilterSpec) -> tuple[str, ...]:
+        """返回当前筛选条件的完整命中 UID。"""
+
+        return tuple(uid for uid, _ in self._matching_subset_samples(filter_spec))
+
+    def _matching_subset_samples(self, filter_spec: FilterSpec) -> list[tuple[str, object]]:
+        """返回当前筛选条件的完整命中样本。"""
+
+        if self.primary_runtime is None:
+            return []
+        matched: list[tuple[str, object]] = []
+        for uid, sample in self.primary_runtime.items():
+            if sample_matches_filter(sample, uid=str(uid), filter_spec=filter_spec):
+                matched.append((str(uid), sample))
+        if filter_spec.sort_by:
+            matched.sort(
+                key=lambda item: (
+                    item[0] if filter_spec.sort_by == "uid" else metadata_sort_value(item[1], filter_spec.sort_by)
+                ),
+                reverse=filter_spec.sort_desc,
+            )
+        return matched
 
     def _build_rows_for_uids(self, uids: tuple[str, ...]) -> tuple[tuple[str, ...], ...]:
         """按 UID 列表构造预览行。"""
@@ -1049,7 +1066,7 @@ def resolve_scope_uids(session: ProjectSession, uids_text: str = "") -> list[str
     """根据当前范围与附加 UID 过滤解析样本 UID。"""
 
     runtime = session.primary_runtime
-    if runtime is None or not hasattr(runtime, "items"):
+    if runtime is None:
         return []
     manual_tokens = [item.strip() for item in uids_text.split(",") if item.strip()]
     alias_to_uid: dict[str, str] = {}
@@ -1057,10 +1074,17 @@ def resolve_scope_uids(session: ProjectSession, uids_text: str = "") -> list[str
         "single_sample",
         "temporary_selection",
     }
-    if needs_alias_lookup:
+    items = getattr(runtime, "items", None)
+    if needs_alias_lookup and callable(items):
         alias_to_uid = {str(getattr(sample, "alias", uid)): str(uid) for uid, sample in runtime.items()}
     if session.current_scope.scope_kind == "all_samples":
-        base_uids = [str(uid) for uid in runtime.keys()]
+        keys = getattr(runtime, "keys", None)
+        if callable(keys):
+            base_uids = [str(uid) for uid in keys()]
+        elif callable(items):
+            base_uids = [str(uid) for uid, _sample in items()]
+        else:
+            base_uids = []
     elif session.current_scope.scope_kind == "saved_subset":
         definition = next(
             (item for item in session.subset_state.subsets if item.id in session.current_scope.subset_ids), None
@@ -1122,6 +1146,8 @@ __all__ = [
     "ImportState",
     "CapabilitySnapshot",
     "MetadataFilterClause",
+    "FilterPredicate",
+    "FilterGroup",
     "MetadataHookSpec",
     "FilterSpec",
     "SubsetDefinition",
@@ -1132,6 +1158,7 @@ __all__ = [
     "ProcessingParameterSpec",
     "ProcessingActionSpec",
     "ProcessingState",
+    "PlotRequestSnapshot",
     "PlotState",
     "ExportState",
     "ImportPreviewLike",

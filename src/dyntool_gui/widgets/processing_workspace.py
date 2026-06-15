@@ -6,9 +6,10 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QDialog,
+    QDialogButtonBox,
     QFrame,
     QFormLayout,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -32,6 +33,7 @@ from ..session import (
     ProjectSession,
 )
 from .page_header import PageHeader
+from .workspace_surfaces import WorkspaceSection
 
 _ACTION_SPECS: dict[str, ProcessingActionSpec] = {
     "calc_freqspec": ProcessingActionSpec(
@@ -225,7 +227,7 @@ class ProcessingWorkspace(QWidget):
         splitter.addWidget(self._build_right_panel())
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
-        splitter.setSizes([320, 1280])
+        splitter.setSizes([300, 1500])
         layout.addWidget(splitter)
         self._rebuild_specific_params("calc_freqspec")
 
@@ -238,9 +240,6 @@ class ProcessingWorkspace(QWidget):
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(8)
         layout.addWidget(self._build_action_group())
-        layout.addWidget(self._run_button)
-        layout.addWidget(self._build_preview_group())
-        layout.addWidget(self._preview_button)
         self._summary = QLabel("选择动作后开始分析，结果会在右侧更新。", container)
         self._summary.setWordWrap(True)
         self._summary.setProperty("cardRole", "status")
@@ -266,22 +265,21 @@ class ProcessingWorkspace(QWidget):
         layout.setSpacing(8)
 
         self._phase_label = QLabel("处理状态：等待执行。", container)
+        self._phase_label.setObjectName("ProcessingPhaseLabel")
         self._phase_label.setWordWrap(True)
-        self._phase_label.setStyleSheet("color: #64748B; font-size: 9pt;")
+        self._phase_label.setProperty("cardRole", "inlineStatus")
         self._phase_label.setMaximumHeight(22)
         layout.addWidget(self._phase_label)
 
         metrics_frame = QFrame(container)
         metrics_frame.setObjectName("ProcessingMetricsFrame")
+        metrics_frame.setProperty("surfaceRole", "summaryStrip")
         metrics_frame.setMaximumHeight(34)
-        metrics_frame.setStyleSheet(
-            "QFrame#ProcessingMetricsFrame { background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 6px; }"
-        )
         metrics_layout = QHBoxLayout(metrics_frame)
         metrics_layout.setContentsMargins(10, 4, 10, 4)
         self._metrics_summary = QLabel("完成结果：0 / 缺口：0 / 最近执行：--:--", metrics_frame)
         self._metrics_summary.setObjectName("ProcessingMetricsSummaryLabel")
-        self._metrics_summary.setStyleSheet("color: #475569; font-size: 9pt; background: transparent;")
+        self._metrics_summary.setProperty("cardRole", "summaryText")
         metrics_layout.addWidget(self._metrics_summary)
 
         layout.addWidget(metrics_frame)
@@ -307,10 +305,9 @@ class ProcessingWorkspace(QWidget):
         layout.addWidget(self._preview_tabs, 1)
         return container
 
-    def _build_action_group(self) -> QGroupBox:
-        box = QGroupBox("处理动作", self)
-        layout = QVBoxLayout(box)
-
+    def _build_action_group(self) -> WorkspaceSection:
+        box = WorkspaceSection("处理动作", self)
+        layout = box.body_layout()
         common_form = QFormLayout()
         self._action_combo = QComboBox(box)
         for spec in _ACTION_SPECS.values():
@@ -326,70 +323,78 @@ class ProcessingWorkspace(QWidget):
         self._scope_target_edit.setPlaceholderText("子样本集 ID 或样本 UID / alias")
         self._uids_edit = QLineEdit(box)
         self._uids_edit.setPlaceholderText("留空=当前范围全部样本；支持逗号分隔 UID 或 alias")
-        tree_hint = QLabel("← 来自对象树选择", box)
-        tree_hint.setObjectName("treeHintLabel")
-        tree_hint.setStyleSheet("color: #94A3B8; font-size: 9pt;")
-        tree_hint.setVisible(True)
         common_form.addRow("处理方法", self._action_combo)
         common_form.addRow("范围来源", self._scope_kind_combo)
-        common_form.addRow("", tree_hint)
-        common_form.addRow("范围目标", self._scope_target_edit)
-        common_form.addRow("临时过滤", self._uids_edit)
         layout.addLayout(common_form)
+        self._processing_config_button = QPushButton("处理参数", box)
+        self._processing_config_button.setObjectName("ProcessingConfigButton")
+        self._processing_config_button.setProperty("buttonRole", "secondary")
+        self._processing_config_button.clicked.connect(self._open_processing_config_dialog)
+        layout.addWidget(self._processing_config_button)
 
         self._strict_check = QCheckBox("严格校验", box)
         self._strict_check.setChecked(True)
         self._overwrite_check = QCheckBox("允许覆盖已有结果", box)
         self._overwrite_check.setChecked(True)
 
-        self._adv_options_toggle = QPushButton("▶ 高级选项", box)
-        self._adv_options_toggle.setCheckable(True)
-        self._adv_options_toggle.setFlat(True)
-        self._adv_options_toggle.setStyleSheet("text-align: left; font-size: 9pt; color: #64748B;")
-        self._adv_options_group = QWidget(box)
-        adv_layout = QVBoxLayout(self._adv_options_group)
-        adv_layout.setContentsMargins(8, 0, 0, 0)
-        adv_layout.setSpacing(4)
-        adv_layout.addWidget(self._strict_check)
-        adv_layout.addWidget(self._overwrite_check)
-        self._adv_options_group.setVisible(False)
-        self._adv_options_toggle.toggled.connect(self._on_adv_options_toggle)
-        layout.addWidget(self._adv_options_toggle)
-        layout.addWidget(self._adv_options_group)
-
-        self._specific_group = QGroupBox("动作专属参数", box)
-        self._specific_form = QFormLayout(self._specific_group)
-        layout.addWidget(self._specific_group)
-
         self._run_button = QPushButton("执行分析", box)
+        self._run_button.setObjectName("ProcessingRunButton")
+        self._run_button.setProperty("buttonRole", "primary")
         self._run_button.clicked.connect(self._emit_process_request)
         self._cancel_button = QPushButton("中止", box)
         self._cancel_button.setObjectName("ProcessingCancelButton")
+        self._cancel_button.setProperty("buttonRole", "secondary")
         self._cancel_button.clicked.connect(self.cancel_requested.emit)
         self._cancel_button.hide()
+        self._build_processing_config_dialog()
         button_row = QHBoxLayout()
+        button_row.setSpacing(6)
         button_row.addWidget(self._run_button)
         button_row.addWidget(self._cancel_button)
         layout.addLayout(button_row)
+        layout.addWidget(self._preview_button)
         return box
 
-    def _build_preview_group(self) -> QGroupBox:
-        box = QGroupBox("结果预览", self)
-        layout = QVBoxLayout(box)
+    def _build_processing_config_dialog(self) -> None:
+        self._processing_config_dialog = QDialog(self)
+        self._processing_config_dialog.setObjectName("ProcessingConfigDialog")
+        self._processing_config_dialog.setWindowTitle("处理参数")
+        self._processing_config_dialog.resize(560, 620)
+        self._processing_config_dialog.setSizeGripEnabled(True)
+        dialog_layout = QVBoxLayout(self._processing_config_dialog)
+        dialog_layout.setContentsMargins(10, 10, 10, 10)
+        dialog_layout.setSpacing(8)
+
+        range_box = WorkspaceSection("范围与执行", self._processing_config_dialog)
+        range_form = QFormLayout()
+        range_box.body_layout().addLayout(range_form)
+        range_form.addRow("范围目标", self._scope_target_edit)
+        range_form.addRow("临时过滤", self._uids_edit)
+        range_box.body_layout().addWidget(self._strict_check)
+        range_box.body_layout().addWidget(self._overwrite_check)
+        dialog_layout.addWidget(range_box)
+
+        self._specific_group = WorkspaceSection("动作专属参数", self._processing_config_dialog)
+        self._specific_form = QFormLayout()
+        self._specific_group.body_layout().addLayout(self._specific_form)
+        dialog_layout.addWidget(self._specific_group)
+
+        preview_box = WorkspaceSection("结果预览参数", self._processing_config_dialog)
         form = QFormLayout()
-        self._preview_kind_combo = QComboBox(box)
+        preview_box.body_layout().addLayout(form)
+        self._preview_kind_combo = QComboBox(preview_box)
         for preview_kind, label in _PREVIEW_KIND_LABELS.items():
             self._preview_kind_combo.addItem(label, preview_kind)
-        self._preview_scope_combo = QComboBox(box)
+        self._preview_scope_combo = QComboBox(preview_box)
         self._preview_scope_combo.addItem("当前 UID 子集", "subset")
         self._preview_scope_combo.addItem("全部已生成结果", "all")
-        self._metadata_fields_edit = QLineEdit(box)
+        self._metadata_fields_edit = QLineEdit(preview_box)
         self._metadata_fields_edit.setText("alias")
-        self._features_edit = QLineEdit(box)
+        self._features_edit = QLineEdit(preview_box)
         self._features_edit.setText("max,rms")
-        self._data_var_edit = QLineEdit(box)
+        self._data_var_edit = QLineEdit(preview_box)
         self._data_var_edit.setText("freqspec")
-        self._peak_source_edit = QLineEdit(box)
+        self._peak_source_edit = QLineEdit(preview_box)
         self._peak_source_edit.setText("accel")
         form.addRow("预览类型", self._preview_kind_combo)
         form.addRow("预览范围", self._preview_scope_combo)
@@ -397,10 +402,43 @@ class ProcessingWorkspace(QWidget):
         form.addRow("标量特征", self._features_edit)
         form.addRow("序列表来源", self._data_var_edit)
         form.addRow("峰值来源", self._peak_source_edit)
-        layout.addLayout(form)
-        self._preview_button = QPushButton("生成预览表", box)
+        dialog_layout.addWidget(preview_box)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("确定")
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("取消")
+        buttons.accepted.connect(self._processing_config_dialog.accept)
+        buttons.rejected.connect(self._processing_config_dialog.reject)
+        dialog_layout.addWidget(buttons)
+
+        self._preview_button = QPushButton("生成预览表", self)
+        self._preview_button.setObjectName("ProcessingPreviewButton")
+        self._preview_button.setProperty("buttonRole", "secondary")
         self._preview_button.clicked.connect(self._emit_preview_request)
-        return box
+
+    def _open_processing_config_dialog(self) -> None:
+        request_before = self.processing_request_values()
+        preview_before = self.preview_request_values()
+        if self._processing_config_dialog.exec() != QDialog.DialogCode.Accepted:
+            self._restore_processing_dialog_state(request_before, preview_before)
+
+    def _restore_processing_dialog_state(
+        self,
+        request: ProcessingRequestSnapshot,
+        preview: ProcessingPreviewRequestSnapshot,
+    ) -> None:
+        self._set_combo_value(self._scope_kind_combo, request.scope_kind)
+        self._scope_target_edit.setText(request.scope_target)
+        self._uids_edit.setText(request.uids_text)
+        self._strict_check.setChecked(request.strict)
+        self._overwrite_check.setChecked(request.overwrite)
+        self._rebuild_specific_params(request.action_name, request.action_params)
+        self._set_combo_value(self._preview_kind_combo, preview.preview_kind)
+        self._set_combo_value(self._preview_scope_combo, preview.preview_scope)
+        self._metadata_fields_edit.setText(",".join(preview.metadata_fields))
+        self._features_edit.setText(",".join(preview.features))
+        self._data_var_edit.setText(preview.data_var)
+        self._peak_source_edit.setText(preview.peak_source)
 
     def load_session(self, session: ProjectSession) -> None:
         """根据会话刷新页面。"""
@@ -474,15 +512,30 @@ class ProcessingWorkspace(QWidget):
 
         can_restore_runtime = session.primary_runtime is None and session.import_state.source_path is not None
         enabled = not state.busy
-        self._run_button.setEnabled(enabled)
-        self._preview_button.setEnabled(enabled)
+        self._set_button_available(self._run_button, enabled, "处理任务正在运行，请等待完成。")
+        self._set_button_available(self._preview_button, enabled, "处理任务正在运行，请等待完成。")
+        self._set_button_available(self._processing_config_button, enabled, "处理任务正在运行，请等待完成。")
         self._run_button.setText("执行分析")
         self._cancel_button.setVisible(state.busy)
-        self._cancel_button.setEnabled(state.busy)
+        self._cancel_button.setEnabled(state.busy and not state.cancel_requested)
+        self._cancel_button.setText("正在中止..." if state.cancel_requested else "中止")
         if state.busy:
-            self._phase_label.setText("处理状态：正在执行...")
+            phase_text = "处理状态：正在中止，等待安全检查点..." if state.cancel_requested else "处理状态：正在执行..."
+            self._phase_label.setText(phase_text)
         elif can_restore_runtime:
             self._phase_label.setText("处理状态：主样本集运行态缺失，可先恢复运行态再执行分析。")
+
+    def set_global_task_state(self, *, busy: bool, reason: str = "") -> None:
+        """同步 GUI 全局任务状态到处理页主入口。"""
+
+        if not busy:
+            self._set_button_available(self._run_button, True, "")
+            self._set_button_available(self._preview_button, True, "")
+            self._set_button_available(self._processing_config_button, True, "")
+            return
+        self._set_button_available(self._run_button, False, reason)
+        self._set_button_available(self._preview_button, False, reason)
+        self._set_button_available(self._processing_config_button, False, reason)
 
     def scope_selection(self) -> tuple[str, str]:
         """返回当前范围来源。"""
@@ -516,8 +569,7 @@ class ProcessingWorkspace(QWidget):
         )
 
     def _on_adv_options_toggle(self, checked: bool) -> None:
-        self._adv_options_group.setVisible(checked)
-        self._adv_options_toggle.setText("▼ 高级选项" if checked else "▶ 高级选项")
+        del checked
 
     def _on_action_changed(self) -> None:
         self._rebuild_specific_params(str(self._action_combo.currentData()))
@@ -571,6 +623,11 @@ class ProcessingWorkspace(QWidget):
         index = combo.findData(value)
         if index >= 0:
             combo.setCurrentIndex(index)
+
+    def _set_button_available(self, button: QPushButton, enabled: bool, reason: str) -> None:
+        button.setEnabled(enabled)
+        button.setToolTip("" if enabled else reason)
+        button.setStatusTip("" if enabled else reason)
 
 
 def _build_table_widget() -> QTableWidget:

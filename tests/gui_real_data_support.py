@@ -7,7 +7,6 @@ import platform
 from pathlib import Path
 from time import perf_counter
 import tomllib
-from itertools import islice
 
 from dyntool import StorageScheme, VibrationTestSampleSet
 from dyntool.storage import SampleLoadMode
@@ -44,7 +43,7 @@ def resolve_pr13_data_dir() -> Path | None:
 
 
 def resolve_pr13_subset_uids(limit: int = 3) -> tuple[str, ...]:
-    """返回真实工程库中固定数量的样本 UID。"""
+    """返回真实工程库中可用于页面处理链路的样本 UID。"""
 
     data_dir = resolve_pr13_data_dir()
     if data_dir is None:
@@ -55,7 +54,26 @@ def resolve_pr13_subset_uids(limit: int = 3) -> tuple[str, ...]:
         storage_scheme=StorageScheme.SET_SQLITE_H5,
         load_mode=SampleLoadMode.LAZY,
     )
-    return tuple(str(uid) for uid, _ in islice(sample_set.items(), limit))
+    selected: list[str] = []
+    for uid, sample in sample_set.items():
+        if not _sample_has_data_slot(sample, "accel"):
+            continue
+        selected.append(str(uid))
+        if len(selected) >= limit:
+            break
+    return tuple(selected)
+
+
+def _sample_has_data_slot(sample: object, slot_name: str) -> bool:
+    """返回样本是否具备指定数据槽。"""
+
+    getter = getattr(sample, "get_data_var", None)
+    try:
+        if callable(getter):
+            return getter(slot_name) is not None
+        return getattr(sample, slot_name, None) is not None
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def record_stage_timing(

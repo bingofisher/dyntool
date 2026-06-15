@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Callable
@@ -33,6 +34,7 @@ from .session import (
     ProcessingPreviewRequestSnapshot,
     ProcessingRequestSnapshot,
     ProjectSession,
+    resolve_scope_uids,
 )
 from .theme import ThemeManager
 from .widgets import (
@@ -50,6 +52,20 @@ from .widgets import (
     SettingsDialog,
     TableDialog,
 )
+
+
+@dataclass(frozen=True, slots=True)
+class _ActiveTaskFeedback:
+    """GUI 内部当前后台任务反馈。"""
+
+    busy: bool
+    status_text: str
+    progress_current: int | None = None
+    progress_total: int | None = None
+    indeterminate: bool = False
+    cancellable: bool = False
+    cancel_reason: str = "当前没有可中止任务。"
+    write_block_reason: str = ""
 
 
 class MainWindow(QMainWindow):
@@ -80,6 +96,7 @@ class MainWindow(QMainWindow):
         self._current_plot_figure = None
         self._pending_processing_request: ProcessingRequestSnapshot | None = None
         self._pending_plot_kwargs: dict[str, object] | None = None
+        self._pending_plot_scope: tuple[str, str] | None = None
         self._cached_import_preview: ImportPreview | None = None
         self._cached_import_fingerprint: tuple[object, ...] | None = None
 
@@ -321,15 +338,19 @@ class MainWindow(QMainWindow):
         self.import_manager.succeeded.connect(self._handle_import_success)
         self.import_manager.failed.connect(self._handle_import_failure)
         self.import_manager.state_changed.connect(self._update_action_states)
+        self.import_manager.state_changed.connect(self._refresh_global_task_feedback)
         self.processing_manager.succeeded.connect(self._handle_processing_success)
         self.processing_manager.failed.connect(self._handle_processing_failure)
         self.processing_manager.state_changed.connect(self._update_action_states)
+        self.processing_manager.state_changed.connect(self._refresh_global_task_feedback)
         self.plot_manager.succeeded.connect(self._handle_plot_success)
         self.plot_manager.failed.connect(self._handle_plot_failure)
         self.plot_manager.state_changed.connect(self._update_action_states)
+        self.plot_manager.state_changed.connect(self._refresh_global_task_feedback)
         self.export_manager.succeeded.connect(self._handle_export_success)
         self.export_manager.failed.connect(self._handle_export_failure)
         self.export_manager.state_changed.connect(self._update_action_states)
+        self.export_manager.state_changed.connect(self._refresh_global_task_feedback)
 
     def _load_settings_into_session(self) -> None:
         preferences = self.settings_store.load_preferences()
@@ -370,45 +391,109 @@ class MainWindow(QMainWindow):
         self._sync_import_focus()
         self._status_project.setText(f"项目：{self.session.project_name}")
         self._status_sampleset.setText(f"主样本集：{self.session.primary_sampleset.name}")
-        self._status_task.setText(f"当前任务：{self._active_status_text()}")
         self._status_dirty.setText("未保存修改" if self.session.dirty else "已保存")
-        self._sync_status_progress()
+        self._refresh_global_task_feedback()
         self.workspace.update_context(
             self.session.project_name,
             self.session.primary_sampleset.name,
             self.session.dirty,
         )
 
+    @Slot()
+    def _refresh_global_task_feedback(self) -> None:
+        """刷新状态栏里的当前任务文本和全局进度条。"""
+
+        feedback = self._active_task_feedback()
+        self._status_task.setText(f"当前任务：{feedback.status_text}")
+        self._sync_status_progress(feedback)
+
     def _active_status_text(self) -> str:
-        if self.session.import_state.busy:
-            return self.session.import_state.progress_text
-        if self.processing_manager.busy:
-            return "处理进行中…"
-        if self.plot_manager.busy:
-            return "绘图进行中…"
-        if self.export_manager.busy:
-            return "导出进行中…"
-        if self.session.tasks:
-            return self.session.tasks[0].status
-        return "就绪"
+        return self._active_task_feedback().status_text
 
-    def _sync_status_progress(self) -> None:
-        """同步状态栏中的全局长任务进度。"""
+    def _active_task_feedback(self) -> _ActiveTaskFeedback:
+        """汇总 GUI 内部所有后台任务的唯一反馈事实源。"""
 
+        write_block_reason = "当前已有后台任务正在运行或收尾，请等待完成。"
         if self.session.import_state.busy:
             state = self.session.import_state
-            if state.progress_total not in {None, 0}:
-                self._status_progress.setRange(0, state.progress_total or 0)
-                self._status_progress.setValue(state.progress_current or 0)
-            else:
-                self._status_progress.setRange(0, 0)
-            self._status_progress.show()
+            return _ActiveTaskFeedback(
+                busy=True,
+                status_text=state.progress_text,
+                progress_current=state.progress_current,
+                progress_total=state.progress_total,
+                indeterminate=state.progress_total in {None, 0},
+                cancellable=state.cancellable and not state.cancel_requested,
+                cancel_reason="导入任务正在收尾，无法重复中止。" if state.cancel_requested else "",
+                write_block_reason=write_block_reason,
+            )
+        if self.import_manager.busy:
+            return _ActiveTaskFeedback(
+                busy=True,
+                status_text="导入收尾中…",
+                indeterminate=True,
+                cancel_reason="导入任务正在收尾，请等待完成。",
+                write_block_reason=write_block_reason,
+            )
+        if self.processing_manager.busy or self.session.processing_state.busy:
+            current, total = self._task_progress_numbers(("处理当前主样本集", "生成处理预览表"))
+            cancel_requested = self.session.processing_state.cancel_requested
+            return _ActiveTaskFeedback(
+                busy=True,
+                status_text="处理中止中…" if cancel_requested else "处理进行中…",
+                progress_current=current,
+                progress_total=total,
+                indeterminate=current is None or total in {None, 0},
+                cancellable=not cancel_requested,
+                cancel_reason="正在等待当前样本安全结束。" if cancel_requested else "",
+                write_block_reason=write_block_reason,
+            )
+        if self.plot_manager.busy:
+            return _ActiveTaskFeedback(
+                busy=True,
+                status_text="绘图进行中…",
+                indeterminate=True,
+                cancel_reason="绘图任务不可中止，请等待完成。",
+                write_block_reason=write_block_reason,
+            )
+        if self.export_manager.busy:
+            return _ActiveTaskFeedback(
+                busy=True,
+                status_text="导出进行中…",
+                indeterminate=True,
+                cancel_reason="导出任务不可中止，请等待完成。",
+                write_block_reason=write_block_reason,
+            )
+        if self.session.tasks:
+            return _ActiveTaskFeedback(busy=False, status_text=self.session.tasks[0].status)
+        return _ActiveTaskFeedback(busy=False, status_text="就绪")
+
+    def _sync_status_progress(self, feedback: _ActiveTaskFeedback | None = None) -> None:
+        """同步状态栏中的全局长任务进度。"""
+
+        feedback = feedback or self._active_task_feedback()
+        if not feedback.busy:
+            self._status_progress.hide()
             return
-        if self.processing_manager.busy or self.plot_manager.busy or self.export_manager.busy:
+        if feedback.indeterminate or feedback.progress_total in {None, 0}:
             self._status_progress.setRange(0, 0)
             self._status_progress.show()
             return
-        self._status_progress.hide()
+        self._status_progress.setRange(0, feedback.progress_total)
+        self._status_progress.setValue(feedback.progress_current or 0)
+        self._status_progress.show()
+
+    def _task_progress_numbers(self, titles: tuple[str, ...]) -> tuple[int | None, int | None]:
+        for task in self.session.tasks:
+            if task.title not in titles:
+                continue
+            left, separator, right = task.progress_text.partition("/")
+            if not separator:
+                return None, None
+            try:
+                return int(left.strip()), int(right.strip())
+            except ValueError:
+                return None, None
+        return None, None
 
     @Slot()
     def _refresh_primary_summary(self) -> None:
@@ -673,8 +758,8 @@ class MainWindow(QMainWindow):
         self.workspace.import_workflow.set_source_path(directory)
 
     def _ensure_import_ready(self, *, require_preview: bool) -> None:
-        if self.session.import_state.busy:
-            raise ValueError("当前已有导入任务正在进行。")
+        if self.session.import_state.busy or self.import_manager.busy:
+            raise ValueError("当前已有导入任务正在进行或收尾，请等待完成。")
         self._sync_session_from_import_widget()
         if not self.session.import_state.project_directory_selected:
             raise ValueError("请先选择项目目录。")
@@ -844,6 +929,7 @@ class MainWindow(QMainWindow):
             self.session.apply_import_error(task_title, str(exc))
             self._pending_processing_request = None
             self._pending_plot_kwargs = None
+            self._pending_plot_scope = None
             QMessageBox.warning(self, "执行导入失败", str(exc))
         finally:
             self._update_action_states()
@@ -857,6 +943,8 @@ class MainWindow(QMainWindow):
         task_title = self.import_manager.task_title or self._current_import_task_title()
         if self.import_manager.mode == "restore_runtime":
             self._pending_processing_request = None
+            self._pending_plot_kwargs = None
+            self._pending_plot_scope = None
         if cancelled:
             self.session.apply_import_cancel(task_title, message, cleanup_message="已安全释放导入线程和临时对象。")
         else:
@@ -869,11 +957,19 @@ class MainWindow(QMainWindow):
             self.close()
 
     def _cancel_import_operation(self) -> None:
+        self._cancel_current_task()
+
+    def _cancel_current_task(self) -> None:
+        """按当前任务类型请求协作式中止。"""
+
         if self.session.import_state.busy:
             self.import_manager.request_cancel()
             return
         if self.processing_manager.busy:
             self.processing_manager.request_cancel()
+            return
+        feedback = self._active_task_feedback()
+        self.statusBar().showMessage(feedback.cancel_reason, 1800)
 
     def _sync_session_from_import_widget(self) -> None:
         workflow = self.workspace.import_workflow
@@ -980,6 +1076,7 @@ class MainWindow(QMainWindow):
             if not isinstance(request, ProcessingRequestSnapshot):
                 raise ValueError("处理请求无效。")
             self._apply_processing_scope(request)
+            request = replace(request, resolved_uids=tuple(resolve_scope_uids(self.session, request.uids_text)))
             if self.session.primary_runtime is None:
                 self._start_processing_runtime_restore(request)
                 return
@@ -994,10 +1091,12 @@ class MainWindow(QMainWindow):
             if not isinstance(request, ProcessingPreviewRequestSnapshot):
                 raise ValueError("预览请求无效。")
             self._sync_scope_from_widgets(ModuleKey.PROCESSING)
+            scoped_uids = tuple(resolve_scope_uids(self.session, request.uids_text))
             self.processing_manager.start_preview(
                 preview_kind=request.preview_kind,
                 preview_scope=request.preview_scope,
                 uids_text=request.uids_text,
+                scoped_uids=scoped_uids,
                 metadata_fields=request.metadata_fields,
                 features=request.features,
                 data_var=request.data_var,
@@ -1044,11 +1143,18 @@ class MainWindow(QMainWindow):
     @Slot()
     def _render_plot(self) -> None:
         try:
+            scope_kind, target_text = self.workspace.plotting_workspace.scope_selection()
+            self._set_session_scope(scope_kind, target_text)
+            plot_kwargs = self.workspace.plotting_workspace.plot_request_values()
+            plot_kwargs["scoped_uids"] = tuple(resolve_scope_uids(self.session))
             if self.session.primary_runtime is None:
-                self._start_plot_runtime_restore()
+                self._start_plot_runtime_restore(
+                    plot_kwargs=plot_kwargs,
+                    scope_kind=scope_kind,
+                    target_text=target_text,
+                )
                 return
-            self._sync_scope_from_widgets(ModuleKey.PLOTTING)
-            self.plot_manager.start(**self.workspace.plotting_workspace.plot_request_values())
+            self.plot_manager.start(**plot_kwargs)
         except Exception as exc:  # noqa: BLE001
             self.session.plot_state.last_failure_message = str(exc)
             self.session.set_plot_message(message="绘图失败。", missing_reason=str(exc))
@@ -1072,6 +1178,10 @@ class MainWindow(QMainWindow):
     def _save_plot(self, format_name: str) -> None:
         if self._current_plot_figure is None:
             QMessageBox.warning(self, "保存图片失败", "当前还没有可保存的图像。")
+            return
+        can_save, reason = self.workspace.plotting_workspace.save_availability(self.session)
+        if not can_save:
+            QMessageBox.warning(self, "保存图片失败", reason)
             return
         default_dir = self.session.export_dir / "plots"
         default_dir.mkdir(parents=True, exist_ok=True)
@@ -1100,11 +1210,12 @@ class MainWindow(QMainWindow):
         include_eval_summary: bool,
     ) -> None:
         try:
-            self._ensure_primary_runtime()
-            self._sync_scope_from_widgets(ModuleKey.EXPORT)
             if export_kind == "current_plot_image":
                 if self._current_plot_figure is None:
                     raise ValueError("当前还没有可导出的图形。")
+                can_save, reason = self.workspace.plotting_workspace.save_availability(self.session)
+                if not can_save:
+                    raise ValueError(reason)
                 target_path = Path(output_path).resolve()
                 if target_path.suffix == "":
                     target_path = target_path.with_suffix(f".{format_name}")
@@ -1122,12 +1233,16 @@ class MainWindow(QMainWindow):
                 self._refresh_export_views()
                 self._refresh_bottom_panel()
                 return
+            self._ensure_primary_runtime()
+            self._sync_scope_from_widgets(ModuleKey.EXPORT)
             self._ensure_write_task_available()
+            scoped_uids = tuple(resolve_scope_uids(self.session))
             validation = self.export_manager.validate_sync(
                 export_kind=export_kind,
                 output_path=output_path,
                 data_var=data_var,
                 source=source,
+                scoped_uids=scoped_uids,
             )
             if not validation.valid:
                 self._refresh_export_views()
@@ -1142,6 +1257,7 @@ class MainWindow(QMainWindow):
                 source=source,
                 include_plots=include_plots,
                 include_eval_summary=include_eval_summary,
+                scoped_uids=scoped_uids,
             )
         except Exception as exc:  # noqa: BLE001
             QMessageBox.warning(self, "导出失败", str(exc))
@@ -1191,15 +1307,17 @@ class MainWindow(QMainWindow):
         if request is None:
             return
         self._pending_processing_request = None
+        self._apply_processing_scope(request)
         self.processing_manager.start_action(request=request)
 
-    def _start_plot_runtime_restore(self) -> None:
+    def _start_plot_runtime_restore(self, *, plot_kwargs: dict[str, object], scope_kind: str, target_text: str) -> None:
         source_path = self.session.import_state.source_path
         if source_path is None:
             raise ValueError("当前主样本集还没有真实运行态对象，请先完成数据接入。")
         if self.session.import_state.import_kind is not ImportKind.SAMPLE_SET:
             raise ValueError("当前仅支持从样本集导入来源恢复主样本集运行态。")
-        self._pending_plot_kwargs = self.workspace.plotting_workspace.plot_request_values()
+        self._pending_plot_kwargs = plot_kwargs
+        self._pending_plot_scope = (scope_kind, target_text)
         restore_request = SampleSetImportRequest(
             source_path=source_path,
             requested_scheme=self.session.import_state.requested_scheme,
@@ -1222,12 +1340,15 @@ class MainWindow(QMainWindow):
         if kwargs is None:
             return
         self._pending_plot_kwargs = None
-        self._sync_scope_from_widgets(ModuleKey.PLOTTING)
+        scope = self._pending_plot_scope
+        self._pending_plot_scope = None
+        if scope is not None:
+            self._set_session_scope(*scope)
         self.plot_manager.start(**kwargs)
 
     def _ensure_write_task_available(self) -> None:
-        if self.session.import_state.busy or self.processing_manager.busy or self.export_manager.busy:
-            raise ValueError("当前已有会写回主样本集的任务正在运行，请等待完成。")
+        if self._is_busy():
+            raise ValueError("当前已有后台任务正在运行或收尾，请等待完成。")
 
     def _restore_default_layout(self) -> None:
         self.left_dock.show()
@@ -1318,23 +1439,33 @@ class MainWindow(QMainWindow):
     def _is_busy(self) -> bool:
         """返回当前是否存在后台任务。"""
 
-        return (
-            self.session.import_state.busy
-            or self.processing_manager.busy
-            or self.plot_manager.busy
-            or self.export_manager.busy
-        )
+        return self._active_task_feedback().busy
 
     def _update_action_states(self) -> None:
-        busy = self._is_busy()
-        self.actions_map["中止当前任务"].setEnabled(
-            (self.session.import_state.busy and self.session.import_state.cancellable) or self.processing_manager.busy
-        )
+        feedback = self._active_task_feedback()
+        busy = feedback.busy
+        self.actions_map["中止当前任务"].setEnabled(feedback.cancellable)
+        self.actions_map["中止当前任务"].setToolTip("" if feedback.cancellable else feedback.cancel_reason)
+        self.actions_map["中止当前任务"].setStatusTip("" if feedback.cancellable else feedback.cancel_reason)
         for action_name in ("新建项目", "打开项目", "保存项目", "切换桥梁演示数据", "切换通用演示数据"):
             self.actions_map[action_name].setEnabled(not busy)
+            self.actions_map[action_name].setToolTip("" if not busy else feedback.write_block_reason)
+            self.actions_map[action_name].setStatusTip("" if not busy else feedback.write_block_reason)
         self.actions_map["导入与筛选"].setEnabled(not busy)
         self.actions_map["校验"].setEnabled(not busy)
         self.actions_map["执行"].setEnabled(not busy)
+        for action_name in ("导入与筛选", "校验", "执行"):
+            self.actions_map[action_name].setToolTip("" if not busy else feedback.write_block_reason)
+            self.actions_map[action_name].setStatusTip("" if not busy else feedback.write_block_reason)
+        self._apply_workspace_task_feedback(feedback)
+
+    def _apply_workspace_task_feedback(self, feedback: _ActiveTaskFeedback) -> None:
+        if not hasattr(self, "workspace"):
+            return
+        reason = feedback.write_block_reason
+        self.workspace.processing_workspace.set_global_task_state(busy=feedback.busy, reason=reason)
+        self.workspace.plotting_workspace.set_global_task_state(busy=feedback.busy, reason=reason)
+        self.workspace.subset_workspace.set_global_task_state(busy=feedback.busy, reason=reason)
 
     def _trigger_action(self, action_name: str) -> None:
         quick_map = {
@@ -1389,7 +1520,7 @@ class MainWindow(QMainWindow):
             "刷新预览": lambda: FigurePreviewDialog(self._current_plot_figure, self).exec(),
             "交付预检": lambda: ExportPrecheckDialog(self.session, self).exec(),
             "查看日志详情": lambda: LogDetailDialog(self.session, self).exec(),
-            "打开长任务进度": lambda: LongTaskProgressDialog(self.session, self._cancel_import_operation, self).exec(),
+            "打开长任务进度": lambda: LongTaskProgressDialog(self.session, self._cancel_current_task, self).exec(),
             "代码审查结果": lambda: CodeReviewResultDialog(self.session, self).exec(),
         }
         if action_name in direct_actions:
@@ -1416,6 +1547,10 @@ class MainWindow(QMainWindow):
                 self._close_after_cleanup = True
                 self.session.arm_close_guard()
                 self._cancel_import_operation()
+            event.ignore()
+            return
+        if self._is_busy():
+            QMessageBox.warning(self, "无法关闭", "当前有后台任务正在运行，请等待完成或先中止任务。")
             event.ignore()
             return
         self.session.clear_close_guard()

@@ -5,7 +5,6 @@ from __future__ import annotations
 import os
 from pathlib import Path
 from time import perf_counter
-from itertools import islice
 
 import pytest
 
@@ -199,22 +198,14 @@ def test_pr13_real_repository_page_subset_pipeline(
 
     runtime = session.primary_runtime
     assert runtime is not None
-    subset_entries = dict(islice(runtime.items(), 3))
-    subset = type(runtime)(subset_entries)
-    session.bind_primary_runtime(
-        subset,
-        name="真实工程库子集",
-        storage_binding="P-R1-3 / 3 个 UID 子集",
-    )
+    session.set_current_scope("temporary_selection", sample_uids=subset_uids)
 
     processing = ProcessingManager(session)
-    processing.execute_sync(action_name="calc_freqspec", uids_text="", strict=True, overwrite=True)
-    processing.execute_sync(action_name="eval_zvl", uids_text="", strict=True, overwrite=True)
 
     scalar_preview = processing.build_preview_sync(
         preview_kind="scalar_frame",
-        preview_scope="all",
-        uids_text="",
+        preview_scope="subset",
+        uids_text=",".join(subset_uids),
         metadata_fields=("alias",),
         features=("max", "rms"),
         data_var="freqspec",
@@ -225,8 +216,8 @@ def test_pr13_real_repository_page_subset_pipeline(
 
     series_preview = processing.build_preview_sync(
         preview_kind="series_frame",
-        preview_scope="all",
-        uids_text="",
+        preview_scope="subset",
+        uids_text=",".join(subset_uids),
         metadata_fields=("alias",),
         features=("max",),
         data_var="freqspec",
@@ -236,27 +227,21 @@ def test_pr13_real_repository_page_subset_pipeline(
     assert len(series_preview.series_rows) <= 200
 
     plot_manager = PlotManager(session)
-    accel_plot = plot_manager.render_sync(
-        source_kind="sample_model",
-        source_name="accel",
-        selected_uid=subset_uids[0],
-        point_limit=20_000,
-        save_mode="preview",
-    )
-    freqspec_plot = plot_manager.render_sync(
-        source_kind="sample_model",
+    series_plot = plot_manager.render_sync(
+        plot_mode="multi_sample",
+        source_kind="series_frame",
         source_name="freqspec",
-        selected_uid=subset_uids[0],
+        selected_uids=(),
+        scoped_uids=subset_uids,
         point_limit=20_000,
         save_mode="preview",
     )
-    assert accel_plot.figure is not None
-    assert freqspec_plot.figure is not None
+    assert series_plot.figure is not None
 
     plots_dir = tmp_path / "plots"
-    assert plot_manager.save_figure(accel_plot.figure, plots_dir / "accel.png").suffix == ".png"
-    assert plot_manager.save_figure(freqspec_plot.figure, plots_dir / "freqspec.svg").suffix == ".svg"
-    assert plot_manager.save_figure(freqspec_plot.figure, plots_dir / "freqspec.pdf").suffix == ".pdf"
+    assert plot_manager.save_figure(series_plot.figure, plots_dir / "freqspec.png").suffix == ".png"
+    assert plot_manager.save_figure(series_plot.figure, plots_dir / "freqspec.svg").suffix == ".svg"
+    assert plot_manager.save_figure(series_plot.figure, plots_dir / "freqspec.pdf").suffix == ".pdf"
 
     export_manager = ExportManager(session)
     validation = export_manager.validate_sync(

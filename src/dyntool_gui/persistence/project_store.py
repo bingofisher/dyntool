@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import Any
 
 from ..session import (
+    FilterGroup,
+    FilterPredicate,
     FilterSpec,
     ImportKind,
     ImportState,
@@ -191,6 +193,8 @@ class ProjectFileStore:
                 for field, values in payload.get("metadata_filters", [])
             ]
         return FilterSpec(
+            query_version=int(payload.get("query_version", 1 if payload.get("query") is None else 2)),
+            query=self._load_filter_query(payload.get("query")),
             metadata_clauses=tuple(self._load_metadata_filter_clause(item) for item in clauses),
             keyword=str(payload.get("keyword", "")),
             data_categories=tuple(str(item) for item in payload.get("data_categories", [])),
@@ -200,6 +204,25 @@ class ProjectFileStore:
             limit=self._load_optional_int(payload.get("limit")),
             offset=int(payload.get("offset", 0)),
         )
+
+    def _load_filter_query(self, payload: Any) -> FilterPredicate | FilterGroup | None:
+        if payload is None:
+            return None
+        if not isinstance(payload, dict):
+            raise ValueError("筛选查询树必须是 JSON 对象。")
+        node_type = str(payload.get("node_type", ""))
+        if node_type == "predicate":
+            return FilterPredicate(
+                field_path=str(payload.get("field_path", "")),
+                operator=str(payload.get("operator", "")),
+                value=payload.get("value", ()),
+            )
+        if node_type == "group":
+            return FilterGroup(
+                operator=str(payload.get("operator", "and")),
+                children=tuple(self._load_filter_query(child) for child in payload.get("children", [])),  # type: ignore[arg-type]
+            )
+        raise ValueError(f"不支持的筛选查询节点类型：{node_type}")
 
     def _load_metadata_filter_clause(self, payload: dict[str, Any]) -> MetadataFilterClause:
         return MetadataFilterClause(
@@ -221,6 +244,7 @@ class ProjectFileStore:
         )
 
     def _load_subset_definition(self, payload: dict[str, Any]) -> SubsetDefinition:
+        frozen = bool(payload.get("frozen", False))
         return SubsetDefinition(
             id=str(payload["id"]),
             name=str(payload["name"]),
@@ -230,7 +254,8 @@ class ProjectFileStore:
             created_at=str(payload.get("created_at", "")),
             updated_at=str(payload.get("updated_at", "")),
             note=str(payload.get("note", "")),
-            frozen=bool(payload.get("frozen", False)),
+            mode=str(payload.get("mode", "frozen" if frozen else "dynamic")),
+            frozen=frozen,
         )
 
     def _load_scope_selection(self, payload: dict[str, Any]) -> ScopeSelection:

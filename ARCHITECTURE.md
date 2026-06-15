@@ -30,9 +30,9 @@ AdvDynTool 以数值结果正确、单位一致和结果可追溯为第一优先
 项目层 GUI 补充约束如下：
 
 - `src/dyntool_gui` 是桌面工作台骨架，属于项目层应用，不进入 `dyntool` 库级公开面
-- GUI 是当前唯一正式项目壳，当前主链固定为 `导入与筛选 / 数据处理 / 图形绘制 / 导出`
+- GUI 是当前唯一正式项目壳，当前主导航固定为 `总览 / 导入与筛选 / 数据处理 / 图形绘制`；导出只作为图形页、预检入口和内部导出工作区能力存在
 - GUI 当前正式基线为 `PySide6 Widgets + QMainWindow + QDockWidget + QStackedWidget`
-- GUI 长任务当前正式基线为 `QThread + worker QObject + Signal`
+- GUI 长任务当前正式基线为 `QThread + worker QObject + Signal`，该约束只属于 GUI `Internal API` 实现合同
 - `src/dyntool_web` 是保留源码与可运行性的 Web 工作台实验线，属于 `Internal API`，不进入 `dyntool` 库级公开面
 - Web 工作台第一阶段采用 `FastAPI + 静态页面 + Vite React TypeScript 源码` 本地服务，不引入 Tauri，不引入 Plotly；正式图形继续由 `Matplotlib + PlotDataset + PlotTheme` 在后端生成 `SVG/PNG`
 - Web 工作台保留现有路径管理、真实 `SET_SQLITE_H5` 仓库轻量预览与绑定、任务进度、处理默认参数、只读预览、导出预检和项目级 PlotTheme 编辑能力，但本轮起不再继续扩张
@@ -41,29 +41,37 @@ AdvDynTool 以数值结果正确、单位一致和结果可追溯为第一优先
 - GUI 第八轮将真实页面行为固定为：
   - `处理` 页先执行动作，再按显式请求生成预览表
   - `绘图` 页先选来源，再按显式请求渲染图形
-  - `导出` 页先做前置校验，再执行真实导出
+  - 内部导出工作区先做前置校验，再执行真实导出
 - GUI 已新增真实工程库集成套件，基线数据源为 `P-R1-3` 工程库：
   - 全量通路验证仓库检查、导入、主集绑定、全量 `calc_freqspec`、全量 `eval_zvl`
   - 页面正确性通路固定使用 `3` 个 UID 子集，避免页面默认落入全量大表与全量图集
 - GUI 主工作台第六轮已收敛到 `Model/View`：资源树使用 `QTreeView + ResourceTreeModel`，底部任务/日志/问题区使用 `QTableView + 表模型`
-- 右侧信息区采用固定卡片原位更新；`_reload_view()` 只用于首屏初始化与整项目重载后的冷启动刷新
+- 页面主区摘要原位更新；`_reload_view()` 只用于首屏初始化与整项目重载后的冷启动刷新
 - GUI 项目文件已采用 JSON 持久化，机器级偏好与窗口布局通过 `QSettings` 持久化
 - GUI 默认启动进入空项目会话；演示数据只通过显式参数 `uv run python -B -m dyntool_gui.app --demo bridge|generic` 进入
 - GUI 内部使用 `ImportManager` 编排导入任务，使用 `GuiRuntimeBridge` 隔离 runtime/private 行为；二者都属于 `Internal API`
-- GUI 第七轮起新增 `ProcessingManager`、`PlotManager`、`ExportManager`，分别负责处理、绘图、导出页的真实模块接入；三者同样属于 `Internal API`
+- GUI 第七轮起新增 `ProcessingManager`、`PlotManager`、`ExportManager`，分别负责处理、绘图和内部导出能力的真实模块接入；三者同样属于 `Internal API`
 - `dyntool_gui -> dyntool` 只允许依赖正式对象 API 和正式模块 API
 - 整仓质量门禁仍应显式覆盖 `src/dyntool_gui`、`src/dyntool_web`、`tests` 和 `scripts`；但主问题清单、主收敛叙事和主迭代节奏以 GUI 为准，Web 按实验线独立验证
 - 仓库测试入口必须使用 `$env:PYTHONDONTWRITEBYTECODE='1'; uv run python -B -m pytest ...`，不要使用普通 `uv run pytest`，避免生成物守卫被 `__pycache__` 污染
 - 测试前需要确保 `.pytest_tmp` 存在，测试后统一运行 `uv run python -B scripts/clean_generated_artifacts.py --apply`
 - GUI 当前顶层按任务型工作台组织：
 - GUI 当前正式主导航固定为 `总览 / 导入与筛选 / 数据处理 / 图形绘制`；`SUBSET / EXPORT` 只作为内部状态或工作区能力，不恢复为独立主页面
+- GUI v2 操作管线固定为 `点选状态 -> 命令快照 -> 管线节点 -> 统一反馈/审计`：对象树、表格选择和页面控件先写入 `GuiSelectionSnapshot`，主流程按钮基于当时状态生成 `GuiCommandSnapshot`，manager 再把快照解析为导入、处理、绘图或导出管线节点
+- GUI 统一反馈事实源为 `ProjectSession` 内的任务、日志、问题、导出记录和审查记录；审计工具只读取这些状态与 `command_snapshots / feedback_events`，不反向驱动业务
 - GUI 主窗口当前保留 `菜单栏 + 单行 4 页任务导航 + 左窄对象树 + 中央视图 + 底部薄任务区`；右侧事实栏已移除，页面级状态说明回收到各页主区
+- GUI 页面主界面当前采用“摘要 + 主动作 + 结果主体”结构；导入参数、筛选规则、处理参数、绘图设置和内部导出参数进入真实对话框，不在左侧配置栏平铺堆叠
 - 2K 横屏工作台密度固定为：对象树目标宽度 `170-180px`、底部任务区目标高度 `96-112px`、导航按钮不超过 `30px`、页面头部不超过 `64px`
 - `总览` 页负责项目概况、主集摘要、能力摘要和下一步快捷动作
 - `导入与筛选` 页负责主样本集接入、结构化筛选、命中预览、保存子样本集和切换当前工作范围；默认入口是 `SampleSet`
   - 页面结构固定为上方横向导入控制带和下方子集工作台，不再使用编号步骤器，也不恢复独立“筛选与子集”主页面
-- `筛选与子集` 页当前由主样本集 `metadata_fields` 驱动动态 hook；内部筛选语义固定为“字段条件 AND、单字段多值 OR”，中央主视图固定为 `metadata_df` 风格预览表
-- 子样本集是主样本集上的范围对象，不是独立仓库；当前采用“条件 + 快照”双保存语义
+- 导入参数通过 `导入参数` 对话框维护；导入页主界面只保留接入模式、来源路径、来源选择和导入主动作
+- 子集工作区的正式筛选模型是 `FilterSpec(query_version=2)` 查询树，而不是旧的“字段条件 AND、单字段多值 OR”动态 hook
+- 查询树由 `FilterGroup` 与 `FilterPredicate` 组成，布尔组合支持 `and / or / not`，谓词支持 `in / not_in`、`= / != / > / >= / < / <=`、`contains / not_contains`、`exists / not_exists`
+- 查询字段路径固定为 `uid`、`alias`、`metadata.<field>`、`data.<slot>`、`result.<name>`；未知路径或不支持的操作符必须给出中文错误，不做静默放行；筛选规则编辑器采用可增删条件/分组列表，支持复制、删除、上移、下移和 metadata 分类候选值提示，不再使用固定数量条件槽
+- 子集工作区主界面只保留筛选摘要、保存摘要、metadata 预览和已保存子集；metadata 字段筛选、布尔查询树、辅助条件、排序和分页通过 `筛选规则` 对话框维护，子集名称、说明和动态/冻结保存动作通过 `保存子集` 对话框维护
+- 子样本集是主样本集上的范围对象，不是独立仓库；子集预览的 `preview_rows` 只受预览行数限制，完整命中 UID 集单独保存
+- 动态子集保存查询定义和完整命中 UID；冻结子集进入当前工作范围时只使用保存时的 `resolved_uids`，不重放查询树
 - 当前工作范围统一支持：`all_samples / saved_subset / multi_subset_union / temporary_selection / single_sample`
 - `SampleSet` 走正式仓库导入：`SET_H5`、`SET_SQLITE_H5`、`SET_DIR`、`SET_ATTR_TABLE`
 - `SampleSet` 预览先按仓库元数据模式自动推断 `sample_domain`；未知或混合元数据模式直接阻止导入
@@ -72,18 +80,22 @@ AdvDynTool 以数值结果正确、单位一致和结果可追溯为第一优先
 - 样本集精确单位汇总属于显式“深度检查单位”动作，按实际存在的时程序列类型逐类汇总
 - 导入预览与执行在后台线程中运行，导入页内显示带阶段前缀的进度条，底部任务区在导入模块下优先展示导入相关任务和日志
 - 导入任务支持中止；中止、失败或关闭窗口时保留旧主集不变，并先完成线程与临时对象清理
+- 处理、绘图、导出等后台任务运行或线程收尾期间，主窗口阻止直接关闭；处理任务中止采用协作式安全检查点，已请求中止后禁用重复点击并等待当前同步步骤结束
 - 项目目录与导入源路径允许不一致；首次浏览从项目目录开始，后续优先使用最近来源目录
-- `分析`、`图形`、`交付` 三页改成平行入口：
+- `数据处理`、`图形绘制` 和内部导出工作区改成平行入口：
   - 页面优先消费当前主样本集已有数据
   - 缺少前置结果时，在页内给出中文缺口说明和“计算所需结果”入口
-- `分析` 页当前只走正式公开对象 API：`calc_freqspec`、`calc_respspec`、`eval_zvl`、`eval_otovl`、`eval_fdmvl`、`eval_fpvdv`
-- `分析` 页当前采用动作驱动请求模型：`ProcessingWorkspace` 只输出结构化处理请求，`ProcessingManager` 负责把公共参数与动作专属参数翻译成真实公开 API kwargs
+- `数据处理` 页当前只走正式公开对象 API：`calc_freqspec`、`calc_respspec`、`eval_zvl`、`eval_otovl`、`eval_fdmvl`、`eval_fpvdv`
+- `数据处理` 页当前采用动作驱动请求模型：`ProcessingWorkspace` 只输出结构化处理请求，`ProcessingManager` 负责把公共参数与动作专属参数翻译成真实公开 API kwargs
+- `数据处理` 页主界面只保留处理方法、执行入口和结果预览；范围目标、临时 UID、严格/覆盖开关、动作专属参数和预览字段通过 `处理参数` 对话框维护
+- `ProcessingManager` 在 GUI 内部执行前构造处理范围计划；对需要 `accel` 的动作，只把具备前置数据的样本送入库层，缺少前置数据的样本统一写入处理状态、底部日志和问题列表
 - `图形` 页当前使用 `Matplotlib + FigureCanvasQTAgg + NavigationToolbar2QT`
   - 单样本模型优先走 `PlotDataset.from_model(...)`
   - 样本集表格优先走 `PlotDataset.from_dataframe(...)`
+- `图形` 页左侧只保留绘图模式、来源范围和渲染/保存/补算入口；主题路径、点数上限、保存模式和保存格式通过 `绘图设置` 对话框维护；渲染成功写入 GUI Internal 的 `PlotRequestSnapshot`，绘图设置变化后旧图不能继续作为当前设置保存或导出，必须重新渲染
 - `交付` 页当前只暴露轻交付入口：`scalar_frame`、`series_frame`、`peaks_frame` 与 `current_plot_image`
 - `ExportManager` 内部仍可调用正式公开导出 API；GUI 页面首版不再把 `report_package` 作为主入口
-- 会写回主样本集的 GUI 任务继续串行执行，避免并发改写同一主样本集；纯绘图预览与保存图片不参与主集写回串行链
+- 会写回主样本集的 GUI 任务继续串行执行，避免并发改写同一主样本集；处理写任务必须可枚举 UID 并按 UID 分块执行以支持协作式中止，无法枚举 UID 时拒绝启动不可中止的全量写任务；纯绘图预览与保存图片不参与主集写回串行链
 
 ## 正式公开面
 

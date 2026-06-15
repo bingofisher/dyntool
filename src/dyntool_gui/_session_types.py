@@ -246,6 +246,137 @@ class MetadataFilterClause:
 
 
 @dataclass(slots=True)
+class FilterPredicate:
+    """GUI Internal 筛选谓词。"""
+
+    field_path: str
+    operator: str
+    value: object = ()
+    node_type: str = "predicate"
+
+
+@dataclass(slots=True)
+class FilterGroup:
+    """GUI Internal 筛选条件组。"""
+
+    operator: str = "and"
+    children: tuple[FilterPredicate | "FilterGroup", ...] = ()
+    node_type: str = "group"
+
+
+@dataclass(slots=True)
+class _FilterFieldValue:
+    """筛选字段解析结果。"""
+
+    exists: bool
+    value: object | None
+
+
+class _FilterQueryEvaluator:
+    """执行 GUI Internal 查询树。"""
+
+    def __init__(self, sample: object, *, uid: str) -> None:
+        self._sample = sample
+        self._uid = uid
+
+    def matches(self, query: FilterPredicate | FilterGroup | None) -> bool:
+        """返回样本是否命中查询树。"""
+
+        if query is None:
+            return True
+        if isinstance(query, FilterPredicate):
+            return self._matches_predicate(query)
+        return self._matches_group(query)
+
+    def _matches_group(self, group: FilterGroup) -> bool:
+        operator = group.operator.lower()
+        if operator == "and":
+            return all(self.matches(child) for child in group.children)
+        if operator == "or":
+            return any(self.matches(child) for child in group.children)
+        if operator == "not":
+            return not all(self.matches(child) for child in group.children)
+        raise ValueError(f"不支持的筛选条件组操作符：{group.operator}")
+
+    def _matches_predicate(self, predicate: FilterPredicate) -> bool:
+        operator = predicate.operator.lower()
+        field_value = self._resolve_field(predicate.field_path)
+        if operator == "exists":
+            return field_value.exists
+        if operator == "not_exists":
+            return not field_value.exists
+        if not field_value.exists:
+            return False
+        if operator in {"=", "=="}:
+            return self._values_equal(field_value.value, predicate.value)
+        if operator == "!=":
+            return not self._values_equal(field_value.value, predicate.value)
+        if operator == "in":
+            return any(self._values_equal(field_value.value, item) for item in self._expected_values(predicate.value))
+        if operator == "not_in":
+            return not any(
+                self._values_equal(field_value.value, item) for item in self._expected_values(predicate.value)
+            )
+        if operator == "contains":
+            return self._contains(field_value.value, predicate.value)
+        if operator == "not_contains":
+            return not self._contains(field_value.value, predicate.value)
+        if operator in {">", ">=", "<", "<="}:
+            return self._compare(field_value.value, predicate.value, operator)
+        raise ValueError(f"不支持的筛选谓词操作符：{predicate.operator}")
+
+    def _resolve_field(self, field_path: str) -> _FilterFieldValue:
+        path = field_path.strip()
+        if path == "uid":
+            return _FilterFieldValue(True, self._uid)
+        if path == "alias":
+            return _FilterFieldValue(True, getattr(self._sample, "alias", self._uid))
+        if path.startswith("metadata."):
+            metadata = getattr(self._sample, "metadata", None)
+            field_name = path.removeprefix("metadata.")
+            if metadata is None or not hasattr(metadata, field_name):
+                return _FilterFieldValue(False, None)
+            value = getattr(metadata, field_name)
+            return _FilterFieldValue(value is not None, value)
+        if path.startswith("data.") or path.startswith("result."):
+            slot_name = path.split(".", maxsplit=1)[1]
+            value = getattr(self._sample, slot_name, None)
+            return _FilterFieldValue(value is not None, value)
+        return _FilterFieldValue(False, None)
+
+    def _compare(self, current: object | None, expected: object, operator: str) -> bool:
+        try:
+            current_value = float(current)  # type: ignore[arg-type]
+            expected_value = float(expected)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return False
+        if operator == ">":
+            return current_value > expected_value
+        if operator == ">=":
+            return current_value >= expected_value
+        if operator == "<":
+            return current_value < expected_value
+        return current_value <= expected_value
+
+    def _contains(self, current: object | None, expected: object) -> bool:
+        if current is None:
+            return False
+        return str(expected).lower() in str(current).lower()
+
+    def _values_equal(self, current: object | None, expected: object) -> bool:
+        if current == expected:
+            return True
+        if current is None or expected is None:
+            return False
+        return str(current) == str(expected)
+
+    def _expected_values(self, value: object) -> tuple[object, ...]:
+        if isinstance(value, (list, tuple, set, frozenset)):
+            return tuple(value)
+        return (value,)
+
+
+@dataclass(slots=True)
 class MetadataHookSpec:
     """metadata 字段 hook 描述。"""
 
@@ -259,6 +390,8 @@ class MetadataHookSpec:
 class FilterSpec:
     """结构化筛选条件。"""
 
+    query_version: int = 2
+    query: FilterPredicate | FilterGroup | None = None
     metadata_clauses: tuple[MetadataFilterClause, ...] = ()
     keyword: str = ""
     data_categories: tuple[str, ...] = ()
@@ -313,6 +446,47 @@ class ScopeSelection:
     note: str = ""
 
 
+@dataclass(slots=True, frozen=True)
+class GuiSelectionSnapshot:
+    """GUI Internal 当前页面与工作范围快照。"""
+
+    current_module: str = ""
+    current_selection: str = ""
+    scope_kind: str = "all_samples"
+    subset_ids: tuple[str, ...] = ()
+    sample_uids: tuple[str, ...] = ()
+    scope_note: str = ""
+
+
+@dataclass(slots=True, frozen=True)
+class GuiTaskSnapshot:
+    """GUI Internal 任务反馈快照。"""
+
+    manager_busy: dict[str, bool] = field(default_factory=dict)
+    any_busy: bool = False
+    status_task_text: str = ""
+    progress_visible: bool = False
+    task_rows: int = 0
+    log_rows: int = 0
+    issue_rows: int = 0
+    export_rows: int = 0
+    active_dialog_titles: tuple[str, ...] = ()
+
+
+@dataclass(slots=True, frozen=True)
+class GuiCommandSnapshot:
+    """GUI Internal 操作链快照。"""
+
+    label: str
+    selection: GuiSelectionSnapshot = field(default_factory=GuiSelectionSnapshot)
+    task: GuiTaskSnapshot = field(default_factory=GuiTaskSnapshot)
+    area: str = ""
+    name: str = ""
+    status: str = ""
+    detail: str = ""
+    action_states: dict[str, bool] = field(default_factory=dict)
+
+
 @dataclass(slots=True)
 class SubsetState:
     """筛选与子样本集页状态。"""
@@ -329,7 +503,7 @@ class SubsetState:
     subsets: tuple[SubsetDefinition, ...] = ()
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, frozen=True)
 class ProcessingRequestSnapshot:
     """处理动作请求快照。"""
 
@@ -337,6 +511,7 @@ class ProcessingRequestSnapshot:
     scope_kind: str = "all_samples"
     scope_target: str = ""
     uids_text: str = ""
+    resolved_uids: tuple[str, ...] = ()
     strict: bool = True
     overwrite: bool = True
     action_params: dict[str, str] = field(default_factory=dict)
@@ -381,6 +556,7 @@ class ProcessingState:
     """处理页状态。"""
 
     busy: bool = False
+    cancel_requested: bool = False
     current_action: str = ""
     last_message: str = ""
     preview_title: str = ""
@@ -395,6 +571,21 @@ class ProcessingState:
     scalar_rows: tuple[tuple[str, ...], ...] = ()
     series_rows: tuple[tuple[str, ...], ...] = ()
     peaks_rows: tuple[tuple[str, ...], ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class PlotRequestSnapshot:
+    """绘图请求快照，记录画布结果对应的完整设置。"""
+
+    plot_mode: str = "single_sample"
+    source_kind: str = "sample_model"
+    source_name: str = "accel"
+    selected_uid: str = ""
+    selected_uids: tuple[str, ...] = ()
+    scoped_uids: tuple[str, ...] = ()
+    theme_path: str = ""
+    point_limit: int = 20000
+    save_mode: str = "preview"
 
 
 @dataclass(slots=True)
@@ -414,13 +605,14 @@ class PlotState:
     render_complete: bool = False
     point_limit: int = 20000
     save_mode: str = "preview"
+    rendered_request: PlotRequestSnapshot | None = None
     last_duration_ms: int = 0
     last_failure_message: str = ""
 
 
 @dataclass(slots=True)
 class ExportState:
-    """导出页状态。"""
+    """导出工作区状态。"""
 
     busy: bool = False
     export_kind: str = "scalar_frame"
@@ -628,6 +820,8 @@ def describe_filter_spec(filter_spec: FilterSpec) -> str:
     """将筛选条件转换为中文摘要。"""
 
     parts: list[str] = []
+    if filter_spec.query is not None:
+        parts.append("查询树")
     for clause in filter_spec.metadata_clauses:
         if clause.match_mode == "values" and clause.values:
             parts.append(f"{clause.field_name}={'/'.join(clause.values)}")
@@ -647,6 +841,8 @@ def describe_filter_spec(filter_spec: FilterSpec) -> str:
 def sample_matches_filter(sample: object, *, uid: str, filter_spec: FilterSpec) -> bool:
     """判断样本是否匹配筛选条件。"""
 
+    if not _FilterQueryEvaluator(sample, uid=uid).matches(filter_spec.query):
+        return False
     keyword = filter_spec.keyword.strip().lower()
     alias_text = str(getattr(sample, "alias", uid))
     if keyword and keyword not in uid.lower() and keyword not in alias_text.lower():
@@ -747,16 +943,22 @@ __all__ = [
     "ImportState",
     "CapabilitySnapshot",
     "MetadataFilterClause",
+    "FilterPredicate",
+    "FilterGroup",
     "MetadataHookSpec",
     "FilterSpec",
     "SubsetDefinition",
     "ScopeSelection",
+    "GuiSelectionSnapshot",
+    "GuiTaskSnapshot",
+    "GuiCommandSnapshot",
     "SubsetState",
     "ProcessingRequestSnapshot",
     "ProcessingPreviewRequestSnapshot",
     "ProcessingParameterSpec",
     "ProcessingActionSpec",
     "ProcessingState",
+    "PlotRequestSnapshot",
     "PlotState",
     "ExportState",
     "ImportPreviewLike",

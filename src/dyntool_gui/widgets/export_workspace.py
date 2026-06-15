@@ -1,4 +1,4 @@
-"""导出工作页。"""
+"""内部导出工作区。"""
 
 from __future__ import annotations
 
@@ -8,8 +8,9 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QDialog,
+    QDialogButtonBox,
     QFormLayout,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -20,10 +21,11 @@ from PySide6.QtWidgets import (
 )
 
 from ..session import ProjectSession
+from .workspace_surfaces import WorkspaceSection
 
 
 class ExportWorkspace(QWidget):
-    """当前主样本集导出页。"""
+    """当前主样本集内部导出工作区。"""
 
     export_requested = Signal(str, str, str, object, object, str, str, bool, bool)
     compute_required = Signal(str)
@@ -49,7 +51,20 @@ class ExportWorkspace(QWidget):
         layout = QVBoxLayout(container)
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(10)
-        layout.addWidget(self._build_form_group())
+        self._build_parameter_dialog()
+        summary_section = WorkspaceSection("导出参数", container)
+        self._parameter_summary = QLabel("确认范围、类型与输出位置后执行导出。", summary_section)
+        self._parameter_summary.setObjectName("ExportParameterSummary")
+        self._parameter_summary.setWordWrap(True)
+        self._parameter_summary.setProperty("cardRole", "status")
+        summary_section.body_layout().addWidget(self._parameter_summary)
+        self._refresh_parameter_summary()
+        self._parameter_button = QPushButton("导出参数", summary_section)
+        self._parameter_button.setObjectName("ExportParameterButton")
+        self._parameter_button.setProperty("buttonRole", "secondary")
+        self._parameter_button.clicked.connect(self._open_parameter_dialog)
+        summary_section.body_layout().addWidget(self._parameter_button)
+        layout.addWidget(summary_section)
         self._status = QLabel("导出前先确认范围、类型与输出位置。", container)
         self._status.setWordWrap(True)
         self._status.setProperty("cardRole", "status")
@@ -58,6 +73,11 @@ class ExportWorkspace(QWidget):
         self._compute_button.clicked.connect(self._emit_compute_request)
         self._compute_button.hide()
         layout.addWidget(self._compute_button)
+        self._run_button = QPushButton("执行导出", container)
+        self._run_button.setObjectName("ExportRunButton")
+        self._run_button.setProperty("buttonRole", "primary")
+        self._run_button.clicked.connect(self._emit_export_request)
+        layout.addWidget(self._run_button)
         layout.addStretch(1)
         return container
 
@@ -77,34 +97,41 @@ class ExportWorkspace(QWidget):
         layout.addStretch(1)
         return container
 
-    def _build_form_group(self) -> QGroupBox:
-        box = QGroupBox("导出参数", self)
-        layout = QVBoxLayout(box)
+    def _build_parameter_dialog(self) -> None:
+        self._parameter_dialog = QDialog(self)
+        self._parameter_dialog.setObjectName("ExportParameterDialog")
+        self._parameter_dialog.setWindowTitle("导出参数")
+        self._parameter_dialog.resize(620, 560)
+        self._parameter_dialog.setSizeGripEnabled(True)
+        layout = QVBoxLayout(self._parameter_dialog)
+        section = WorkspaceSection("导出参数", self._parameter_dialog)
         form = QFormLayout()
-        self._scope_kind_combo = QComboBox(box)
+        section.body_layout().addLayout(form)
+        self._scope_kind_combo = QComboBox(section)
         self._scope_kind_combo.addItem("全部样本", "all_samples")
         self._scope_kind_combo.addItem("当前子样本集", "saved_subset")
         self._scope_kind_combo.addItem("多个子样本集", "multi_subset_union")
         self._scope_kind_combo.addItem("临时手选", "temporary_selection")
         self._scope_kind_combo.addItem("单个样本", "single_sample")
-        self._scope_target_edit = QLineEdit(box)
+        self._scope_target_edit = QLineEdit(section)
         self._scope_target_edit.setPlaceholderText("子样本集 ID 或样本 UID / alias")
-        self._kind_combo = QComboBox(box)
+        self._kind_combo = QComboBox(section)
         self._kind_combo.addItem("标量表", "scalar_frame")
         self._kind_combo.addItem("序列表", "series_frame")
         self._kind_combo.addItem("峰值表", "peaks_frame")
         self._kind_combo.addItem("当前图形", "current_plot_image")
         self._kind_combo.currentIndexChanged.connect(self._sync_format_options)
-        self._output_edit = QLineEdit(box)
-        self._format_combo = QComboBox(box)
+        self._kind_combo.currentIndexChanged.connect(self._refresh_parameter_summary)
+        self._output_edit = QLineEdit(section)
+        self._format_combo = QComboBox(section)
         self._format_combo.addItems(("xlsx", "csv"))
-        self._metadata_fields_edit = QLineEdit(box)
+        self._metadata_fields_edit = QLineEdit(section)
         self._metadata_fields_edit.setText("alias")
-        self._features_edit = QLineEdit(box)
+        self._features_edit = QLineEdit(section)
         self._features_edit.setText("max,rms")
-        self._data_var_edit = QLineEdit(box)
+        self._data_var_edit = QLineEdit(section)
         self._data_var_edit.setText("freqspec")
-        self._source_edit = QLineEdit(box)
+        self._source_edit = QLineEdit(section)
         self._source_edit.setText("accel")
         form.addRow("范围来源", self._scope_kind_combo)
         form.addRow("范围目标", self._scope_target_edit)
@@ -115,20 +142,75 @@ class ExportWorkspace(QWidget):
         form.addRow("标量特征", self._features_edit)
         form.addRow("序列表来源", self._data_var_edit)
         form.addRow("峰值来源", self._source_edit)
-        layout.addLayout(form)
         options = QHBoxLayout()
-        self._include_plots = QCheckBox("包含图片", box)
-        self._include_eval_summary = QCheckBox("包含评价摘要", box)
+        self._include_plots = QCheckBox("包含图片", section)
+        self._include_eval_summary = QCheckBox("包含评价摘要", section)
         self._include_eval_summary.setChecked(True)
-        self._run_button = QPushButton("执行导出", box)
-        self._run_button.clicked.connect(self._emit_export_request)
         options.addWidget(self._include_plots)
         options.addWidget(self._include_eval_summary)
         options.addStretch(1)
-        options.addWidget(self._run_button)
-        layout.addLayout(options)
+        section.body_layout().addLayout(options)
+        layout.addWidget(section)
+        layout.addStretch(1)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("确定")
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("取消")
+        buttons.accepted.connect(self._parameter_dialog.accept)
+        buttons.rejected.connect(self._parameter_dialog.reject)
+        layout.addWidget(buttons)
+        for widget in (
+            self._scope_kind_combo,
+            self._scope_target_edit,
+            self._output_edit,
+            self._format_combo,
+            self._metadata_fields_edit,
+            self._features_edit,
+            self._data_var_edit,
+            self._source_edit,
+        ):
+            if isinstance(widget, QLineEdit):
+                widget.textChanged.connect(self._refresh_parameter_summary)
+            else:
+                widget.currentIndexChanged.connect(self._refresh_parameter_summary)
+        self._include_plots.toggled.connect(self._refresh_parameter_summary)
+        self._include_eval_summary.toggled.connect(self._refresh_parameter_summary)
         self._sync_format_options()
-        return box
+        self._refresh_parameter_summary()
+
+    def _open_parameter_dialog(self) -> None:
+        state_before = self._parameter_dialog_state()
+        if self._parameter_dialog.exec() != QDialog.DialogCode.Accepted:
+            self._restore_parameter_dialog_state(state_before)
+
+    def _parameter_dialog_state(self) -> dict[str, object]:
+        return {
+            "scope_kind": self._scope_kind_combo.currentData(),
+            "scope_target": self._scope_target_edit.text(),
+            "export_kind": self._kind_combo.currentData(),
+            "output": self._output_edit.text(),
+            "format": self._format_combo.currentText(),
+            "metadata_fields": self._metadata_fields_edit.text(),
+            "features": self._features_edit.text(),
+            "data_var": self._data_var_edit.text(),
+            "source": self._source_edit.text(),
+            "include_plots": self._include_plots.isChecked(),
+            "include_eval_summary": self._include_eval_summary.isChecked(),
+        }
+
+    def _restore_parameter_dialog_state(self, state: dict[str, object]) -> None:
+        self._set_combo_value(self._scope_kind_combo, str(state["scope_kind"]))
+        self._scope_target_edit.setText(str(state["scope_target"]))
+        self._set_combo_value(self._kind_combo, str(state["export_kind"]))
+        self._sync_format_options()
+        self._output_edit.setText(str(state["output"]))
+        self._format_combo.setCurrentText(str(state["format"]))
+        self._metadata_fields_edit.setText(str(state["metadata_fields"]))
+        self._features_edit.setText(str(state["features"]))
+        self._data_var_edit.setText(str(state["data_var"]))
+        self._source_edit.setText(str(state["source"]))
+        self._include_plots.setChecked(bool(state["include_plots"]))
+        self._include_eval_summary.setChecked(bool(state["include_eval_summary"]))
+        self._refresh_parameter_summary()
 
     def load_session(self, session: ProjectSession) -> None:
         """根据会话刷新页面。"""
@@ -174,6 +256,7 @@ class ExportWorkspace(QWidget):
                 )
             )
         )
+        self._refresh_parameter_summary()
 
         action_name = _required_action(
             export_kind=str(self._kind_combo.currentData()),
@@ -185,6 +268,22 @@ class ExportWorkspace(QWidget):
         if action_name is not None:
             self._compute_button.setProperty("action_name", action_name)
         self._run_button.setEnabled(session.primary_runtime is not None and not state.busy)
+
+    def _refresh_parameter_summary(self, *_: object) -> None:
+        if not hasattr(self, "_parameter_summary"):
+            return
+        export_kind = self._kind_combo.currentText()
+        scope_kind = self._scope_kind_combo.currentText()
+        output = self._output_edit.text().strip() or "-"
+        self._parameter_summary.setText(
+            "\n".join(
+                (
+                    f"范围：{scope_kind}",
+                    f"类型：{export_kind} / {self._format_combo.currentText()}",
+                    f"输出：{output}",
+                )
+            )
+        )
 
     def scope_selection(self) -> tuple[str, str]:
         """返回当前范围来源。"""
