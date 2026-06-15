@@ -70,7 +70,7 @@ def test_governance_docs_position_main_and_v_tags_as_single_sources_of_truth() -
     agents = (PROJECT_ROOT / "AGENTS.md").read_text(encoding="utf-8")
 
     assert "`main`：当前正式稳定主线" in version_lines
-    assert "`v1.2.2` 已作为当前稳定基线正式发布" in version_lines
+    assert "`v1.2.3` 已作为当前稳定基线正式发布" in version_lines
     assert "Protect main" in release_checklist
     assert "Protect release tags" in release_checklist
     assert "`main` 是唯一正式主线" in agents

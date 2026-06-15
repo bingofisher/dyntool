@@ -4,6 +4,23 @@
 
 ## Unreleased
 
+- 暂无。
+
+## v1.2.3 - 2026-06-15
+
+### 版本线定位
+
+- `v1.2.3` 作为当前 `1.2.x` patch 版本发布
+- `main` 当前承接 `v1.2.3` 发布后的稳定维护线
+- 前一稳定版本为 `v1.2.2`
+- 正式发布事实以对应 `v1.2.3` git tag 为准
+
+### plotting 多子图组合
+
+- 新增 `PlotPanel`、`SubplotLayout`、`SubplotFigurePlotter` Public API，用于把多个 `PlotDataset + concrete plotter` 组合到同一张 Matplotlib figure
+- `PlotResult.axes` 汇总多子图 axes，`PlotResult.ax` 继续返回第一个子图
+- 多子图布局继续由 Python API 表达，不扩展 PlotTheme TOML schema
+
 ### Web 工作台实验线（冻结）
 稳定性：`Internal API`
 

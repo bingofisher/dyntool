@@ -11,9 +11,9 @@ AdvDynTool 是一个面向动力学计算、振动处理与评价的 Python 库�
 当前版本线：
 
 - 当前稳定线：`1.2.x`
-- 当前正式发布版本：`v1.2.2`
-- 前一稳定版本：`v1.2.1`
-- 正式发布日期：`2026-05-18`
+- 当前正式发布版本：`v1.2.3`
+- 前一稳定版本：`v1.2.2`
+- 正式发布日期：`2026-06-15`
 
 变更记录见 [CHANGELOG.md](CHANGELOG.md)。迁移说明见 [docs/developer/migration_1_2_0.md](docs/developer/migration_1_2_0.md)。发布检查清单见 [docs/developer/release_checklist.md](docs/developer/release_checklist.md)。
 
