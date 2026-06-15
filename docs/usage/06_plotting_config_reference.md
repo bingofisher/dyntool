@@ -166,6 +166,8 @@ dt_plotting.PlotTheme.apply_songtnr()
 | `dpi` | `int` | 图像分辨率 |
 | `add_axes_rect` | `list[float]`，长度为 4 | `figure.add_axes(...)` 使用的 `[left, bottom, width, height]` |
 
+在 `SubplotFigurePlotter` 多子图组合中，`add_axes_rect` 作为整组子图的外接区域使用。子图行列数、共享轴、宽高比例和间距由 Python 侧 `SubplotLayout` 表达；当前正式 TOML schema 不新增多子图布局块。
+
 ## `axes`
 
 用于轴框和 tick 外观，不负责 locator / formatter 语义。

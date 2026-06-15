@@ -37,7 +37,48 @@ print(result.ax is not None)
 - 正式绘图只接受 `PlotDataset`
 - 图模板由 `PlotTheme.default()` 或 `PlotTheme.from_file(...)` 提供
 - 运行时最终微调统一回到 `result.ax`
+- 多子图组合使用 `PlotPanel`、`SubplotLayout`、`SubplotFigurePlotter`，结果通过 `result.axes` 访问所有子图
 - `configure_zh`、`AxisFrame`、`GridFrame`、`AxisHelper`、`LegendHelper` 不再作为正式入口
+
+## 多子图组合
+
+多子图组合层只负责创建 figure、安排 axes，并把每个 panel 交给既有 concrete plotter；它不替代 `PlotDataset`，也不把模型对象直接改造成 panel。
+
+```python
+import dyntool.plotting as dt_plotting
+
+accel_dataset = dt_plotting.PlotDataset.from_axis_value(
+    axis=[0.0, 0.1, 0.2],
+    value=[0.0, 0.1, -0.05],
+    name="accel",
+    category=dt_plotting.PlotCategory.SAMPLE,
+)
+otovl_dataset = dt_plotting.PlotDataset.from_axis_value(
+    axis=[2.0, 2.5, 3.15, 4.0],
+    value=[60.0, 61.0, 62.0, 63.0],
+    name="otovl",
+    category=dt_plotting.PlotCategory.SAMPLE,
+)
+result = dt_plotting.SubplotFigurePlotter(
+    layout=dt_plotting.SubplotLayout(rows=2, cols=1, height_ratios=(1.0, 1.2), hspace=0.36),
+).plot_panels(
+    [
+        dt_plotting.PlotPanel(
+            dataset=accel_dataset,
+            plotter=dt_plotting.FramePlotter(),
+            title="加速度时程",
+        ),
+        dt_plotting.PlotPanel(
+            dataset=otovl_dataset,
+            plotter=dt_plotting.OneThirdOctavePlotter(),
+            title="1/3 倍频程",
+        ),
+    ]
+)
+print(result.axes[0] is result.ax)
+```
+
+若传入 `theme`，`PlotTheme.figure.add_axes_rect` 会作为整组子图的外接区域；`rows / cols / share_x / share_y / height_ratios / width_ratios` 继续由 Python 侧 `SubplotLayout` 表达。
 
 ## plotting 轴语义配置
 

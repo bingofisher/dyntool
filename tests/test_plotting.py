@@ -1597,6 +1597,178 @@ def test_frame_plotters_can_overlay_on_same_axes_with_theme_defaults() -> None:
     assert len(ax.lines) == 2
 
 
+def test_subplot_figure_plotter_uses_theme_rect_and_vertical_layout(tmp_path) -> None:
+    config_path = tmp_path / "plot_theme.toml"
+    config_path.write_text(
+        """
+[figure]
+width_cm = 12.0
+height_cm = 9.0
+dpi = 120
+add_axes_rect = [0.20, 0.25, 0.60, 0.50]
+        """.strip(),
+        encoding="utf-8",
+    )
+    theme = PlotTheme.from_file(config_path)
+    dataset_a = PlotDataset.from_axis_value(
+        axis=[0.0, 1.0, 2.0],
+        value=[1.0, 2.0, 3.0],
+        name="sample-a",
+        category=PlotCategory.SAMPLE,
+    )
+    dataset_b = PlotDataset.from_axis_value(
+        axis=[0.0, 1.0, 2.0],
+        value=[3.0, 2.0, 1.0],
+        name="sample-b",
+        category=PlotCategory.SAMPLE,
+    )
+
+    result = dt_plotting.SubplotFigurePlotter(
+        theme=theme,
+        layout=dt_plotting.SubplotLayout(rows=2, cols=1, share_x=True, height_ratios=(1.0, 2.0)),
+    ).plot_panels(
+        [
+            dt_plotting.PlotPanel(dataset=dataset_a, plotter=FramePlotter(theme=theme), title="上部时程"),
+            dt_plotting.PlotPanel(dataset=dataset_b, plotter=FramePlotter(theme=theme), title="下部时程"),
+        ]
+    )
+
+    assert isinstance(result, PlotResult)
+    assert len(result.axes) == 2
+    assert result.ax is result.axes[0]
+    assert result.axes[0].get_title() == "上部时程"
+    assert result.axes[1].get_title() == "下部时程"
+    assert result.axes[0].get_shared_x_axes().joined(result.axes[0], result.axes[1]) is True
+    first_bounds = result.axes[0].get_position().bounds
+    second_bounds = result.axes[1].get_position().bounds
+    assert first_bounds[0] == pytest.approx(0.20)
+    assert second_bounds[0] == pytest.approx(0.20)
+    assert first_bounds[0] + first_bounds[2] == pytest.approx(0.80)
+    assert first_bounds[1] + first_bounds[3] <= 0.75
+    assert second_bounds[3] > first_bounds[3]
+
+
+def test_subplot_figure_plotter_forwards_panel_plot_options_and_mixed_plotters() -> None:
+    accel_dataset = PlotDataset.from_axis_value(
+        axis=[0.0, 1.0, 2.0],
+        value=[1.0, 3.0, 5.0],
+        name="sample-a",
+        category=PlotCategory.SAMPLE,
+    )
+    accel_dataset.add_axis_value(
+        axis=[0.0, 1.0, 2.0],
+        value=[3.0, 5.0, 7.0],
+        name="sample-b",
+        category=PlotCategory.SAMPLE,
+    )
+    accel_dataset.add_axis_value(
+        axis=[0.0, 1.0, 2.0],
+        value=[10.0, 10.0, 10.0],
+        name="limit-a",
+        category=PlotCategory.LIMIT,
+    )
+    octave_dataset = PlotDataset.from_axis_value(
+        axis=[2.0, 2.5, 3.15, 4.0, 5.0, 6.3],
+        value=[60.0, 61.0, 62.0, 63.0, 64.0, 65.0],
+        name="otovl-a",
+        category=PlotCategory.SAMPLE,
+        axis_unit="hertz",
+        value_unit="decibel",
+    )
+
+    result = dt_plotting.SubplotFigurePlotter(layout=dt_plotting.SubplotLayout(rows=2, cols=1)).plot_panels(
+        [
+            dt_plotting.PlotPanel(
+                dataset=accel_dataset,
+                plotter=FramePlotter(),
+                categories=[PlotCategory.SAMPLE],
+                names=["sample-a", "sample-b"],
+                legend_options={"loc": "upper left"},
+                axis_config=AxisConfig(x=ContinuousAxisSpec(ticks=[0.0, 1.0, 2.0])),
+                plot_options={"stats": [PlotStatMetric.MEAN]},
+            ),
+            dt_plotting.PlotPanel(
+                dataset=octave_dataset,
+                plotter=OneThirdOctavePlotter(),
+                legend_options={"loc": "upper right"},
+                axis_config=AxisConfig(
+                    x=OctaveAxisSpec(show_every=2),
+                    y=ContinuousAxisSpec(major_step=5.0, tick_min=60.0, tick_max=65.0),
+                ),
+            ),
+        ]
+    )
+
+    assert len(result.axes) == 2
+    assert [line.get_label() for line in result.axes[0].lines] == ["sample-a", "sample-b", "均值"]
+    np.testing.assert_allclose(result.axes[0].get_xticks(), np.array([0.0, 1.0, 2.0]))
+    assert result.axes[0].get_legend() is not None
+    assert len(result.axes[1].lines) == 1
+    result.axes[1].figure.canvas.draw()
+    assert [tick.get_text() for tick in result.axes[1].get_xticklabels()][:3] == ["2", "", "3.15"]
+
+
+def test_subplot_figure_plotter_rejects_too_many_panels() -> None:
+    dataset = PlotDataset.from_axis_value(
+        axis=[0.0, 1.0],
+        value=[1.0, 2.0],
+        name="sample-a",
+        category=PlotCategory.SAMPLE,
+    )
+    panels = [
+        dt_plotting.PlotPanel(dataset=dataset, plotter=FramePlotter()),
+        dt_plotting.PlotPanel(dataset=dataset, plotter=FramePlotter()),
+    ]
+
+    with pytest.raises(ValueError, match="panel 数量不能超过布局容量"):
+        dt_plotting.SubplotFigurePlotter(layout=dt_plotting.SubplotLayout(rows=1, cols=1)).plot_panels(panels)
+
+
+def test_subplot_figure_plotter_only_creates_used_axes_when_layout_has_spare_slots() -> None:
+    dataset = PlotDataset.from_axis_value(
+        axis=[0.0, 1.0],
+        value=[1.0, 2.0],
+        name="sample-a",
+        category=PlotCategory.SAMPLE,
+    )
+
+    result = dt_plotting.SubplotFigurePlotter(layout=dt_plotting.SubplotLayout(rows=2, cols=2)).plot_panels(
+        [dt_plotting.PlotPanel(dataset=dataset, plotter=FramePlotter())]
+    )
+
+    assert len(result.axes) == 1
+    assert result.figure is not None
+    assert result.figure.axes == [result.axes[0]]
+
+
+def test_subplot_figure_plotter_supports_box_plotter_panel() -> None:
+    dataset = PlotDataset.from_axis_value(
+        axis=[0.0, 1.0, 2.0],
+        value=[64.0, 66.0, 65.0],
+        name="point-a",
+        category=PlotCategory.SAMPLE,
+    )
+    dataset.add_axis_value(
+        axis=[0.0, 1.0, 2.0],
+        value=[68.0, 69.0, 70.0],
+        name="point-b",
+        category=PlotCategory.SAMPLE,
+    )
+
+    result = dt_plotting.SubplotFigurePlotter(layout=dt_plotting.SubplotLayout(rows=1, cols=1)).plot_panels(
+        [
+            dt_plotting.PlotPanel(
+                dataset=dataset,
+                plotter=BoxPlotter(),
+                plot_options={"stats": [PlotStatMetric.MEAN]},
+            )
+        ]
+    )
+
+    assert len(result.axes) == 1
+    assert len(result.axes[0].patches) == 2
+
+
 def test_story_value_plotter_keeps_default_story_ticks_without_axis_config() -> None:
     dataset = PlotDataset.from_axis_value(
         axis=[-1.0, 0.0, 1.0, 2.0],
@@ -1722,10 +1894,13 @@ def test_plotting_module_exports_match_stage_c_public_surface() -> None:
         "PlotCategory",
         "PlotDataset",
         "PlotKind",
+        "PlotPanel",
         "PlotResult",
         "PlotStatMetric",
         "PlotTheme",
         "StoryValuePlotter",
+        "SubplotFigurePlotter",
+        "SubplotLayout",
     }
 
 

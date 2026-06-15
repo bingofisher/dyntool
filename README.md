@@ -126,6 +126,7 @@ print(freqs[:3])
 - 顶层只保留对象、结果对象、限制对象和必要枚举
 - `DefaultSample / DefaultSampleSet` 是正式样本对象主名
 - plotting 正式主链固定为 `PlotDataset -> PlotTheme -> concrete plotter -> PlotResult.ax`
+- plotting 多子图正式组合层为 `PlotPanel -> SubplotLayout -> SubplotFigurePlotter -> PlotResult.axes`，用于把多个 `PlotDataset + concrete plotter` 组合到同一张 Matplotlib figure
 - plotting 的轴语义默认通过 `AxisConfig` 提供；`PlotTheme.axes` 继续只负责外观，`PlotTheme.axis_config` 和 `plot_dataset(..., axis_config=...)` 负责 continuous major/minor 刻度、科学计数法与倍频程标签策略，科学计数法 offset 文本的字号和位置也走这条正式配置链
 - continuous 轴只要给了 `major_step` / `minor_step`，对应 `major_origin` / `minor_origin` 默认按 `0` 起算；continuous 轴默认不开科学计数法，只有显式开启时才启用
 - `axis.<side>.label.fontsize` 控制轴标签字号，`axis.<side>.ticks.fontsize` 控制 ticklabel 字号；`formatter.scientific.fontsize` 只控制 offset 文本字号
@@ -139,6 +140,8 @@ plotting TOML 当前正式采用点层级 schema：
 - `axis.x / axis.y`
 
 其中 `PlotTheme.axes` 继续只负责轴框和 tick 外观，`PlotTheme.grid` 负责网格策略与样式，`PlotTheme.axis_config` 与运行时 `axis_config` 负责 continuous / octave 轴语义。
+
+多子图布局不扩展 TOML schema；`PlotTheme.figure.add_axes_rect` 作为整组子图外接区域，行列数、共享轴和宽高比例通过 Python 侧 `SubplotLayout` 表达。
 
 ## 存储约定
 

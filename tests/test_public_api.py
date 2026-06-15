@@ -330,10 +330,13 @@ def test_plotting_module_exports_match_stage_c_public_surface() -> None:
         "PlotCategory",
         "PlotDataset",
         "PlotKind",
+        "PlotPanel",
         "PlotResult",
         "PlotStatMetric",
         "PlotTheme",
         "StoryValuePlotter",
+        "SubplotFigurePlotter",
+        "SubplotLayout",
     }
 
 
@@ -343,11 +346,14 @@ def test_plotting_public_objects_keep_expected_module_locations() -> None:
     assert dt_plotting.OctaveAxisSpec.__module__ == "dyntool.plotting.axis_config"
     assert dt_plotting.PlotDataset.__module__ == "dyntool.plotting.dataset"
     assert dt_plotting.PlotTheme.__module__ == "dyntool.plotting.config"
+    assert dt_plotting.PlotPanel.__module__ == "dyntool.plotting.subplots"
     assert dt_plotting.PlotResult.__module__ == "dyntool.plotting.types"
     assert dt_plotting.FramePlotter.__module__ == "dyntool.plotting.plotters"
     assert dt_plotting.BoxPlotter.__module__ == "dyntool.plotting.plotters"
     assert dt_plotting.OneThirdOctavePlotter.__module__ == "dyntool.plotting.plotters"
     assert dt_plotting.StoryValuePlotter.__module__ == "dyntool.plotting.plotters"
+    assert dt_plotting.SubplotFigurePlotter.__module__ == "dyntool.plotting.subplots"
+    assert dt_plotting.SubplotLayout.__module__ == "dyntool.plotting.subplots"
 
 
 def test_plotting_module_no_longer_exports_internal_helpers_and_compat_entries() -> None:

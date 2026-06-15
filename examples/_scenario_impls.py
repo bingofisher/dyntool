@@ -192,9 +192,11 @@ def _scenario_plot_and_export(output_dir: Path | None = None) -> dict[str, objec
     raw_plot = output_root / "raw_time.png"
     model_plot = output_root / "model_time.png"
     box_plot = output_root / "box_zvl.png"
+    subplot_plot = output_root / "accel_otovl_subplots.png"
 
     theme = dt_plotting.PlotTheme.from_file(PLOT_THEME_REPORT)
-    accel = AccelSeries.from_data([0.0, 0.12, -0.03, 0.01], dt=0.01)
+    time_axis = np.linspace(0.0, 3.0, 1200, dtype=float)
+    accel = AccelSeries.from_data(np.sin(time_axis * 2.0 * np.pi * 4.0) * 0.04, dt=float(time_axis[1] - time_axis[0]))
     raw_dataset = dt_plotting.PlotDataset.from_axis_value(
         axis=accel.get_axis(),
         value=accel.get_value(),
@@ -210,6 +212,12 @@ def _scenario_plot_and_export(output_dir: Path | None = None) -> dict[str, objec
         category=dt_plotting.PlotCategory.SAMPLE,
     )
     model_result = dt_plotting.FramePlotter(theme=theme).plot_dataset(model_dataset)
+    otovl = accel.eval_otovl(freq_range=(2.0, 80.0))
+    otovl_dataset = dt_plotting.PlotDataset.from_model(
+        otovl,
+        name="otovl",
+        category=dt_plotting.PlotCategory.SAMPLE,
+    )
     box_dataset = dt_plotting.PlotDataset.from_axis_value(
         axis=[0.0, 1.0, 2.0],
         value=[64.0, 66.0, 65.0],
@@ -236,18 +244,45 @@ def _scenario_plot_and_export(output_dir: Path | None = None) -> dict[str, objec
         },
         legend_options={"loc": "upper right"},
     )
+    subplot_result = dt_plotting.SubplotFigurePlotter(
+        theme=theme,
+        layout=dt_plotting.SubplotLayout(rows=2, cols=1, height_ratios=(1.0, 1.2), hspace=0.36),
+    ).plot_panels(
+        [
+            dt_plotting.PlotPanel(
+                dataset=raw_dataset,
+                plotter=dt_plotting.FramePlotter(theme=theme),
+                title="加速度时程",
+                legend_options={"loc": "upper right"},
+            ),
+            dt_plotting.PlotPanel(
+                dataset=otovl_dataset,
+                plotter=dt_plotting.OneThirdOctavePlotter(theme=theme),
+                title="1/3 倍频程评价",
+                axis_config=dt_plotting.AxisConfig(
+                    x=dt_plotting.OctaveAxisSpec(show_every=2),
+                    y=dt_plotting.ContinuousAxisSpec(major_step=10.0, minor_step=5.0),
+                ),
+                legend_options={"loc": "upper right"},
+            ),
+        ]
+    )
     assert raw_result.figure is not None
     assert model_result.figure is not None
     assert box_result.figure is not None
+    assert subplot_result.figure is not None
     raw_result.figure.savefig(raw_plot, dpi=120)
     model_result.figure.savefig(model_plot, dpi=120)
     box_result.figure.savefig(box_plot, dpi=120)
+    subplot_plot.parent.mkdir(parents=True, exist_ok=True)
+    subplot_result.figure.savefig(subplot_plot, dpi=120)
 
     return {
         "plot_kind": "time",
         "raw_plot": str(raw_plot),
         "model_plot": str(model_plot),
         "box_plot": str(box_plot),
+        "subplot_plot": str(subplot_plot),
         "theme_path": str(PLOT_THEME_REPORT),
     }
 
