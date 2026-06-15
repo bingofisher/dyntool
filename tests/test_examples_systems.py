@@ -60,6 +60,7 @@ def test_scenario_plot_and_export(tmp_path: Path) -> None:
     assert Path(result["raw_plot"]).exists()
     assert Path(result["model_plot"]).exists()
     assert Path(result["box_plot"]).exists()
+    assert Path(result["subplot_plot"]).exists()
 
 
 def test_scenario_logged_run(tmp_path: Path) -> None:

@@ -18,6 +18,7 @@ import dyntool.reporting as dt_reporting
 import dyntool.plotting.config as dt_plotting_config
 import dyntool.plotting.dataset as dt_plotting_dataset
 import dyntool.plotting.plotters as dt_plotters_module
+import dyntool.plotting.subplots as dt_plotting_subplots
 import dyntool.plotting.types as dt_plotting_types
 import dyntool.resources as dt_resource
 import dyntool.storage as dt_storage
@@ -248,10 +249,27 @@ if TYPE_CHECKING:
     assert_type(dt_plotting.PlotTheme, type[dt_plotting_config.PlotTheme])
     assert_type(dt_plotting.PlotDataset, type[dt_plotting_dataset.PlotDataset])
     assert_type(dt_plotting.PlotResult, type[dt_plotting_types.PlotResult])
+    assert_type(dt_plotting.PlotPanel, type[dt_plotting_subplots.PlotPanel])
+    assert_type(dt_plotting.SubplotFigurePlotter, type[dt_plotting_subplots.SubplotFigurePlotter])
+    assert_type(dt_plotting.SubplotLayout, type[dt_plotting_subplots.SubplotLayout])
     assert_type(dt_plotting.FramePlotter, type[dt_plotters_module.FramePlotter])
     assert_type(dt_plotting.BoxPlotter, type[dt_plotters_module.BoxPlotter])
     assert_type(dt_plotting.OneThirdOctavePlotter, type[dt_plotters_module.OneThirdOctavePlotter])
     assert_type(dt_plotting.StoryValuePlotter, type[dt_plotters_module.StoryValuePlotter])
+    subplot_result = dt_plotting.SubplotFigurePlotter(
+        theme=theme,
+        layout=dt_plotting.SubplotLayout(rows=1, cols=1, share_x=True),
+    ).plot_panels(
+        [
+            dt_plotting.PlotPanel(
+                dataset=dataset,
+                plotter=dt_plotting.FramePlotter(theme=theme),
+                axis_config=axis_config,
+                legend_options={"loc": "upper right"},
+            )
+        ]
+    )
+    assert_type(subplot_result, dt_plotting.PlotResult)
 
     box_dataset = dt_plotting.PlotDataset.from_axis_value(
         axis=[0.0, 1.0, 2.0],
@@ -260,6 +278,12 @@ if TYPE_CHECKING:
         category=dt_plotting.PlotCategory.SAMPLE,
     )
     assert_type(dt_plotting.PlotStatMetric.MEAN, dt_plotting.PlotStatMetric)
+    box_panel = dt_plotting.PlotPanel(
+        dataset=box_dataset,
+        plotter=dt_plotting.BoxPlotter(),
+        plot_options={"stats": [dt_plotting.PlotStatMetric.MEAN]},
+    )
+    assert_type(box_panel, dt_plotting.PlotPanel)
     box_result = dt_plotting.BoxPlotter().plot_dataset(
         box_dataset,
         stats=[dt_plotting.PlotStatMetric.MEAN],

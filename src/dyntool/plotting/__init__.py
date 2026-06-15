@@ -6,6 +6,7 @@ from .axis_config import AxisConfig, ContinuousAxisSpec, OctaveAxisSpec
 from .config import PlotTheme
 from .dataset import PlotCategory, PlotDataset
 from .plotters import BoxPlotter, FramePlotter, OneThirdOctavePlotter, StoryValuePlotter
+from .subplots import PlotPanel, SubplotFigurePlotter, SubplotLayout
 from .types import PlotKind, PlotResult, PlotStatMetric
 
 __all__ = [
@@ -18,8 +19,11 @@ __all__ = [
     "PlotCategory",
     "PlotDataset",
     "PlotKind",
+    "PlotPanel",
     "PlotResult",
     "PlotStatMetric",
     "PlotTheme",
     "StoryValuePlotter",
+    "SubplotFigurePlotter",
+    "SubplotLayout",
 ]

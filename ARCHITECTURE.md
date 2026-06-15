@@ -243,3 +243,12 @@ AdvDynTool 以数值结果正确、单位一致和结果可追溯为第一优先
 - continuous 轴只要给了 `major_step` / `minor_step`，对应 `major_origin` / `minor_origin` 默认按 `0` 起算；continuous 轴默认不开科学计数法，只有显式开启时才启用
 - `axis.<side>.label.fontsize` 控制轴标签字号，`axis.<side>.ticks.fontsize` 控制 ticklabel 字号；`formatter.scientific.fontsize` 只控制 offset 文本字号
 - 项目级 variant patch 仍属于项目层集成策略，不进入 `dyntool.plotting` 的正式 schema
+
+## plotting 多子图组合
+
+- `PlotPanel`、`SubplotLayout`、`SubplotFigurePlotter` 属于 `dyntool.plotting` 的正式 `Public API`
+- 多子图层只负责 figure / axes 布局和 panel 编排；具体图种语义仍由 `FramePlotter`、`OneThirdOctavePlotter`、`StoryValuePlotter`、`BoxPlotter` 承担
+- 每个 `PlotPanel` 显式接收 `PlotDataset` 与 concrete plotter，可按 panel 传入 `categories`、`names`、`legend_options`、`axis_config` 和图种运行时参数
+- `SubplotLayout` v1 支持 `rows / cols`、`share_x / share_y`、`height_ratios / width_ratios`、`hspace / wspace`
+- `PlotTheme.figure.add_axes_rect` 作为整组子图外接区域；多子图布局不新增 TOML schema，避免把布局组合语义写入单图模板契约
+- `SubplotFigurePlotter.plot_panels(...)` 返回 `PlotResult`，其中 `axes` 汇总所有子图，`ax` 仍指向第一个子图

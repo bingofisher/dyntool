@@ -34,6 +34,9 @@
 - `PlotKind`
 - `PlotResult`
 - `PlotStatMetric`
+- `PlotPanel`
+- `SubplotLayout`
+- `SubplotFigurePlotter`
 - `FramePlotter`
 - `BoxPlotter`
 - `OneThirdOctavePlotter`
@@ -90,6 +93,16 @@
 - 绘制阶段的 tick / label 自动兜底
 - 将 `PlotTheme`、`PlotDataset` 和运行时参数合并成最终绘图行为
 
+### 多子图组合层
+
+`PlotPanel`、`SubplotLayout`、`SubplotFigurePlotter` 负责把多个现有 plotter 组合到同一张 figure：
+
+- `PlotPanel` 只描述单个子图的数据集、plotter 和运行时覆盖参数
+- `SubplotLayout` 只描述行列、共享轴、宽高比例和子图间距
+- `SubplotFigurePlotter` 只创建 figure / axes，并逐 panel 调用既有 `plot_dataset(...)`
+
+组合层不负责模型到数据集的自动映射，不复制具体图种绘制逻辑，也不把布局 schema 写入 `PlotTheme` TOML。
+
 ### `PlotResult`
 
 `PlotResult` 是正式结果对象，最关键的稳定出口是：
@@ -98,7 +111,7 @@
 - `axes`
 - `ax`
 
-其中 `ax` 是最终手工微调出口。
+其中 `ax` 是最终手工微调出口。多子图结果中，`axes` 返回全部子图，`ax` 仍返回第一个子图。
 
 ## 样式优先级
 
@@ -157,6 +170,7 @@ plotter 只负责补缺失项，不覆盖用户已经通过运行时、dataset �
 - 轴语义 TOML 入口固定为 `axis.x / axis.y`
 - `PlotTheme.axis_config` 只负责主题级默认轴语义
 - plotting 正式 TOML schema 只使用 `grid.x.major / ...`、`axis.x.label / axis.y.label`、`axis.x / axis.y`
+- 多子图布局不进入正式 TOML schema；`PlotTheme.figure.add_axes_rect` 只作为整组子图外接区域
 - continuous 轴只要给了 `major_step` / `minor_step`，对应 `major_origin` / `minor_origin` 默认按 `0` 起算；continuous 轴默认不开科学计数法，只有显式开启时才启用
 - 项目级 variant patch 仍属于项目层策略，不进入 `dyntool.plotting` 正式 schema
 - plotting 内部适配层负责把公共 `AxisConfig` 转成 `AxisHelper.format_axis(...)` 所需参数；continuous 轴会在这一层统一处理 `ticks / major_step / minor_step / scientific_*`

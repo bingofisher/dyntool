@@ -62,6 +62,63 @@ def test_concrete_plotter_public_signatures_match_current_public_surface() -> No
     )
 
 
+def test_subplot_public_signatures_match_current_public_surface() -> None:
+    panel_signature = inspect.signature(dt_plotting.PlotPanel)
+    layout_signature = inspect.signature(dt_plotting.SubplotLayout)
+    figure_plotter_signature = inspect.signature(dt_plotting.SubplotFigurePlotter)
+
+    assert tuple(panel_signature.parameters) == (
+        "dataset",
+        "plotter",
+        "title",
+        "categories",
+        "names",
+        "legend_options",
+        "axis_config",
+        "plot_options",
+    )
+    assert tuple(layout_signature.parameters) == (
+        "rows",
+        "cols",
+        "share_x",
+        "share_y",
+        "height_ratios",
+        "width_ratios",
+        "hspace",
+        "wspace",
+    )
+    assert tuple(figure_plotter_signature.parameters) == ("theme", "layout")
+    assert panel_signature.parameters["dataset"].kind is inspect.Parameter.POSITIONAL_OR_KEYWORD
+    assert panel_signature.parameters["plotter"].kind is inspect.Parameter.POSITIONAL_OR_KEYWORD
+    assert layout_signature.parameters["rows"].kind is inspect.Parameter.POSITIONAL_OR_KEYWORD
+    assert layout_signature.parameters["cols"].kind is inspect.Parameter.POSITIONAL_OR_KEYWORD
+    assert all(
+        panel_signature.parameters[name].kind is inspect.Parameter.KEYWORD_ONLY
+        for name in (
+            "title",
+            "categories",
+            "names",
+            "legend_options",
+            "axis_config",
+            "plot_options",
+        )
+    )
+    assert all(
+        layout_signature.parameters[name].kind is inspect.Parameter.KEYWORD_ONLY
+        for name in (
+            "share_x",
+            "share_y",
+            "height_ratios",
+            "width_ratios",
+            "hspace",
+            "wspace",
+        )
+    )
+    assert all(
+        parameter.kind is inspect.Parameter.KEYWORD_ONLY for parameter in figure_plotter_signature.parameters.values()
+    )
+
+
 def test_plotting_public_bridge_helpers_stay_hidden() -> None:
     theme = dt_plotting.PlotTheme.default()
     assert not hasattr(theme, "axis_frame")

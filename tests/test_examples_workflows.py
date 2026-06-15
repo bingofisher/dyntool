@@ -45,6 +45,7 @@ def test_recipe_plot_dataset_and_plotters(tmp_path: Path) -> None:
     assert Path(result["raw_plot"]).exists()
     assert Path(result["model_plot"]).exists()
     assert Path(result["box_plot"]).exists()
+    assert Path(result["subplot_plot"]).exists()
 
 
 def test_recipe_logging_providers_and_modes(tmp_path: Path) -> None:

@@ -74,11 +74,12 @@ covers = [
   "plot_dataset_axis_value",
   "plot_dataset_from_model",
   "box_plotter_stats",
+  "subplot_figure_plotter",
   "plot_result_ax",
 ]
 snippet_ids = []
 inputs = ["accel_model", "plot_theme_report"]
-outputs = ["raw_time_png", "model_time_png", "box_zvl_png"]
+outputs = ["raw_time_png", "model_time_png", "box_zvl_png", "accel_otovl_subplots_png"]
 script = "examples/10_scenarios/05_plot_and_export/main.py"
 readme = "examples/10_scenarios/05_plot_and_export/README.md"
 doc = "docs/usage/05_plotting_logging_resources.md"

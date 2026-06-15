@@ -62,6 +62,9 @@ print(freqs[:3])
 - `PlotCategory`
 - `PlotStatMetric`
 - `PlotKind`
+- `PlotPanel`
+- `SubplotLayout`
+- `SubplotFigurePlotter`
 - `FramePlotter`
 - `BoxPlotter`
 - `OneThirdOctavePlotter`
@@ -73,6 +76,13 @@ v1.2.0 起正式主链固定为：
 2. `PlotTheme.from_file(path)` 或 `PlotTheme.default()`
 3. `ConcretePlotter(...).plot_dataset(dataset, ax=ax, ...)`
 4. `PlotResult.ax`
+
+多子图组合使用同一条数据和图种主链，只在外层增加：
+
+1. `PlotPanel(dataset, plotter, ...)`
+2. `SubplotLayout(rows, cols, ...)`
+3. `SubplotFigurePlotter(...).plot_panels(...)`
+4. `PlotResult.axes`
 
 若只需要快速把全局默认字体切到仓库内置 `SongTNR`，可以直接调用 `PlotTheme.apply_songtnr()`。
 
@@ -92,6 +102,42 @@ dataset = dt_plotting.PlotDataset.from_axis_value(
 )
 result = dt_plotting.FramePlotter(theme=theme).plot_dataset(dataset)
 print(result.ax is not None)
+```
+
+多子图示例：
+
+```python
+import dyntool.plotting as dt_plotting
+
+dataset_a = dt_plotting.PlotDataset.from_axis_value(
+    axis=[0.0, 0.1, 0.2],
+    value=[0.0, 0.1, -0.05],
+    name="accel",
+    category=dt_plotting.PlotCategory.SAMPLE,
+)
+dataset_b = dt_plotting.PlotDataset.from_axis_value(
+    axis=[2.0, 2.5, 3.15, 4.0],
+    value=[60.0, 61.0, 62.0, 63.0],
+    name="otovl",
+    category=dt_plotting.PlotCategory.SAMPLE,
+)
+result = dt_plotting.SubplotFigurePlotter(
+    layout=dt_plotting.SubplotLayout(rows=2, cols=1, height_ratios=(1.0, 1.2)),
+).plot_panels(
+    [
+        dt_plotting.PlotPanel(
+            dataset=dataset_a,
+            plotter=dt_plotting.FramePlotter(),
+            title="加速度时程",
+        ),
+        dt_plotting.PlotPanel(
+            dataset=dataset_b,
+            plotter=dt_plotting.OneThirdOctavePlotter(),
+            title="1/3 倍频程",
+        ),
+    ]
+)
+print(len(result.axes))
 ```
 
 字体快捷入口示例：

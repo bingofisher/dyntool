@@ -114,10 +114,13 @@ plotting_module_exports_allowed = [
   "PlotCategory",
   "PlotDataset",
   "PlotKind",
+  "PlotPanel",
   "PlotResult",
   "PlotStatMetric",
   "PlotTheme",
   "StoryValuePlotter",
+  "SubplotFigurePlotter",
+  "SubplotLayout",
 ]
 
 plotting_plotters_module_exports_allowed = [
