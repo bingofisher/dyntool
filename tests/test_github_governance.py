@@ -19,8 +19,9 @@ def test_ci_workflow_exists_and_uses_quality_job() -> None:
     assert "quality:" in text
     assert "runs-on: windows-latest" in text
     assert 'python-version: "3.13"' in text
-    assert "uv sync --python 3.13 --group dev --group docs" in text
+    assert "uv sync --python 3.13 --group dev --group docs --group gui" in text
     assert 'PYTHONDONTWRITEBYTECODE: "1"' in text
+    assert 'QT_QPA_PLATFORM: "offscreen"' in text
 
 
 def test_ci_workflow_covers_current_repository_quality_gates() -> None:
@@ -70,7 +71,7 @@ def test_governance_docs_position_main_and_v_tags_as_single_sources_of_truth() -
     agents = (PROJECT_ROOT / "AGENTS.md").read_text(encoding="utf-8")
 
     assert "`main`：当前正式稳定主线" in version_lines
-    assert "`v1.2.3` 已作为当前稳定基线正式发布" in version_lines
+    assert "`v1.2.4` 已作为当前稳定基线正式发布" in version_lines
     assert "Protect main" in release_checklist
     assert "Protect release tags" in release_checklist
     assert "`main` 是唯一正式主线" in agents

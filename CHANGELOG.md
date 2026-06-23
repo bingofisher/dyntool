@@ -6,6 +6,24 @@
 
 - 暂无。
 
+## v1.2.4 - 2026-06-23
+
+### 版本线定位
+
+- `v1.2.4` 作为当前 `1.2.x` patch 版本发布
+- `main` 当前承接 `v1.2.4` 发布后的稳定维护线
+- 前一稳定版本为 `v1.2.3`
+- 正式发布事实以对应 `v1.2.4` git tag 为准
+
+### CI 与发布收口
+
+稳定性：`Internal API`
+
+- GitHub Actions `CI / quality` 默认同步 `dev`、`docs` 与 `gui` 依赖组，确保远端 PySide6 GUI 测试不因缺少可选依赖而在收集阶段失败
+- CI 环境固定 `QT_QPA_PLATFORM=offscreen`，与现有 GUI headless 测试口径一致
+- 保留已推送的 `v1.2.3` tag 作为历史发布事实源，不移动、不强推 tag
+- 本轮不新增 `dyntool` Public API，不修改存储格式，不修改单位语义
+
 ## v1.2.3 - 2026-06-15
 
 ### 版本线定位
