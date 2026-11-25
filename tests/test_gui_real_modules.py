@@ -17,9 +17,19 @@ pytest.importorskip("PySide6")
 from PySide6.QtWidgets import QApplication
 
 from dyntool import AccelSeries, DefaultSample, DefaultSampleSet, SampleDomain, VibrationTestMetadata
+from dyntool import BatchOperationReport, OperationResult
 from dyntool_gui.managers import ExportManager, PlotManager, ProcessingManager
 from dyntool_gui.models.resource_tree import ResourceTreeBuilder
 from dyntool_gui.session import CapabilitySnapshot, ProcessingRequestSnapshot, ProjectSession
+
+
+def _successful_report(action: str, uids: tuple[str, ...], strict: bool) -> BatchOperationReport[object]:
+    """让处理替身遵循核心 API 的逐样本报告合同。"""
+
+    report = BatchOperationReport[object](action=action, strict=strict)
+    for uid in uids:
+        report.add(uid, OperationResult(action=action, status="success", message="处理成功"))
+    return report
 
 
 @pytest.fixture(scope="module")
@@ -189,14 +199,17 @@ def test_processing_manager_maps_action_specific_kwargs(runtime_session: Project
         def keys(self) -> tuple[str]:
             return ("sample_1",)
 
-        def calc_respspec(self, **kwargs: Any) -> None:
+        def calc_respspec(self, **kwargs: Any) -> BatchOperationReport[object]:
             calls.append(("calc_respspec", kwargs))
+            return _successful_report("calc_respspec", kwargs["uids"], kwargs["strict"])
 
-        def eval_zvl(self, **kwargs: Any) -> None:
+        def eval_zvl(self, **kwargs: Any) -> BatchOperationReport[object]:
             calls.append(("eval_zvl", kwargs))
+            return _successful_report("eval_zvl", kwargs["uids"], kwargs["strict"])
 
-        def eval_fpvdv(self, **kwargs: Any) -> None:
+        def eval_fpvdv(self, **kwargs: Any) -> BatchOperationReport[object]:
             calls.append(("eval_fpvdv", kwargs))
+            return _successful_report("eval_fpvdv", kwargs["uids"], kwargs["strict"])
 
     manager = ProcessingManager(runtime_session)
     runtime_session.primary_runtime = _FakeSampleSet()  # type: ignore[assignment]
@@ -286,9 +299,12 @@ def test_processing_manager_uses_request_resolved_uids_after_scope_changes(runti
             del uid
             return _FakeSample()
 
-        def calc_freqspec(self, *, uids: tuple[str, ...], strict: bool, overwrite: bool) -> None:
-            del strict, overwrite
+        def calc_freqspec(
+            self, *, uids: tuple[str, ...], strict: bool, overwrite: bool
+        ) -> BatchOperationReport[object]:
+            del overwrite
             calls.append(uids)
+            return _successful_report("calc_freqspec", uids, strict)
 
     runtime_session.primary_runtime = _FakeSampleSet()  # type: ignore[assignment]
     runtime_session.current_scope.sample_uids = ("sample_2",)
@@ -327,9 +343,12 @@ def test_processing_manager_incrementally_updates_capability_for_scoped_request(
         def values(self) -> object:
             raise AssertionError("小范围处理不应扫描全量 values")
 
-        def calc_freqspec(self, *, uids: tuple[str, ...], strict: bool, overwrite: bool) -> None:
-            del strict, overwrite
+        def calc_freqspec(
+            self, *, uids: tuple[str, ...], strict: bool, overwrite: bool
+        ) -> BatchOperationReport[object]:
+            del overwrite
             calls.append(uids)
+            return _successful_report("calc_freqspec", uids, strict)
 
     runtime_session.primary_runtime = _LargeLazySet()  # type: ignore[assignment]
     runtime_session.capability_snapshot = CapabilitySnapshot(data_slots=("accel",), scalar_frame=True, peaks_frame=True)

@@ -73,7 +73,7 @@ def get_backend(fmt: str) -> DataBackend:
 
     if fmt not in _BACKEND_REGISTRY:
         available = ", ".join(sorted(_BACKEND_REGISTRY))
-        raise ValueError(f"Unsupported format: {fmt}. Available: {available}")
+        raise ValueError(f"不支持的格式：{fmt}，可用格式：{available}")
     return _BACKEND_REGISTRY[fmt]()
 
 
@@ -130,9 +130,16 @@ def save(path: Path | str, model: Any, *, fmt: str = "h5", **options: Any) -> No
     payload = _run_before_save(path, fmt, model, **options)
     backend = get_backend(fmt)
     try:
-        backend.save(path, payload, **options)
+        if fmt in {"csv", "h5"}:
+            from ._storage_commit import _FileCommit
+
+            with _FileCommit(path.parent, f"模型文件 {path.name}") as commit:
+                backend.save(commit.stage(path, preserve=True), payload, **options)
+                commit.commit()
+        else:
+            backend.save(path, payload, **options)
     except Exception as exc:  # noqa: BLE001
-        raise BackendError(f"save failed: fmt={fmt}, path={path}") from exc
+        raise BackendError(f"保存失败：格式={fmt}，路径={path}") from exc
     logger.info("save done: fmt=%s, path=%s", fmt, path)
 
 
@@ -146,11 +153,14 @@ def load(
     """通过已注册后端加载模型。"""
 
     path = Path(path)
+    from ._storage_commit import _WriteMarker
+
+    _WriteMarker.check(path.parent)
     backend = get_backend(fmt)
     try:
         raw = backend.load(path, category=category, **options)
     except Exception as exc:  # noqa: BLE001
-        raise BackendError(f"load failed: fmt={fmt}, path={path}, category={category}") from exc
+        raise BackendError(f"加载失败：格式={fmt}，路径={path}，类别={category}，原因={exc}") from exc
     loaded = _run_after_load(path, fmt, category, raw, **options)
     logger.info("load done: fmt=%s, path=%s, category=%s", fmt, path, category)
     return loaded
@@ -170,7 +180,7 @@ def inspect(
     try:
         units = backend.inspect_units(path, category=category, **options)
     except Exception as exc:  # noqa: BLE001
-        raise BackendError(f"inspect failed: fmt={fmt}, path={path}, category={category}") from exc
+        raise BackendError(f"单位检查失败：格式={fmt}，路径={path}，类别={category}，原因={exc}") from exc
     logger.info("inspect done: fmt=%s, path=%s, category=%s", fmt, path, category)
     return units
 

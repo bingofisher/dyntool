@@ -1,9 +1,14 @@
-"""?????????????????"""
+"""存储策略共享的单位、序列化与路径上下文。"""
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from copy import deepcopy
+from contextlib import closing
 import json
 import types
+import re
+from threading import RLock
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Union, get_args, get_origin
 
@@ -25,10 +30,108 @@ from .storage_constants import (
 from .storage_options import ResolvedStorageDataOptions, resolve_storage_data_options
 from .data_storage import DataStorage
 from ..storage.types import AttrDataFormat, NameResolver, StorageScheme
+from ..domain._provenance import _SampleResultState
 
 if TYPE_CHECKING:
     from ..domain.samples.base import SampleBaseModel
     from ..domain.samples.sets import SampleSetBase
+
+
+@dataclass(slots=True)
+class _SampleWritePlan:
+    """统一非空槽位更新、metadata 与 alias；未选择的数据由存储策略保留。"""
+
+    uid: str
+    alias: str
+    metadata: dict[str, Any]
+    data: dict[str, Any]
+
+    @classmethod
+    def build(
+        cls,
+        context: StorageContext,
+        sample: SampleBaseModel,
+        categories: list[str] | None,
+        stored_states: dict[str, dict[str, Any]] | None = None,
+    ) -> _SampleWritePlan:
+        updates: dict[str, Any] = {}
+        precision_states: dict[str, dict[str, Any]] = {}
+        for category in context.resolve_storage_categories(categories):
+            field = sample.sample_schema.resolve_field(category)
+            value = sample.data_vars.get(field)
+            if value is None:
+                continue
+            if not hasattr(value, "to_dict") or not hasattr(type(value), "from_dict"):
+                raise TypeError(f"样本字段 '{category}' 不支持 to_dict/from_dict。")
+            if context.decimal_round() is not None or context.float_dtype() is not None:
+                from copy import deepcopy
+                from uuid import uuid5, NAMESPACE_URL
+                from ..domain.models._model_payload import _ModelPayloadCodec
+
+                original = value
+                value = context.deserialize_container(category, context.serialize_container(value))
+                if not _ModelPayloadCodec.equal(original.to_dict(), value.to_dict()):
+                    record = deepcopy(original._provenance)
+                    options = {
+                        "decimal_round": context.decimal_round(),
+                        "float_dtype": context.float_dtype(),
+                        "units": original.current_units(),
+                    }
+                    record["revision"] = uuid5(
+                        NAMESPACE_URL, record["revision"] + json.dumps(options, sort_keys=True)
+                    ).hex
+                    record["storage_precision"] = options
+                    value.__dict__["_provenance"] = record
+                    precision_states[category] = record
+            updates[category] = value
+        states = _SampleResultState(sample).projected(
+            list(updates),
+            existing=stored_states is not None or sample.uid in context._uid_names,
+            base=context.stored_result_state(sample.uid) if stored_states is None else stored_states,
+        )
+        states.update(precision_states)
+        _SampleResultState(sample).invalidate(states)
+        for category, model in tuple(updates.items()):
+            from copy import deepcopy
+
+            if model._provenance != states[category]:
+                clone = deepcopy(model)
+                clone.__dict__["_provenance"] = states[category]
+                updates[category] = clone
+        metadata = sample.metadata.model_dump()
+        metadata["_dyntool_state"] = states
+        return cls(sample.uid, sample.alias, metadata, updates)
+
+
+class _SampleNameReservation:
+    """单写者会话内维护名称归属和输入顺序预约。"""
+
+    def __init__(self) -> None:
+        self.owners: dict[str, str] | None = None
+
+    def reset(self) -> None:
+        self.owners = None
+
+    def reserve(self, strategy: Any, sample: Any, name: str) -> None:
+        if self.owners is None:
+            self.owners = {value.casefold(): uid for uid, value in strategy.uid_name_index().items()}
+        key = name.casefold()
+        owner = self.owners.get(key)
+        if owner is not None and owner != sample.uid:
+            raise ValueError(f"命名冲突：名称 {name!r} 已属于 UID {owner}，不能写入 {sample.uid}")
+        context = strategy.ctx
+        targets = {
+            StorageScheme.SAMPLE_JSON: context.base_dir / f"{name}.json",
+            StorageScheme.SAMPLE_H5: context.base_dir / f"{name}.h5",
+            StorageScheme.SET_DIR: context.base_dir / name,
+        }
+        target = targets.get(context.storage_scheme)
+        if target is not None:
+            if not target.resolve().is_relative_to(context.base_dir.resolve()):
+                raise ValueError(f"样本目标路径越界：{target}")
+            if target.exists() and owner is None:
+                raise ValueError(f"目标文件归属未知，拒绝覆盖：{target}")
+        self.owners[key] = sample.uid
 
 
 class StorageContext:
@@ -67,6 +170,11 @@ class StorageContext:
             data_storage: 可复用的数据模型持久化辅助对象；未提供时自动创建。
         """
 
+        self._last_write_plan: _SampleWritePlan | None = None
+        self._uid_names: dict[str, str] = {}
+        self._result_state_cache: dict[str, dict[str, dict[str, Any]]] = {}
+        self.write_lock = RLock()
+        self.name_reservations = _SampleNameReservation()
         self.sampleset = sampleset
         self.base_dir = base_dir
         self.storage_scheme = storage_scheme
@@ -84,8 +192,46 @@ class StorageContext:
         }
         self._metadata_table_cache: pd.DataFrame | None = None
 
+    def stored_result_state(self, uid: str) -> dict[str, dict[str, Any]]:
+        """仅读取已持久化 metadata，部分保存不解码旧数组。"""
+        if uid in self._result_state_cache:
+            return self._result_state_cache[uid]
+        name = self._uid_names.get(uid)
+        if name is None:
+            return {}
+        if self.storage_scheme is StorageScheme.SET_SQLITE_H5:
+            import sqlite3
+
+            with closing(
+                sqlite3.connect(self.sqlite_index_path().resolve().as_uri() + "?mode=ro", uri=True)
+            ) as connection:
+                row = connection.execute("SELECT metadata_json FROM sample WHERE uid=?", (uid,)).fetchone()
+                metadata = json.loads(row[0]) if row is not None else {}
+        elif self.storage_scheme in {StorageScheme.SAMPLE_H5, StorageScheme.SET_H5}:
+            import h5py
+
+            target = (
+                self.base_dir / f"{name}.h5" if self.storage_scheme is StorageScheme.SAMPLE_H5 else self.set_h5_path()
+            )
+            with h5py.File(target, "r") as file:
+                group = file if self.storage_scheme is StorageScheme.SAMPLE_H5 else file[uid]
+                metadata = json.loads(str(group.attrs["metadata_json"]))
+        elif self.storage_scheme is StorageScheme.SET_ATTR_TABLE:
+            rows = self.load_metadata_table()
+            metadata = json.loads(str(rows.loc[rows[META_COL_UID] == uid, META_COL_METADATA_JSON].iloc[0]))
+        else:
+            target = (
+                self.base_dir / f"{name}.json"
+                if self.storage_scheme is StorageScheme.SAMPLE_JSON
+                else (self.base_dir / name / "metadata.json")
+            )
+            metadata = json.loads(target.read_text(encoding="utf-8"))["metadata"]
+        states = metadata.get("_dyntool_state", {})
+        self._result_state_cache[uid] = states
+        return states
+
     def category_fields(self) -> list[str]:
-        """???????????????????????"""
+        """返回可存储的标准槽位名。"""
 
         return list(self._category_fields_cache)
 
@@ -148,17 +294,17 @@ class StorageContext:
         return self._resolved_data_options.attr_data_format
 
     def decimal_round(self) -> int | None:
-        """?????????????????"""
+        """返回浮点输出的小数舍入位数。"""
 
         return self._resolved_data_options.decimal_round
 
     def float_dtype(self) -> str | None:
-        """???????????? dtype ???"""
+        """返回浮点输出的目标 dtype。"""
 
         return self._resolved_data_options.float_dtype
 
     def h5_dataset_options(self) -> dict[str, Any]:
-        """???????? H5 dataset ?????"""
+        """返回 H5 数据集创建选项。"""
 
         return self._resolved_data_options.h5_dataset_options.copy()
 
@@ -190,8 +336,15 @@ class StorageContext:
             },
         )
         resolved = str(candidate).strip()
-        if not resolved:
-            raise ValueError("name_resolver returned an empty file name")
+        if (
+            not resolved
+            or resolved in {".", ".."}
+            or resolved.endswith((".", " "))
+            or re.search(r'[<>:"/\\|?*\x00-\x1f]', resolved)
+            or resolved.split(".")[0].upper()
+            in {"CON", "PRN", "AUX", "NUL", *[f"COM{i}" for i in range(1, 10)], *[f"LPT{i}" for i in range(1, 10)]}
+        ):
+            raise ValueError(f"name_resolver 返回了非法文件名：{resolved!r}")
         return resolved
 
     def sample_data_dict(self, sample: SampleBaseModel, categories: list[str] | None = None) -> dict[str, Any]:
@@ -212,17 +365,19 @@ class StorageContext:
             类级 `from_dict()`，否则后续无法形成可逆的持久化流程。
         """
 
-        selected = self.resolve_storage_categories(categories)
-        out: dict[str, Any] = {}
-        for category in selected:
-            field = sample.sample_schema.resolve_field(category)
-            data = sample.data_vars.get(field)
-            if data is None:
-                continue
-            if not hasattr(data, "to_dict") or not hasattr(data.__class__, "from_dict"):
-                raise TypeError(f"样本字段 '{category}' 不支持 to_dict/from_dict。")
-            out[category] = data
-        return out
+        return self.write_plan(sample, categories).data
+
+    def write_plan(
+        self,
+        sample: SampleBaseModel,
+        categories: list[str] | None = None,
+        *,
+        stored_states: dict[str, dict[str, Any]] | None = None,
+    ) -> _SampleWritePlan:
+        """创建单样本写入计划，不触发未加载槽位的隐式读取。"""
+        plan = _SampleWritePlan.build(self, sample, categories, stored_states)
+        self._last_write_plan = plan
+        return plan
 
     def apply_precision_to_array(self, value: np.ndarray) -> np.ndarray:
         """按 `data_options` 对数组执行舍入和 dtype 收敛。"""
@@ -248,7 +403,7 @@ class StorageContext:
 
         Notes:
             该方法会递归遍历 `list`、`tuple`、`dict`、`numpy.ndarray` 和 NumPy 标量。
-            仅浮点值会被舍入或强制转换 dtype，其它类型保持原样。
+            仅数值载荷中的浮点值会被舍入或强制转换 dtype；追溯记录的计算参数保持原精度。
         """
 
         if isinstance(payload, np.ndarray):
@@ -260,7 +415,10 @@ class StorageContext:
         if isinstance(payload, tuple):
             return tuple(self.apply_precision_payload(x) for x in payload)
         if isinstance(payload, dict):
-            return {k: self.apply_precision_payload(v) for k, v in payload.items()}
+            return {
+                k: deepcopy(v) if k in {"_dyntool", "_dyntool_state"} else self.apply_precision_payload(v)
+                for k, v in payload.items()
+            }
         if isinstance(payload, float):
             out = round(payload, self.decimal_round()) if self.decimal_round() is not None else payload
             if self.float_dtype() is not None:
@@ -284,7 +442,7 @@ class StorageContext:
         return payload
 
     def serialize_container(self, data: Any) -> dict[str, Any]:
-        """????????????????????"""
+        """序列化数据容器并应用输出精度设置。"""
 
         if not hasattr(data, "to_dict"):
             raise TypeError(f"{type(data).__name__} 不支持 to_dict")
@@ -341,22 +499,22 @@ class StorageContext:
         return annotation
 
     def set_h5_path(self) -> Path:
-        """?????? H5 ?????"""
+        """返回集合 H5 文件路径。"""
 
         return self.base_dir / self.set_filename
 
     def sqlite_index_path(self) -> Path:
-        """?? SQLite ???????"""
+        """返回 SQLite 索引文件路径。"""
 
         return self.base_dir / DEFAULT_SQLITE_INDEX_FILENAME
 
     def sqlite_payload_h5_path(self) -> Path:
-        """?? SQLite + H5 ??? payload H5 ???"""
+        """返回 SQLite 与 H5 组合策略的 payload 文件路径。"""
 
         return self.base_dir / DEFAULT_SQLITE_PAYLOAD_H5_FILENAME
 
     def metadata_table_path(self) -> Path:
-        """???????????"""
+        """返回元数据索引表路径。"""
 
         return self.base_dir / METADATA_TABLE_FILENAME
 
@@ -380,14 +538,22 @@ class StorageContext:
         normalized_df.to_csv(self.metadata_table_path(), index=False, encoding=CSV_ENCODING_UTF8_SIG)
 
     def upsert_metadata_table_row(self, sample: SampleBaseModel, name: str) -> None:
-        """???????????????????"""
+        """更新或新增样本元数据索引行。"""
 
-        df = self._metadata_table_cache if self._metadata_table_cache is not None else self.load_metadata_table()
+        self.save_metadata_table(self.metadata_table_update(sample, name))
+
+    def metadata_table_update(
+        self, sample: SampleBaseModel, name: str, *, metadata: dict[str, Any] | None = None
+    ) -> pd.DataFrame:
+        """构造更新后的元数据表，提交前不修改缓存或磁盘。"""
+        df = self.load_metadata_table()
         row: dict[str, Any] = {
             META_COL_UID: sample.uid,
             META_COL_NAME: name,
             META_COL_ALIAS: sample.alias,
-            META_COL_METADATA_JSON: json.dumps(sample.metadata.model_dump(), ensure_ascii=False, default=str),
+            META_COL_METADATA_JSON: json.dumps(
+                metadata if metadata is not None else self.write_plan(sample).metadata, ensure_ascii=False, default=str
+            ),
         }
         row.update(sample.metadata.to_flatten_dict(sep="@"))
         columns = list(dict.fromkeys([*df.columns.tolist(), *row.keys()]))
@@ -395,16 +561,16 @@ class StorageContext:
         if META_COL_UID in updated.columns:
             updated = updated.loc[updated[META_COL_UID] != sample.uid].reset_index(drop=True)
         updated.loc[len(updated)] = [row.get(column, pd.NA) for column in columns]
-        self.save_metadata_table(updated)
+        return updated
 
     def float_format(self) -> str | None:
-        """?? `pandas` ?????????????????"""
+        """返回 pandas CSV 导出的浮点格式。"""
 
         if self.decimal_round() is None:
             return None
         return f"%.{self.decimal_round()}f"
 
     def prepare_container_for_csv(self, category: str, data: Any) -> Any:
-        """?????????? CSV ?????????"""
+        """根据精度设置准备 CSV 导出的数据容器。"""
 
         return self.deserialize_container(category, self.serialize_container(data))

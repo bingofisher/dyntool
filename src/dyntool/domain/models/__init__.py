@@ -15,7 +15,16 @@ from .response_spectrum import (
     SpecDispSeries,
     SpecVelSeries,
 )
-from .time_series import AccelSeries, DispSeries, ForceSeries, TimeSeries, VelSeries
+from .time_series import (
+    AccelSeries,
+    DispSeries,
+    ForceSeries,
+    MomentSeries,
+    StrainSeries,
+    StressSeries,
+    TimeSeries,
+    VelSeries,
+)
 from .transfer_function import TransferFunctionAnalyzer, TransferFunctionResult, analyze_transfer_function
 from .vibration_evaluation import FDMVLEval, FPVDVEval, OTOVLEval, ZVLEval
 
@@ -27,6 +36,9 @@ __all__ = [
     "VelSeries",
     "DispSeries",
     "ForceSeries",
+    "MomentSeries",
+    "StressSeries",
+    "StrainSeries",
     "FreqAmpSeries",
     "FreqPhaSeries",
     "FreqSpec",

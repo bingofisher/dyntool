@@ -633,10 +633,12 @@ class FreqSpec(DataModelBase):
     category: ClassVar[DataCategory] = DataCategory.FS_SPEC
     axis_field: ClassVar[str | None] = "freq"
     value_field: ClassVar[str | None] = None
+    _xarray_components: ClassVar[dict[str, type[DataModelBase]]] = {"amp": FreqAmpSeries, "pha": FreqPhaSeries}
 
     def __init__(self, amp: FreqAmpSeries | None = None, pha: FreqPhaSeries | None = None) -> None:
         if amp is None and pha is None:
-            raise ValueError("FreqSpec requires at least one of amp or pha.")
+            raise ValueError("组合频谱至少需要一个幅值或相位分量")
+        self._validate_component_axes((amp, pha), "hertz")
         self.amp = amp
         self.pha = pha
 

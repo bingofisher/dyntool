@@ -6,11 +6,30 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+import json
+
 import h5py
 import numpy as np
 
 from ...domain.constants import DataCategory, normalize_unit_map
 from ..storage_options import resolve_h5_dataset_options
+
+
+class _H5UnitInspector:
+    """仅遍历结构与属性，不读取 Dataset 数值。"""
+
+    @classmethod
+    def collect(cls, group: h5py.Group, prefix: str = "") -> dict[str, str]:
+        """返回字段路径与当前单位。"""
+        units: dict[str, str] = {}
+        for name, node in group.items():
+            path = f"{prefix}.{name}" if prefix else str(name)
+            if isinstance(node, h5py.Group):
+                units.update(cls.collect(node, path))
+            elif "unit" in node.attrs:
+                unit = node.attrs["unit"]
+                units[path] = unit.decode("utf-8") if isinstance(unit, bytes) else str(unit)
+        return units
 
 
 def _write_mapping(
@@ -21,6 +40,9 @@ def _write_mapping(
 ) -> None:
     units = normalize_unit_map(data.get("_units")) if isinstance(data.get("_units"), Mapping) else {}
     for key, value in data.items():
+        if key == "_dyntool":
+            group.attrs["_dyntool"] = json.dumps(value, ensure_ascii=False)
+            continue
         if key == "_units" or value is None:
             continue
         if isinstance(value, Mapping):
@@ -28,6 +50,8 @@ def _write_mapping(
             _write_mapping(subgroup, value, dataset_options=dataset_options)
             continue
         arr = np.asarray(value)
+        if arr.dtype.kind == "U":
+            arr = arr.astype(h5py.string_dtype(encoding="utf-8"))
         effective_dataset_options = {} if arr.shape == () else dict(dataset_options or {})
         dataset = group.create_dataset(str(key), data=arr, **effective_dataset_options)
         unit = units.get(str(key))
@@ -42,7 +66,7 @@ def _read_mapping(group: h5py.Group) -> dict[str, Any]:
         if isinstance(value, h5py.Group):
             data[key] = _read_mapping(value)
             continue
-        arr = value[()]
+        arr = value.asstr()[()] if h5py.check_string_dtype(value.dtype) is not None else value[()]
         data[key] = arr
         if "unit" in value.attrs:
             unit = value.attrs["unit"]
@@ -51,6 +75,8 @@ def _read_mapping(group: h5py.Group) -> dict[str, Any]:
             units[key] = str(unit)
     if units:
         data["_units"] = units
+    if "_dyntool" in group.attrs:
+        data["_dyntool"] = json.loads(str(group.attrs["_dyntool"]))
     return data
 
 
@@ -102,23 +128,7 @@ class H5Backend:
         del category, options
         path = Path(path)
         with h5py.File(path, "r") as handle:
-            data = _read_mapping(handle)
-        units: dict[str, str] = {}
-
-        def _collect(prefix: str, payload: Mapping[str, Any]) -> None:
-            local_units = payload.get("_units", {})
-            if isinstance(local_units, Mapping):
-                for key, unit in local_units.items():
-                    field = f"{prefix}{key}" if not prefix else f"{prefix}.{key}"
-                    units[field] = str(unit)
-            for key, value in payload.items():
-                if key == "_units" or not isinstance(value, Mapping):
-                    continue
-                nested_prefix = f"{prefix}{key}" if not prefix else f"{prefix}.{key}"
-                _collect(nested_prefix, value)
-
-        _collect("", data)
-        return units
+            return _H5UnitInspector.collect(handle)
 
 
 __all__ = ["H5Backend"]

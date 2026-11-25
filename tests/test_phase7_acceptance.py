@@ -35,6 +35,7 @@ def workspace_tmp_dir() -> Path:
     try:
         yield base
     finally:
+        dt_logging.configure_logging(mode=LoggingMode.CONSOLE_ONLY)
         shutil.rmtree(base, ignore_errors=True)
 
 
@@ -70,7 +71,7 @@ def test_phase7_minimal_closed_loop_covers_log_storage_and_plot(
         sample_domain=SampleDomain.VIBRATION_TEST,
     )
 
-    sample_set.eval_zvl(overwrite=True, freq_range=(2.0, 60.0))
+    sample_set.eval_zvl(overwrite=True, freq_range=(2.0, 60.0), time_windows=-1)
     sample_set.save(store_path, storage_scheme=StorageScheme.SET_H5)
     loaded = DefaultSampleSet.from_storage(
         store_path,
@@ -131,7 +132,7 @@ def test_phase7_real_input_file_roundtrip_uses_class_first_api(
         record="R1",
         timestamp="2026-03-13 12:00:00",
     )
-    sample.eval_zvl(overwrite=True, freq_range=(2.0, 60.0))
+    sample.eval_zvl(overwrite=True, freq_range=(2.0, 60.0), time_windows=-1)
     sample_set = DefaultSampleSet.from_samples(
         [sample],
         sample_domain=SampleDomain.VIBRATION_TEST,

@@ -242,8 +242,8 @@ class TestTimeSeries:
         value = np.sin(2 * np.pi * 10 * np.arange(n) * dt)
         accel = AccelSeries.from_data(value, dt=dt)
         freqs, mag = accel.calc_fft()
-        assert len(freqs) == n // 2
-        assert len(mag) == n // 2
+        assert len(freqs) == n // 2 + 1
+        assert len(mag) == n // 2 + 1
 
     def test_calc_fft_with_phase_matches_compute_fft(self) -> None:
         """模型 FFT 代理结果应与 compute 纯算法一致。"""

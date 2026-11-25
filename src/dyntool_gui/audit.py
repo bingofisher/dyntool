@@ -335,6 +335,7 @@ class _AuditSnapshotRecorder:
             "processing_manager": bool(self.window.processing_manager.busy),  # type: ignore[attr-defined]
             "plot_manager": bool(self.window.plot_manager.busy),  # type: ignore[attr-defined]
             "export_manager": bool(self.window.export_manager.busy),  # type: ignore[attr-defined]
+            "analysis_save_manager": bool(self.window.analysis_save_manager.busy),  # type: ignore[attr-defined]
         }
 
     def _action_states(self) -> dict[str, bool]:
@@ -342,7 +343,8 @@ class _AuditSnapshotRecorder:
         return {
             name: bool(action.isEnabled())
             for name, action in actions_map.items()
-            if name in {"新建项目", "打开项目", "保存项目", "校验", "执行", "导入与筛选", "中止当前任务"}
+            if name
+            in {"新建项目", "打开项目", "保存项目", "保存分析数据", "校验", "执行", "导入与筛选", "中止当前任务"}
         }
 
     def _rule_snapshot(self, label: str) -> dict[str, object]:
@@ -539,9 +541,10 @@ def run_gui_audit(options: GuiAuditOptions) -> GuiAuditReport:
         recorder.capture("workflow")
         _capture_dialogs(report, window, output_dir, app)
         recorder.capture("dialogs")
+        # 巡检窗口由本函数独立创建；结束时明确放弃其内存状态，不写入来源。
+        window.close()
+        _pump_events(app)
 
-    window.close()
-    _pump_events(app)
     report.write()
     return report
 
@@ -944,10 +947,22 @@ class _DialogInterceptor(AbstractContextManager["_DialogInterceptor"]):
             dialog.close()
             return int(QDialog.DialogCode.Accepted)
 
+        def _answer_question(
+            parent: QWidget | None,
+            title: str,
+            text: str,
+            buttons: QMessageBox.StandardButton,
+            default: QMessageBox.StandardButton,
+        ) -> QMessageBox.StandardButton:
+            del parent, title, text, default
+            if buttons & QMessageBox.StandardButton.Discard:
+                return QMessageBox.StandardButton.Discard
+            return QMessageBox.StandardButton.No
+
         QMessageBox.warning = _record_message  # type: ignore[method-assign]
         QMessageBox.information = _record_message  # type: ignore[method-assign]
         QMessageBox.about = _record_message  # type: ignore[method-assign]
-        QMessageBox.question = lambda *args, **kwargs: QMessageBox.StandardButton.No  # type: ignore[method-assign]
+        QMessageBox.question = _answer_question  # type: ignore[method-assign]
         QDialog.exec = _record_exec  # type: ignore[method-assign]
         return self
 

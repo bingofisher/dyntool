@@ -106,12 +106,9 @@ def _ensure_current_schema(conn: sqlite3.Connection) -> None:
 
     table_names = _table_names(conn)
     version = _schema_version(conn)
-    if version >= _SQLITE_H5_SCHEMA_VERSION_V2:
-        _ensure_v2_schema_objects(conn)
-        if "sample_metadata_flat" in table_names:
-            _drop_v1_metadata_flat(conn)
-        if version != _SQLITE_H5_SCHEMA_VERSION_V2:
-            _set_schema_version(conn, _SQLITE_H5_SCHEMA_VERSION_V2)
+    if version > _SQLITE_H5_SCHEMA_VERSION_V2:
+        raise ValueError(f"SQLite schema 版本 {version} 高于支持的版本 2，拒绝修改")
+    if version == _SQLITE_H5_SCHEMA_VERSION_V2:
         return
     if "sample" in table_names and "sample_metadata_flat" in table_names:
         _migrate_v1_to_v2(conn)

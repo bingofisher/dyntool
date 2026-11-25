@@ -5,9 +5,11 @@ from __future__ import annotations
 from dataclasses import asdict, is_dataclass
 import json
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any
 
 from ..session import (
+    AnalysisDataState,
     FilterGroup,
     FilterPredicate,
     FilterSpec,
@@ -29,7 +31,7 @@ class ProjectFileStore:
     """负责读写 GUI 项目文件。"""
 
     def save(self, session: ProjectSession, path: str | Path) -> Path:
-        """保存 GUI 项目状态到 JSON 文件。"""
+        """先写入同目录暂存文件，再替换 GUI 项目 JSON。"""
 
         target = Path(path).resolve()
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -50,8 +52,16 @@ class ProjectFileStore:
             "import_state": self._dump_import_state(session.import_state),
             "subset_state": self._dump_subset_state(session.subset_state),
             "current_scope": self._to_jsonable(session.current_scope),
+            "analysis_data": {
+                "path": None if session.analysis_data.path is None else str(session.analysis_data.path),
+                "last_saved": session.analysis_data.last_saved,
+            },
         }
-        target.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        serialized = json.dumps(payload, ensure_ascii=False, indent=2)
+        with TemporaryDirectory(prefix=".dyntool-project-", dir=target.parent) as temporary_dir:
+            staged = Path(temporary_dir) / target.name
+            staged.write_text(serialized, encoding="utf-8", newline="\n")
+            staged.replace(target)
         return target
 
     def load(self, path: str | Path) -> ProjectSession:
@@ -76,6 +86,12 @@ class ProjectFileStore:
             import_state=self._load_import_state(payload.get("import_state", {})),
             subset_state=self._load_subset_state(payload.get("subset_state", {})),
             current_scope=self._load_scope_selection(payload.get("current_scope", {})),
+            analysis_data=AnalysisDataState(
+                path=None
+                if payload.get("analysis_data", {}).get("path") is None
+                else Path(payload["analysis_data"]["path"]).resolve(),
+                last_saved=str(payload.get("analysis_data", {}).get("last_saved", "")),
+            ),
         )
         session.mark_saved(str(payload.get("last_saved", session.last_saved)))
         return session

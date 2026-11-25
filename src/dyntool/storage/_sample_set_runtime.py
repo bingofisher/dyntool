@@ -10,6 +10,7 @@ from ..domain.enums import SampleDomain
 from ..domain.samples import SampleSet, SampleSetBase, VibrationTestSampleSet
 from ..domain.samples.factories import get_sample_set_class, require_sample_domain
 from ..domain.samples.types import SampleLoadMode
+from ..domain.samples._sample_set_storage import _SampleSetTransferPlanner, matches_current_storage_target
 from ._runtime_common import (
     bind_samples,
     infer_sample_set_scheme,
@@ -370,6 +371,8 @@ class _SampleSetStorageRuntimeMixin:
     ) -> SampleSetBase[Any]:
         """保存样本集及其样本。"""
 
+        if categories == []:
+            return sample_set
         logger.info(
             "save_sample_set request: path=%s, mode=%s, storage_scheme=%s, workers=%s, chunk_size=%s, strict=%s, "
             "categories=%s, set_filename=%s, data_options=%s",
@@ -395,6 +398,18 @@ class _SampleSetStorageRuntimeMixin:
                 set_filename=set_filename,
                 for_read=False,
             )
+            if request is not None and sample_set.storage is not None:
+                same_target = matches_current_storage_target(
+                    sample_set.storage,
+                    target_base_dir=request.base_dir.resolve(),
+                    storage_scheme=request.storage_scheme,
+                    target_set_filename=request.set_filename,
+                )
+                if not same_target or request.mode is StorageMode.RECREATE:
+                    planner = _SampleSetTransferPlanner(sample_set, categories=categories, filter_func=filter)
+                    planner.ensure_source_ready(
+                        items=planner.selected_items(), required_fields=planner.conversion_fields()
+                    )
             effective_strict = sample_set.strict if strict is None else strict
             self._execute_with_connected_sample_set_storage(
                 sample_set,
@@ -413,6 +428,9 @@ class _SampleSetStorageRuntimeMixin:
             logger.exception("save_sample_set failed")
             raise
         logger.info("save_sample_set done: path=%s", path)
+        report = sample_set.last_operation_report
+        if categories is None and filter is None and report is not None and report.stats.failed == 0:
+            sample_set.storage_dirty = False
         return sample_set
 
     def load_sample_set_runtime(

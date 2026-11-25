@@ -201,7 +201,7 @@ def test_sample_storage_load_canonicalizes_categories_before_strategy_call(
     storage = SampleStorage(ctx)
     calls: list[tuple[str, object]] = []
 
-    monkeypatch.setattr(storage, "index", lambda: {sample.uid: "sample-1"})
+    monkeypatch.setattr(storage.strategy, "uid_name_index", lambda: {sample.uid: "sample-1"})
 
     def fake_load_sample(
         uid: str,

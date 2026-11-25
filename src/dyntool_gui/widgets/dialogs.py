@@ -201,6 +201,8 @@ class HelpDialog(QDialog):
                         "2. 先做轻量预览或单位检查，再执行绑定。",
                         "3. 在“数据处理”页选择动作、范围和结果预览。",
                         "4. 在“图形绘制”页配置主题、范围和保存格式。",
+                        "5. 点击“保存分析数据”另存完整主集，再点击“保存项目”记录仓库引用。",
+                        "保存项目只保存工作区描述；关闭前会分别提醒未保存的分析数据和项目状态。",
                     )
                 ),
                 self,
@@ -390,6 +392,10 @@ class FigurePreviewDialog(QDialog):
             "当前显示最近一次图形预览的只读大图。" if figure is not None else "生成图形后可在这里查看大图预览。"
         )
 
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, self)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
 
 class ExportPrecheckDialog(QDialog):
     """导出预检窗。"""
@@ -525,6 +531,10 @@ class ResultPreviewDialog(QDialog):
         self._tabs.addTab(_build_result_table(state.series_rows, self), "序列结果")
         self._tabs.addTab(_build_result_table(state.peaks_rows, self), "峰值结果")
         layout.addWidget(self._tabs, 1)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, self)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
 
 
 def _build_readonly_text(body: str, parent: QWidget) -> QWidget:

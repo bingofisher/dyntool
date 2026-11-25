@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, assert_type
 
 import pandas as pd
+import xarray as xr
 
 import dyntool.config as dt_config
 import dyntool.compute as dt_compute
@@ -31,8 +32,14 @@ from dyntool import (
     ContainerFormat,
     DefaultSample,
     DefaultSampleSet,
+    FDMVLLimit,
+    FDMVLLimitStandard,
     LoggingMode,
     Metadata,
+    ForceSeries,
+    MomentSeries,
+    StressSeries,
+    StrainSeries,
     OperationResult,
     PlotKind,
     SampleDomain,
@@ -44,10 +51,27 @@ from dyntool import (
     VibrationTestSample,
     VibrationTestSampleSet,
     ZVLLimit,
+    TransferFunctionAnalyzer,
     reporting,
 )
 
 if TYPE_CHECKING:
+    mechanical_sample = DefaultSample(metadata=Metadata(identity={"case": "mechanical"}))
+    assert_type(mechanical_sample.force, ForceSeries | None)
+    assert_type(mechanical_sample.moment, MomentSeries | None)
+    assert_type(mechanical_sample.stress, StressSeries | None)
+    assert_type(mechanical_sample.strain, StrainSeries | None)
+    transfer_input = AccelSeries.from_data([1, 2, 3], dt=1 / 100.4)
+    analyzer = TransferFunctionAnalyzer.from_models(transfer_input, transfer_input, fs=100.4)
+    assert_type(analyzer.fs, float)
+    assert_type(transfer_input.to_xarray(), xr.Dataset | xr.DataArray)
+    assert_type(AccelSeries.from_xarray(transfer_input.to_xarray()), AccelSeries)
+    fdmvl_limit = FDMVLLimit.from_standard(
+        FDMVLLimitStandard.JGJ_T_170_2009,
+        scene="居民文教区夜间",
+    )
+    assert_type(fdmvl_limit, FDMVLLimit)
+
     accel = AccelSeries.from_data(
         [0.0, 0.1, -0.05],
         dt=0.01,

@@ -8,6 +8,7 @@ import sys
 from concurrent.futures import Future, ThreadPoolExecutor
 from functools import wraps
 from pathlib import Path
+from threading import Event
 from typing import TYPE_CHECKING, Any, Callable, Self
 
 import pandas as pd
@@ -28,6 +29,9 @@ from ..storage.types import (
 )
 from .data_storage import DataStorage
 from .persistence import RecoverableIOError
+from ._storage_commit import _StorageConsistencyError, _WriteMarker
+from ..domain.samples._sample_set_storage import build_storage_report
+import sqlite3
 from .sample_set_storage_concurrency import drain_completed, submit_until_limit
 from .sample_storage import SampleStorage
 from .sample_storage_context import StorageContext
@@ -135,6 +139,41 @@ class SampleSetStorage:
         self._ctx: StorageContext | None = None
         self._sample_storage: SampleStorage | None = None
 
+    def _assert_write_allowed(self, target: Path | None = None) -> None:
+        """只读查询视图不得通过任何路径别名修改源仓库。"""
+        owner = self.sampleset
+        origin = getattr(owner, "_view_origin_base_dir", None)
+        if getattr(owner, "_storage_access_mode", "read_write") != "read_only" or origin is None:
+            return
+        destination = target or self.base_dir
+        if destination is None:
+            return
+        origin, destination = Path(origin).resolve(), Path(destination).resolve()
+        if destination.is_relative_to(origin) or origin.is_relative_to(destination):
+            raise PermissionError("查询视图的源仓库只读，请另存到独立目标目录")
+
+    def _for_view(self, sampleset: "SampleSetBase") -> "SampleSetStorage":
+        """绑定视图自身成员，复用源配置与仓库串行写入锁。"""
+        result = type(self)(sampleset)
+        if self.base_dir is not None:
+            options = dict(self.data_options)
+            if self.storage_scheme is not StorageScheme.SET_ATTR_TABLE:
+                options.pop("attr_data_format", None)
+            result.connect(
+                self.base_dir,
+                mode=StorageMode.OPEN,
+                storage_scheme=self.storage_scheme,
+                data_options=options,
+                name_resolver=self.name_resolver,
+                set_filename=self.set_filename,
+            )
+            if self._ctx is not None and result._ctx is not None:
+                result._ctx.write_lock = self._ctx.write_lock
+                result._ctx.name_reservations = self._ctx.name_reservations
+                result._ctx._result_state_cache = self._ctx._result_state_cache
+                result._ctx._uid_names = self._ctx._uid_names
+        return result
+
     def connect(
         self,
         base_dir: str | Path,
@@ -181,6 +220,8 @@ class SampleSetStorage:
             default_set_filename=DEFAULT_SET_H5_FILENAME,
         )
         resolved_mode = resolved.mode
+        if resolved_mode is not StorageMode.OPEN:
+            self._assert_write_allowed(base_dir)
         resolved_scheme = resolved.storage_scheme
         resolved_data_options = resolved.data_options
         resolved_name_resolver = resolved.name_resolver
@@ -251,6 +292,8 @@ class SampleSetStorage:
         name_resolver: NameResolver | None,
         set_filename: str | None,
     ) -> Self:
+        if mode is not StorageMode.OPEN:
+            self._assert_write_allowed(base_dir)
         actual_set_filename = set_filename or DEFAULT_SET_H5_FILENAME
         _log_info(
             "connect sample-set storage request: path=%s, mode=%s, storage_scheme=%s, set_filename=%s, "
@@ -379,6 +422,8 @@ class SampleSetStorage:
     def save_sample(self, sample: SampleBaseModel, categories: list[str] | None = None) -> None:
         """保存单个样本及其选定槽位。"""
 
+        self._assert_write_allowed()
+
         self._require_sample_storage().save(sample, categories)
 
     @ensure_connected
@@ -414,11 +459,17 @@ class SampleSetStorage:
             当 `workers > 1` 时，`chunk_size` 用于限制并发提交窗口，避免一次性压入过多任务。
         """
 
+        self._assert_write_allowed()
+
         if workers < 1:
             raise ValueError("workers 必须大于等于 1")
         if chunk_size < 1:
             raise ValueError("chunk_size 必须大于等于 1")
+        if categories == []:
+            return {}
         sample_storage = self._require_sample_storage()
+        _WriteMarker.check(sample_storage.ctx.base_dir)
+        sample_storage.ctx.name_reservations.reset()
         selected_items = self._selected_items(filter)
         resolved_categories = sample_storage.ctx.resolve_storage_categories(categories)
         total = len(selected_items)
@@ -434,6 +485,7 @@ class SampleSetStorage:
         ok = 0
         fail = 0
         errors: dict[str, Exception] = {}
+        attempted: list[tuple[str, SampleBaseModel]] = []
         progress = _BatchProgress(
             desc="批量保存",
             total=total,
@@ -441,20 +493,39 @@ class SampleSetStorage:
             progress_callback=progress_callback,
         )
         try:
-            use_write_session = self.storage_scheme in {
-                StorageScheme.SET_H5,
-                StorageScheme.SET_SQLITE_H5,
-            }
+            use_write_session = (
+                strict
+                or workers == 1
+                or self.storage_scheme
+                in {
+                    StorageScheme.SET_H5,
+                    StorageScheme.SET_SQLITE_H5,
+                }
+            )
             if use_write_session:
                 with sample_storage.write_session() as session:
                     for completed_count, (uid, sample) in enumerate(selected_items, start=1):
+                        attempted.append((uid, sample))
                         try:
-                            session.save_sample(sample, resolved_categories)
+                            if self.storage_scheme in {StorageScheme.SET_H5, StorageScheme.SET_SQLITE_H5}:
+                                session.save_sample(sample, resolved_categories)
+                                sample_storage.accept_saved_state(sample, resolved_categories)
+                            else:
+                                self.save_sample(sample, resolved_categories)
                             ok += 1
                         except Exception as error:  # noqa: BLE001
+                            if isinstance(error, _StorageConsistencyError) and error.committed:
+                                sample_storage.accept_saved_state(sample, resolved_categories)
+                                ok += 1
+                                raise
                             logger.error("保存样本失败 (UID=%s): %s", uid, error)
                             fail += 1
                             errors[uid] = error
+                            if isinstance(
+                                error,
+                                (_StorageConsistencyError, OSError, sqlite3.OperationalError, sqlite3.ProgrammingError),
+                            ):
+                                raise
                             if strict:
                                 raise RecoverableIOError(f"保存样本失败: {uid}") from error
                         progress.advance_to(completed_count)
@@ -463,44 +534,57 @@ class SampleSetStorage:
                 in_flight_limit = max(workers, chunk_size)
                 tasks_iter = iter(selected_items)
 
-                def save_selected_sample(sample: SampleBaseModel) -> None:
-                    # 保持批量入口与单样本入口的行为契约一致，同时复用已解析好的分类列表。
-                    self.save_sample(sample, resolved_categories)
+                stopped = Event()
+
+                def save_selected_sample(sample: SampleBaseModel) -> bool:
+                    nonlocal ok, fail
+                    # 与提交锁一起检查停止状态，仓库级错误之后排队任务不得继续写入。
+                    with sample_storage.ctx.write_lock:
+                        if stopped.is_set():
+                            return False
+                        attempted.append((sample.uid, sample))
+                        try:
+                            self.save_sample(sample, resolved_categories)
+                            ok += 1
+                        except Exception as error:
+                            if isinstance(error, _StorageConsistencyError) and error.committed:
+                                ok += 1
+                                stopped.set()
+                                raise
+                            errors[sample.uid] = error
+                            fail += 1
+                            if isinstance(
+                                error,
+                                (_StorageConsistencyError, OSError, sqlite3.OperationalError, sqlite3.ProgrammingError),
+                            ):
+                                stopped.set()
+                                raise
+                            logger.error("保存样本失败 (UID=%s): %s", sample.uid, error)
+                        return True
 
                 with ThreadPoolExecutor(max_workers=workers) as executor:
                     pending: dict[Future[Any], str] = {}
-                    submit_until_limit(
-                        executor,
-                        pending,
-                        tasks_iter,
-                        save_selected_sample,
-                        limit=in_flight_limit,
-                    )
-                    while pending:
-                        completed = drain_completed(pending)
-                        for uid, future in completed:
-                            completed_count += 1
-                            try:
-                                future.result()
-                                ok += 1
-                            except Exception as error:  # noqa: BLE001
-                                logger.error("保存样本失败 (UID=%s): %s", uid, error)
-                                fail += 1
-                                errors[uid] = error
-                                if strict:
-                                    for pending_future in pending:
-                                        pending_future.cancel()
-                                    raise RecoverableIOError(f"保存样本失败: {uid}") from error
-                            progress.advance_to(completed_count)
-                        submit_until_limit(
-                            executor,
-                            pending,
-                            tasks_iter,
-                            save_selected_sample,
-                            limit=in_flight_limit,
-                        )
+                    try:
+                        submit_until_limit(executor, pending, tasks_iter, save_selected_sample, limit=in_flight_limit)
+                        while pending:
+                            completed = drain_completed(pending)
+                            for _, future in completed:
+                                if future.result():
+                                    completed_count += 1
+                                    progress.advance_to(completed_count)
+                            submit_until_limit(
+                                executor, pending, tasks_iter, save_selected_sample, limit=in_flight_limit
+                            )
+                    except BaseException:
+                        stopped.set()
+                        for pending_future in pending:
+                            pending_future.cancel()
+                        raise
         finally:
             progress.close()
+            build_storage_report(self.sampleset, action="save_all", strict=strict, items=attempted, errors=errors)
+            if errors:
+                self.sampleset.storage_dirty = True
         _log_info("save samples finished: ok=%s, fail=%s, total=%s", ok, fail, total)
         return errors
 
@@ -740,6 +824,8 @@ class SampleSetStorage:
     @ensure_connected
     def organize(self) -> None:
         """清理存储目录中不再属于当前样本集的陈旧条目。"""
+
+        self._assert_write_allowed()
 
         removed = self._require_sample_storage().organize(set(self.sampleset.keys()))
         _log_info("organize finished, removed stale entries: %s", removed)

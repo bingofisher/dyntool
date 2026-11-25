@@ -3,9 +3,19 @@
 from __future__ import annotations
 
 import weakref
-from typing import Any, Callable, Protocol, TypeVar, runtime_checkable
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Callable, Protocol, TypeVar, runtime_checkable
 
 from .errors import RuntimeBindingError, build_missing_runtime_error
+
+if TYPE_CHECKING:
+    from ..models import DataModelBase
+    from ..samples.base import SampleBase
+    from ..samples.sets import SampleSetBase
+
+ModelType = TypeVar("ModelType", bound="DataModelBase")
+SampleType = TypeVar("SampleType", bound="SampleBase")
+SampleSetType = TypeVar("SampleSetType", bound="SampleSetBase[Any]")
 
 RuntimeT = TypeVar("RuntimeT")
 
@@ -34,7 +44,7 @@ class ModelRuntimePort(Protocol):
             具体实现可以根据 `fmt` 和 `options` 决定实际写出策略。
         """
 
-    def load_model(self, model_type: type[Any], path: str, *, fmt: str = "h5", **options: Any) -> Any:
+    def load_model(self, model_type: type[ModelType], path: str, *, fmt: str = "h5", **options: Any) -> ModelType:
         """加载模型对象。
 
         Args:
@@ -88,7 +98,7 @@ class SampleRuntimePort(Protocol):
         该协议定义单个样本的存储绑定、保存、加载和重载行为。
     """
 
-    def connect_sample_storage(self, sample: Any, base_dir: str, **options: Any) -> Any:
+    def connect_sample_storage(self, sample: SampleType, base_dir: str, **options: Any) -> SampleType:
         """为样本连接存储上下文。
 
         Args:
@@ -103,7 +113,7 @@ class SampleRuntimePort(Protocol):
             绑定后可使用无路径重载等依赖上下文的方法。
         """
 
-    def save_sample(self, sample: Any, path: str | None = None, **options: Any) -> Any:
+    def save_sample(self, sample: SampleType, path: str | None = None, **options: Any) -> SampleType:
         """保存样本对象。
 
         Args:
@@ -118,7 +128,7 @@ class SampleRuntimePort(Protocol):
             具体实现可在 `path` 缺失时回退到已绑定的存储上下文。
         """
 
-    def load_sample(self, sample: Any, path: str | None = None, **options: Any) -> Any:
+    def load_sample(self, sample: SampleType, path: str | None = None, **options: Any) -> SampleType:
         """加载样本对象。
 
         Args:
@@ -133,7 +143,7 @@ class SampleRuntimePort(Protocol):
             具体实现可在 `path` 缺失时回退到已绑定的存储上下文。
         """
 
-    def reload_sample(self, sample: Any) -> Any:
+    def reload_sample(self, sample: SampleType) -> SampleType:
         """按已绑定上下文重新加载样本。"""
 
 
@@ -145,7 +155,7 @@ class SampleSetRuntimePort(Protocol):
         该协议定义样本集的存储绑定、整集 I/O、批量加载和批量保存行为。
     """
 
-    def connect_sample_set_storage(self, sample_set: Any, base_dir: str, **options: Any) -> Any:
+    def connect_sample_set_storage(self, sample_set: SampleSetType, base_dir: str, **options: Any) -> SampleSetType:
         """为样本集连接存储上下文。
 
         Args:
@@ -160,7 +170,7 @@ class SampleSetRuntimePort(Protocol):
             绑定后可使用批量加载、批量保存等依赖上下文的方法。
         """
 
-    def save_sample_set(self, sample_set: Any, path: str | None = None, **options: Any) -> Any:
+    def save_sample_set(self, sample_set: SampleSetType, path: str | None = None, **options: Any) -> SampleSetType:
         """保存样本集对象。
 
         Args:
@@ -175,7 +185,7 @@ class SampleSetRuntimePort(Protocol):
             具体实现可在 `path` 缺失时回退到已绑定的存储上下文。
         """
 
-    def load_sample_set(self, sample_set: Any, path: str | None = None, **options: Any) -> Any:
+    def load_sample_set(self, sample_set: SampleSetType, path: str | None = None, **options: Any) -> SampleSetType:
         """加载样本集对象。
 
         Args:
@@ -218,7 +228,7 @@ class SampleSetRuntimePort(Protocol):
             该方法用于批量加载，允许部分失败并返回汇总结果。
         """
 
-    def organize_sample_set_storage(self, sample_set: Any) -> Any:
+    def organize_sample_set_storage(self, sample_set: SampleSetType) -> SampleSetType:
         """整理样本集的存储目录。
 
         Args:
@@ -231,16 +241,16 @@ class SampleSetRuntimePort(Protocol):
             具体实现可根据当前存储方案重建目录或文件布局。
         """
 
-    def export_scalar_frame(self, sample_set: Any, output_path: str, **options: Any) -> Any:
+    def export_scalar_frame(self, sample_set: Any, output_path: str, **options: Any) -> Path:
         """导出样本集标量统计表。"""
 
-    def export_series_frame(self, sample_set: Any, output_path: str, **options: Any) -> Any:
+    def export_series_frame(self, sample_set: Any, output_path: str, **options: Any) -> Path:
         """导出样本集序列表。"""
 
-    def export_peaks_frame(self, sample_set: Any, output_path: str, **options: Any) -> Any:
+    def export_peaks_frame(self, sample_set: Any, output_path: str, **options: Any) -> Path:
         """导出样本集峰值统计表。"""
 
-    def export_report_package(self, sample_set: Any, output_dir: str, **options: Any) -> Any:
+    def export_report_package(self, sample_set: Any, output_dir: str, **options: Any) -> Path:
         """导出样本集完整报告包。"""
 
 
@@ -261,7 +271,15 @@ def _bind_instance_runtime(
 ) -> None:
     """绑定对象级 runtime。"""
 
-    runtime_map[id(target)] = (weakref.ref(target), runtime)
+    key = id(target)
+
+    def discard(ref: weakref.ReferenceType[Any]) -> None:
+        """仅移除当前引用，避免对象 ID 复用时删除新的绑定。"""
+        entry = runtime_map.get(key)
+        if entry is not None and entry[0] is ref:
+            runtime_map.pop(key, None)
+
+    runtime_map[key] = (weakref.ref(target, discard), runtime)
 
 
 def _resolve_instance_runtime(

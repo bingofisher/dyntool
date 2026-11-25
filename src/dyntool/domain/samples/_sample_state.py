@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Iterable, Mapping
+from typing import TYPE_CHECKING, Any, Iterable, Mapping
+from copy import deepcopy
 
 from ..constants import DataCategory
 from ..metadata import MetadataBase
@@ -50,6 +51,32 @@ class _SampleIdentityState:
 
         metadata.bind_change_callback(self._sample._on_metadata_changed)
 
+    def validate_uid(self, uid: str) -> None:
+        """在任何身份发布前检查拥有者内的 UID 冲突。"""
+        owner = self._sample._storage_set
+        if owner is not None and uid in owner and owner[uid] is not self._sample:
+            raise ValueError(f"样本集内已存在 UID 冲突: {uid}")
+
+    def publish_change(self, old_uid: str, old_alias: str | None) -> None:
+        """同步身份，失败时恢复 alias、索引与拥有者脏状态。"""
+        sample = self._sample
+        self.validate_uid(sample.uid)
+        owner = sample._storage_set
+        alias_state = sample.alias, sample._alias_overridden
+        keys = dict(owner._items) if owner is not None else None
+        dirty = owner.storage_dirty if owner is not None else False
+        try:
+            self.sync_identity_state(old_uid, old_alias)
+            if owner is not None:
+                owner._on_sample_metadata_changed(sample, old_uid)
+        except Exception:
+            self.set_alias_internal(alias_state[0], mark_override=alias_state[1])
+            if owner is not None:
+                owner._items.clear()
+                owner._items.update(keys)
+                owner.storage_dirty = dirty
+            raise
+
     def sync_alias_after_metadata_change(
         self,
         *,
@@ -86,6 +113,79 @@ class _SampleIdentityState:
         )
 
 
+class _SampleMutation:
+    """预检统一更新请求，并在发布失败时恢复聚合状态。"""
+
+    def __init__(self, sample: Any) -> None:
+        self.sample = sample
+
+    def apply(self, patch: dict[str, Any], *, strict: bool) -> None:
+        sample = self.sample
+        patch = dict(patch)
+        data = patch.pop("data_vars", {})
+        if not isinstance(data, dict):
+            raise TypeError("data_vars 必须是 dict[str, DataModelBase]")
+        valid_keys = {"alias", "metadata", *sample.sample_schema.slot_names()}
+        for key in list(patch):
+            if key not in valid_keys:
+                if strict:
+                    raise KeyError(f"未知样本字段：{key}")
+                patch.pop(key)
+        slots = {**data, **{key: value for key, value in patch.items() if key not in {"alias", "metadata"}}}
+        for key, value in slots.items():
+            spec = sample.sample_schema.field_spec(str(key))
+            if value is not None and not spec.supports(value):
+                raise TypeError(f"数据项 {key!r} 只接受 {spec.model_type.__name__}")
+        candidate = patch.get("metadata")
+        if "metadata" in patch:
+            if not isinstance(candidate, MetadataBase):
+                raise TypeError("metadata 必须是 MetadataBase 实例")
+            _SampleIdentityState(sample).validate_uid(candidate.uid)
+        old_metadata = sample.metadata
+        alias = sample.alias, sample._alias_overridden
+        old_data = dict(sample._data_map)
+        loaded, dirty = set(sample._loaded_categories), set(sample._dirty_categories)
+        states = deepcopy(sample._slot_state)
+        owner = sample._storage_set
+        keys = dict(owner._items) if owner is not None else None
+        owner_dirty = owner.storage_dirty if owner is not None else False
+        try:
+            if candidate is not None:
+                sample._replace_metadata(candidate)
+            if "alias" in patch:
+                if patch["alias"] is None:
+                    sample.clear_alias_override()
+                else:
+                    sample.set_alias(str(patch["alias"]))
+            for key, value in slots.items():
+                sample.set_data_var(str(key), value)
+        except BaseException:
+            if sample.metadata is not old_metadata:
+                sample.metadata.bind_change_callback(None)
+                object.__setattr__(sample, "metadata", old_metadata)
+                sample._bind_metadata(old_metadata)
+            sample._set_alias_internal(alias[0], mark_override=alias[1])
+            from ..models._model_data_state import _ModelDataState
+
+            for model in sample._data_map.values():
+                if model is not None and all(model is not old for old in old_data.values()):
+                    _ModelDataState.detach_owner(model, sample)
+            sample._data_map.clear()
+            sample._data_map.update(
+                {key: _ModelDataState.bind_owner(model, sample, key) for key, model in old_data.items()}
+            )
+            sample._loaded_categories, sample._dirty_categories = loaded, dirty
+            sample._slot_state = states
+            for key, model in old_data.items():
+                if model is not None and str(key) in states:
+                    model.__dict__["_provenance"] = deepcopy(states[str(key)])
+            if owner is not None:
+                owner._items.clear()
+                owner._items.update(keys)
+                owner.storage_dirty = owner_dirty
+            raise
+
+
 class _SampleCategoryState:
     """管理样本公开分类、加载状态与 storage presence。"""
 
@@ -105,7 +205,7 @@ class _SampleCategoryState:
             field = self._sample._resolve_field(raw_category)
             if field not in resolved:
                 resolved.append(field)
-        return resolved or None
+        return resolved
 
     def set_storage_presence(
         self,

@@ -25,7 +25,7 @@ sample = DefaultSample.from_accel_data(
 )
 sample.compute.process.pipeline(highpass=0.5)
 sample.compute.spectrum.freqspec(source="accel", overwrite=True)
-result = sample.eval_zvl(freq_range=(2.0, 60.0))
+result = sample.eval_zvl(freq_range=(2.0, 60.0), time_windows=-1)
 print(result.ok)
 ```
 
@@ -86,3 +86,9 @@ print(result.ok)
 - `examples/90_recipes/scalar_frame_features/main.py`
 - `examples/90_recipes/series_frame_alignment/main.py`
 - `examples/90_recipes/peaks_frame/main.py`
+
+## 数值修正与窗口前提
+
+求解器使用相干 SI，输出再转换到请求单位。FFT 返回 `N//2+1` 个频点，并补偿 Hann 窗幅值。评价记录必须满足完整窗口；只有显式 `time_windows=-1` 才按全记录计算。历史派生结果可能需要重算，见 [核心库迁移说明](../developer/core_correctness_migration.md)。
+
+样本处理流的分支保留提交目标：`branch.commit(replace=False)` 只预览，`branch.commit(replace=True)` 通过受控更新写回原槽位并返回样本。主流计算状态独立。传递函数的相位表示输出相对输入，采样率保留浮点 Hz；各组合谱分量必须共享物理轴。

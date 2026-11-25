@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import closing
 import json
 import sqlite3
 from typing import TYPE_CHECKING, Any
@@ -9,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import pandas as pd
 
+from ._storage_commit import _WriteMarker
 from .sample_storage_sqlite_h5_types import (
     _SqliteMetadataArtifact,
     _SqlitePresenceArtifact,
@@ -270,7 +272,7 @@ def _query_projection_rows(
 
     return conn.execute(
         f"""
-        SELECT sample_id, key, value_real, value_text
+        SELECT sample_id, key, value_real, value_text, unit
         FROM sample_summary_projection
         WHERE sample_id IN ({sample_id_placeholders})
           AND ({" OR ".join(predicates)})
@@ -287,8 +289,9 @@ def _query_metadata_frame_v2(
 ) -> pd.DataFrame:
     """读取 v2 metadata frame。"""
 
-    with strategy._connect() as conn:
-        strategy._ensure_schema(conn)
+    with closing(strategy._connect()) as conn:
+        strategy._begin_reader_transaction(conn)
+        _WriteMarker.check(strategy.ctx.base_dir)
         target_uids = list(uids) if uids is not None else None
         rows = _load_sample_rows(conn, uids=target_uids, columns="sample_id, uid, metadata_json")
 
@@ -321,7 +324,8 @@ def _query_summary_frame_v2(
     db_conn = conn or strategy._connect()
     try:
         if owned_conn:
-            strategy._ensure_schema(db_conn)
+            strategy._begin_reader_transaction(db_conn)
+            _WriteMarker.check(strategy.ctx.base_dir)
         target_uids = list(uids) if uids is not None else None
         sample_columns = "sample_id, uid, alias, metadata_json" if requested_metadata else "sample_id, uid, alias"
         sample_rows = _load_sample_rows(db_conn, uids=target_uids, columns=sample_columns)
@@ -363,7 +367,11 @@ def _query_summary_frame_v2(
             db_conn.close()
 
     ordered_rows = [rows.setdefault(uid, {"uid": uid, "alias": ""}) for uid in ordered_uids]
-    return pd.DataFrame(ordered_rows)
+    frame = pd.DataFrame(ordered_rows)
+    frame.attrs["scalar_units"] = {
+        (id_to_uid[int(row["sample_id"])], str(row["key"])): row["unit"] for row in projection_rows
+    }
+    return frame
 
 
 def _query_metadata_frame_v1(
@@ -373,7 +381,7 @@ def _query_metadata_frame_v1(
 ) -> pd.DataFrame:
     """读取 legacy v1 metadata frame。"""
 
-    with strategy._connect() as conn:
+    with closing(strategy._connect()) as conn:
         target_uids = list(uids) if uids is not None else None
         if target_uids:
             placeholders = ", ".join("?" for _ in target_uids)
@@ -483,7 +491,11 @@ def _query_summary_frame_v1(
             db_conn.close()
 
     ordered_rows = [rows.setdefault(uid, {"uid": uid, "alias": ""}) for uid in ordered_uids]
-    return pd.DataFrame(ordered_rows)
+    frame = pd.DataFrame(ordered_rows)
+    frame.attrs["scalar_units"] = {
+        (id_to_uid[int(row["sample_id"])], str(row["key"])): row["unit"] for row in projection_rows
+    }
+    return frame
 
 
 def _merge_projection_rows(

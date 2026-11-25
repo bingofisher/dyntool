@@ -81,8 +81,8 @@ def test_export_scalar_frame_supports_csv_and_xlsx(tmp_path: Path) -> None:
     assert returned_xlsx == xlsx_path
     csv_frame = pd.read_csv(csv_path)
     xlsx_frame = pd.read_excel(xlsx_path, sheet_name="scalar_frame")
-    assert {"uid", "alias", "pga", "rms"} <= set(csv_frame.columns)
-    assert {"uid", "alias", "pga", "rms"} <= set(xlsx_frame.columns)
+    assert {"uid", "alias", "pga", "rms"} <= {column.split(" [")[0] for column in csv_frame.columns}
+    assert {"uid", "alias", "pga", "rms"} <= {column.split(" [")[0] for column in xlsx_frame.columns}
 
 
 def test_export_series_frame_flattens_multiindex_columns_for_export(tmp_path: Path) -> None:
@@ -101,7 +101,7 @@ def test_export_series_frame_flattens_multiindex_columns_for_export(tmp_path: Pa
     assert returned == csv_path
     frame = pd.read_csv(csv_path)
     exported_columns = set(frame.columns)
-    assert any(column.endswith("@value") for column in exported_columns)
+    assert any(column.split(" [")[0].endswith("@value") for column in exported_columns)
     assert any("case-a" in column for column in exported_columns)
     assert any("case-b" in column for column in exported_columns)
 
@@ -121,7 +121,7 @@ def test_export_peaks_frame_supports_xlsx(tmp_path: Path) -> None:
     assert returned == xlsx_path
     frame = pd.read_excel(xlsx_path, sheet_name="peaks_frame")
     assert "peak_rank" in frame.columns
-    assert any(column.endswith("@peak_value") for column in frame.columns)
+    assert any(column.split(" [")[0].endswith("@peak_value") for column in frame.columns)
 
 
 def test_export_compare_report_supports_csv_directory_and_xlsx(tmp_path: Path) -> None:
@@ -264,7 +264,7 @@ def test_export_report_package_filters_non_scalar_eval_summary_for_lazy_sqlite_h
 
     assert returned_dir == package_dir
     eval_summary = pd.read_csv(package_dir / "tables" / "eval_summary.csv")
-    assert {"uid", "alias", "zvl.aw", "zvl.zvl"} <= set(eval_summary.columns)
+    assert {"uid", "alias", "zvl.aw", "zvl.zvl"} <= {column.split(" [")[0] for column in eval_summary.columns}
     assert not any("otovl" in column for column in eval_summary.columns)
     assert not any("fdmvl" in column for column in eval_summary.columns)
     assert not any("fpvdv" in column for column in eval_summary.columns)

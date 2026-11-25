@@ -51,7 +51,7 @@ def test_sample_class_can_build_from_models_and_eval_zvl() -> None:
         accel=source.accel,
     )
 
-    result = sample.eval_zvl(overwrite=True, freq_range=(2.0, 60.0))
+    result = sample.eval_zvl(overwrite=True, freq_range=(2.0, 60.0), time_windows=-1)
 
     assert result.success is True
     assert sample.zvl is not None
@@ -71,7 +71,7 @@ def test_sample_set_class_supports_from_samples_eval_and_h5_roundtrip(tmp_path: 
     )
     sample_set = DefaultSampleSet.from_samples([sample], sample_domain=SampleDomain.VIBRATION_TEST)
 
-    result = sample_set.eval_zvl(overwrite=True, freq_range=(2.0, 60.0))
+    result = sample_set.eval_zvl(overwrite=True, freq_range=(2.0, 60.0), time_windows=-1)
     store_path = tmp_path / "samples.h5"
 
     sample_set.save(store_path, storage_scheme=StorageScheme.SET_H5)

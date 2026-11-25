@@ -98,12 +98,16 @@ nav:
       - API 总览: api/index.md
       - 更新日志索引: reference/changelog.md
       - 示例附录: examples_overview.md
+      - 建筑振动 GUI 展示: usage/gui_building_showcase.md
       - 进阶教程: workflows/03_model_analysis.md
       - 内部 API: api/internal_api.md
       - 自动模块参考: reference/index.md
       - 开发者总览: developer/index.md
       - 版本线与迁移策略: developer/version_lines.md
       - 工程项目迁移验证: developer/engineering_project_migration_validation.md
+      - 核心库一致性修正: developer/core_correctness_migration.md
+      - 核心架构整改与迁移: developer/core_architecture_remediation.md
+      - 核心整改验证记录: developer/core_architecture_verification.md
       - 1.2.0 迁移说明: developer/migration_1_2_0.md
       - 发布检查清单: developer/release_checklist.md
       - GitHub Rulesets 与发布治理: developer/github_rulesets.md
@@ -111,10 +115,12 @@ nav:
       - plotting 执行任务（v1.2.0）: developer/plotting_execution_tasks.md
       - GUI 工作台骨架: developer/gui_skeleton.md
       - GUI 前端架构与路线: developer/gui_frontend_architecture.md
+      - GUI 操作手册: user_manual.md
+      - GUI 遗留整合复核: developer/gui_integration_review.md
       - GUI 按钮矩阵: developer/gui_button_matrix.md
       - GUI 视觉参考: developer/gui_visual_reference.md
       - GUI 生图 Prompt 包: developer/gui_image_generation_prompts.md
-      - Web 工作台实验线（冻结）: developer/dyntool_web_workbench.md
+      - GUI 单路线迁移与可靠性: developer/gui_single_route_migration.md
       - Skill 治理与主入口: developer/skill_governance.md
       - API 设计: developer/api_design.md
       - Sample / Storage 流程: developer/sample_identity_and_storage.md

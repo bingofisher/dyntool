@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import closing
 import json
 import sqlite3
 from datetime import datetime
@@ -14,6 +15,7 @@ import h5py
 import pandas as pd
 
 from .sample_storage_context import StorageContext
+from ._storage_commit import _StorageConsistencyError, _WriteMarker
 from .sample_storage_sqlite_h5_payload import (
     _load_many_sample_fields as _load_many_sample_fields_impl,
     _load_sample_fields_from_resources as _load_sample_fields_from_resources_impl,
@@ -48,9 +50,10 @@ from .sample_storage_sqlite_h5_schema import (
 from .sample_storage_sqlite_h5_sessions import _SetSqliteH5ReadSession, _SetSqliteH5WriteSession
 from .sample_storage_sqlite_h5_types import (
     _SQLITE_H5_LOCK_TIMEOUT_SECONDS,
-    _SQLITE_H5_WRITE_FLUSH_BATCH_SIZE as _SQLITE_H5_WRITE_FLUSH_BATCH_SIZE_DEFAULT,
     _SqliteFlushResult,
     _SqlitePresenceRow,
+    _SqlitePresenceArtifact,
+    _SqliteSummaryArtifact,
     _SqliteSampleRow,
     _SqliteSampleUpsertArtifact,
     _SqliteTransferArtifact,
@@ -61,9 +64,6 @@ from ..storage.types import StorageScheme
 
 if TYPE_CHECKING:
     from ..domain.samples.base import SampleBaseModel
-
-
-_SQLITE_H5_WRITE_FLUSH_BATCH_SIZE = _SQLITE_H5_WRITE_FLUSH_BATCH_SIZE_DEFAULT
 
 
 class _SetSqliteH5Strategy(_StorageStrategy):
@@ -78,8 +78,13 @@ class _SetSqliteH5Strategy(_StorageStrategy):
 
     def prepare_layout(self) -> None:
         self.ctx.base_dir.mkdir(parents=True, exist_ok=True)
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
+            conn.execute("BEGIN")
+            conn.execute("SELECT name FROM sqlite_master LIMIT 1").fetchone()
+            _WriteMarker.check(self.ctx.base_dir)
+            conn.rollback()
             self._ensure_schema(conn)
+            conn.commit()
         payload_path = self.ctx.sqlite_payload_h5_path()
         if payload_path.exists():
             return
@@ -171,23 +176,35 @@ class _SetSqliteH5Strategy(_StorageStrategy):
 
     def organize(self, valid_uids: set[str]) -> int:
         removed = 0
-        with self._connect() as conn:
+        with self.ctx.write_lock, closing(self._connect()) as conn:
             self._ensure_schema(conn)
-            rows = conn.execute("SELECT uid, payload_id FROM sample").fetchall()
-            stale_rows = [
-                (str(row["uid"]), str(row["payload_id"])) for row in rows if str(row["uid"]) not in valid_uids
-            ]
-            for uid, _ in stale_rows:
-                conn.execute("DELETE FROM sample WHERE uid = ?", (uid,))
-            conn.commit()
-
-        if stale_rows:
-            with h5py.File(self.ctx.sqlite_payload_h5_path(), "a") as h5_file:
-                samples_group = h5_file.require_group("samples")
-                for _, payload_id in stale_rows:
-                    if payload_id in samples_group:
-                        del samples_group[payload_id]
-                        removed += 1
+            self._begin_writer_transaction(conn)
+            _WriteMarker.check(self.ctx.base_dir)
+            marker = _WriteMarker(self.ctx.base_dir, "整理 SQLite/H5 无引用载荷")
+            marker.start()
+            try:
+                rows = conn.execute("SELECT uid, payload_id FROM sample").fetchall()
+                for row in rows:
+                    if str(row["uid"]) not in valid_uids:
+                        conn.execute("DELETE FROM sample WHERE uid = ?", (row["uid"],))
+                # 先提交显式删除；清理失败仅留下无引用载荷，不得破坏仍生效的索引。
+                conn.commit()
+                self._begin_writer_transaction(conn)
+                referenced = {str(row[0]) for row in conn.execute("SELECT payload_id FROM sample")}
+                with h5py.File(self.ctx.sqlite_payload_h5_path(), "a") as h5_file:
+                    samples_group = h5_file.require_group("samples")
+                    for payload_id in list(samples_group):
+                        if payload_id not in referenced:
+                            del samples_group[payload_id]
+                            removed += 1
+                conn.commit()
+                marker.finish()
+            except BaseException as error:
+                try:
+                    conn.rollback()
+                except BaseException as rollback_error:
+                    error.add_note(f"整理事务回滚失败：{rollback_error}")
+                raise _StorageConsistencyError("整理未完成，保留中断标记供完整性检查") from error
 
         self._refresh_cache()
         return removed
@@ -270,24 +287,38 @@ class _SetSqliteH5Strategy(_StorageStrategy):
             self._sample_uid_by_id[sample_row.sample_id] = uid
             self._presence_rows_by_uid[uid] = dict(presence_rows_by_uid.get(uid, {}))
 
-    def _refresh_cache(self) -> None:
-        with self._connect() as conn:
-            self._ensure_schema(conn)
-            sample_rows = conn.execute(
-                """
-                SELECT sample_id, uid, alias, payload_id, metadata_json, created_at, updated_at
-                FROM sample
-                ORDER BY sample_id
-                """
-            ).fetchall()
-            presence_rows = conn.execute(
-                """
-                SELECT s.uid, p.slot_name, p.exists_flag, p.model_type, p.data_category, p.h5_path, p.updated_at
-                FROM sample_slot_presence AS p
-                JOIN sample AS s ON s.sample_id = p.sample_id
-                ORDER BY p.sample_id, p.slot_name
-                """
-            ).fetchall()
+    def _refresh_cache(self, conn: sqlite3.Connection | None = None, *, uids: list[str] | None = None) -> None:
+        if conn is None:
+            with closing(self._connect(isolation_level=None)) as owned_conn:
+                self._begin_reader_transaction(owned_conn)
+                _WriteMarker.check(self.ctx.base_dir)
+                self._refresh_cache(owned_conn, uids=uids)
+            return
+        if uids == []:
+            return
+        placeholders = ",".join("?" for _ in uids) if uids is not None else ""
+        sample_filter = f"WHERE uid IN ({placeholders})" if uids is not None else ""
+        presence_filter = f"WHERE s.uid IN ({placeholders})" if uids is not None else ""
+        parameters = uids or []
+        sample_rows = conn.execute(
+            f"""
+            SELECT sample_id, uid, alias, payload_id, metadata_json, created_at, updated_at
+            FROM sample
+            {sample_filter}
+            ORDER BY sample_id
+            """,
+            parameters,
+        ).fetchall()
+        presence_rows = conn.execute(
+            f"""
+            SELECT s.uid, p.slot_name, p.exists_flag, p.model_type, p.data_category, p.h5_path, p.updated_at
+            FROM sample_slot_presence AS p
+            JOIN sample AS s ON s.sample_id = p.sample_id
+            {presence_filter}
+            ORDER BY p.sample_id, p.slot_name
+            """,
+            parameters,
+        ).fetchall()
 
         sample_rows_by_uid = {
             str(row["uid"]): _SqliteSampleRow(
@@ -312,10 +343,15 @@ class _SetSqliteH5Strategy(_StorageStrategy):
                 h5_path=str(row["h5_path"]),
                 updated_at=str(row["updated_at"]),
             )
-        self._replace_cache(
-            sample_rows_by_uid=sample_rows_by_uid,
-            presence_rows_by_uid=presence_rows_by_uid,
-        )
+        if uids is None:
+            self._replace_cache(sample_rows_by_uid=sample_rows_by_uid, presence_rows_by_uid=presence_rows_by_uid)
+        else:
+            for uid in uids:
+                old = self._sample_rows_by_uid.pop(uid, None)
+                if old is not None:
+                    self._sample_uid_by_id.pop(old.sample_id, None)
+                self._presence_rows_by_uid.pop(uid, None)
+            self._apply_cache_update(sample_rows_by_uid=sample_rows_by_uid, presence_rows_by_uid=presence_rows_by_uid)
 
     def _resolve_payload_id(
         self,
@@ -344,29 +380,6 @@ class _SetSqliteH5Strategy(_StorageStrategy):
             return row.payload_id
         return uuid4().hex
 
-    def _save_sample_with_handles(
-        self,
-        sample: SampleBaseModel,
-        *,
-        categories: list[str] | None,
-        conn: sqlite3.Connection,
-        h5_file: h5py.File,
-        commit: bool = True,
-    ) -> str:
-        artifact, data_dict = self._build_transfer_artifact(sample, categories=categories, conn=conn)
-        self._write_payload(
-            artifact.sample_row.payload_id,
-            sample,
-            data_dict,
-            artifact.sample_row.timestamp,
-            h5_file=h5_file,
-        )
-        self._flush_transfer_artifacts(conn, [artifact])
-        if commit:
-            conn.commit()
-        sample._storage_payload_id = artifact.sample_row.payload_id
-        return artifact.sample_row.payload_id
-
     def _build_transfer_artifact(
         self,
         sample: SampleBaseModel,
@@ -374,34 +387,87 @@ class _SetSqliteH5Strategy(_StorageStrategy):
         categories: list[str] | None,
         conn: sqlite3.Connection,
     ) -> tuple[_SqliteTransferArtifact, dict[str, Any]]:
-        data_dict = self.ctx.sample_data_dict(sample, categories)
-        payload_id = self._resolve_payload_id(sample, conn=conn)
-        timestamp = self._now_text()
-        metadata_json = self._metadata_json(sample)
-
-        return (
-            _SqliteTransferArtifact(
-                sample_row=_SqliteSampleUpsertArtifact(
-                    uid=sample.uid,
-                    alias=sample.alias,
-                    payload_id=payload_id,
-                    metadata_json=metadata_json,
-                    timestamp=timestamp,
-                ),
-                metadata_rows=[],
-                presence_rows=_build_presence_artifacts(
-                    self,
-                    data_dict,
-                    payload_id=payload_id,
-                    timestamp=timestamp,
-                ),
-                summary_rows=_build_summary_artifacts(
-                    data_dict,
-                    timestamp=timestamp,
-                ),
-            ),
-            data_dict,
+        previous = conn.execute(
+            "SELECT sample_id, payload_id, metadata_json FROM sample WHERE uid = ? OR payload_id = ? ORDER BY uid = ? DESC LIMIT 1",
+            (sample.uid, getattr(sample, "_storage_payload_id", None), sample.uid),
+        ).fetchone()
+        stored_states = (
+            json.loads(str(previous["metadata_json"])).get("_dyntool_state", {}) if previous is not None else None
         )
+        plan = self.ctx.write_plan(sample, categories, stored_states=stored_states)
+        data_dict = plan.data
+        payload_id = uuid4().hex
+        timestamp = self._now_text()
+        metadata_json = json.dumps(plan.metadata, ensure_ascii=False, default=str)
+
+        artifact = _SqliteTransferArtifact(
+            sample_row=_SqliteSampleUpsertArtifact(
+                uid=sample.uid,
+                alias=sample.alias,
+                payload_id=payload_id,
+                metadata_json=metadata_json,
+                timestamp=timestamp,
+                previous_payload_id=str(previous["payload_id"]) if previous is not None else None,
+            ),
+            metadata_rows=[],
+            presence_rows=_build_presence_artifacts(
+                self,
+                data_dict,
+                payload_id=payload_id,
+                timestamp=timestamp,
+            ),
+            summary_rows=_build_summary_artifacts(
+                data_dict,
+                timestamp=timestamp,
+            ),
+        )
+        if previous is not None:
+            sample_id = int(previous["sample_id"])
+            for row in conn.execute("SELECT * FROM sample_slot_presence WHERE sample_id = ?", (sample_id,)):
+                if row["slot_name"] not in data_dict:
+                    artifact.presence_rows.append(
+                        _SqlitePresenceArtifact(
+                            slot_name=str(row["slot_name"]),
+                            exists_flag=int(row["exists_flag"]),
+                            model_type=row["model_type"],
+                            data_category=row["data_category"],
+                            h5_path=f"/samples/{payload_id}/slots/{row['slot_name']}",
+                            updated_at=timestamp,
+                        )
+                    )
+            feature_sources = {
+                "pga": "accel",
+                "pgv": "vel",
+                "pgd": "disp",
+                "absmax": "accel",
+                "rms": "accel",
+                "mean": "accel",
+                "std": "accel",
+                "crest_factor": "accel",
+            }
+            for row in conn.execute("SELECT * FROM sample_summary_projection WHERE sample_id = ?", (sample_id,)):
+                key = str(row["key"])
+                source = feature_sources.get(key, key.split(".")[0].split("@")[0])
+                if source not in data_dict and key != "_dyntool_state":
+                    artifact.summary_rows.append(
+                        _SqliteSummaryArtifact(
+                            key=key,
+                            value_real=row["value_real"],
+                            value_text=row["value_text"],
+                            unit=row["unit"],
+                            updated_at=timestamp,
+                        )
+                    )
+        artifact.summary_rows.append(
+            _SqliteSummaryArtifact(
+                key="_dyntool_state",
+                value_real=None,
+                value_text=json.dumps(plan.metadata.get("_dyntool_state", {}), ensure_ascii=False, sort_keys=True),
+                unit=None,
+                updated_at=timestamp,
+            )
+        )
+        return artifact, data_dict
 
     def _flush_transfer_artifacts(
         self,
@@ -410,7 +476,6 @@ class _SetSqliteH5Strategy(_StorageStrategy):
     ) -> _SqliteFlushResult:
         if not artifacts:
             return _SqliteFlushResult()
-        self._ensure_schema(conn)
         sample_started = perf_counter()
         sample_rows_by_uid = self._batch_upsert_sample_rows(conn, artifacts)
         sample_seconds = perf_counter() - sample_started
@@ -440,7 +505,9 @@ class _SetSqliteH5Strategy(_StorageStrategy):
         if not artifacts:
             return {}
         uids = [artifact.sample_row.uid for artifact in artifacts]
-        payload_ids = [artifact.sample_row.payload_id for artifact in artifacts]
+        payload_ids = [
+            artifact.sample_row.previous_payload_id or artifact.sample_row.payload_id for artifact in artifacts
+        ]
         uid_placeholders = ", ".join("?" for _ in uids)
         payload_placeholders = ", ".join("?" for _ in payload_ids)
         existing_rows = conn.execute(
@@ -458,7 +525,9 @@ class _SetSqliteH5Strategy(_StorageStrategy):
         update_rows: list[tuple[str, str, str, str, str, int]] = []
         for artifact in artifacts:
             sample_row = artifact.sample_row
-            sample_id = by_payload.get(sample_row.payload_id) or by_uid.get(sample_row.uid)
+            sample_id = by_payload.get(sample_row.previous_payload_id or sample_row.payload_id) or by_uid.get(
+                sample_row.uid
+            )
             if sample_id is None:
                 insert_rows.append(
                     (
@@ -1077,7 +1146,6 @@ class _LegacySetSqliteH5V1Strategy(_SetSqliteH5Strategy):
     ) -> _SqliteFlushResult:
         if not artifacts:
             return _SqliteFlushResult()
-        self._ensure_schema(conn)
         sample_started = perf_counter()
         sample_rows_by_uid = self._batch_upsert_sample_rows(conn, artifacts)
         sample_seconds = perf_counter() - sample_started

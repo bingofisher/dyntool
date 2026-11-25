@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from copy import deepcopy
 from typing import TYPE_CHECKING, Any, ClassVar, Iterable, Mapping, Self, Union, cast, get_args, get_origin
 
 from pydantic import (
@@ -15,12 +16,14 @@ from pydantic import (
 )
 
 from ..constants import DataCategory
+from .._provenance import _SampleResultState
 from ..enums import SampleDomain
 from ..metadata import MetadataBase, metadata_from_structured_payload
 from ..models import DataModelBase, model_from_structured_payload
+from ..models._model_data_state import _ModelDataState
 from ..runtime import resolve_sample_runtime
 from ..serialization import StructuredPayload, normalize_payload
-from ._sample_state import _SampleCategoryState, _SampleIdentityState
+from ._sample_state import _SampleCategoryState, _SampleIdentityState, _SampleMutation
 from .batch import OperationResult
 from .namespaces import SampleEvaluationNamespace, SampleProcessingNamespace
 from .schema import SampleSchema
@@ -28,6 +31,7 @@ from .types import SampleField, SampleLoadMode
 
 if TYPE_CHECKING:
     from .commands import VibEvalCommand
+    from ..compute_api import SampleComputeNamespace
 
 
 class SampleBase(BaseModel):
@@ -42,6 +46,7 @@ class SampleBase(BaseModel):
     )
 
     _payload_domain: ClassVar[str] = "default"
+    _payload_category: ClassVar[str] = ""
     _sample_set_type: ClassVar[type | None] = None
     sample_schema: ClassVar[SampleSchema] = SampleSchema(name="sample")
     _storage_set: Any = PrivateAttr(default=None)
@@ -52,6 +57,8 @@ class SampleBase(BaseModel):
     _originated_from_storage: bool = PrivateAttr(default=False)
     _storage_payload_id: str | None = PrivateAttr(default=None)
     _storage_presence: dict[SampleField, bool] = PrivateAttr(default_factory=dict)
+    _slot_state: dict[str, dict[str, Any]] = PrivateAttr(default_factory=dict)
+    _committed_slot_state: dict[str, dict[str, Any]] = PrivateAttr(default_factory=dict)
 
     model_config = ConfigDict(
         extra="forbid",
@@ -82,7 +89,7 @@ class SampleBase(BaseModel):
         return self.sample_schema.version
 
     @property
-    def compute(self) -> Any:
+    def compute(self) -> "SampleComputeNamespace":
         """返回样本的统一计算入口。"""
 
         from ..compute_api import SampleComputeNamespace
@@ -96,7 +103,7 @@ class SampleBase(BaseModel):
             raise TypeError(f"{cls.__name__} 是抽象基础类，不能直接实例化")
         if isinstance(data, dict):
             payload = dict(data)
-            raw_data_vars = payload.pop("data_vars", {}) or {}
+            raw_data_vars = dict(payload.pop("data_vars", {}) or {})
             if not isinstance(raw_data_vars, dict):
                 raise TypeError("data_vars 必须是 dict[str, DataModelBase]")
             for property_name in cls.sample_schema.property_names():
@@ -118,7 +125,7 @@ class SampleBase(BaseModel):
                 raise TypeError(
                     f"数据项 '{spec.property_name}' 只接受 {spec.model_type.__name__}，实际得到 {type(value).__name__}"
                 )
-            normalized[field] = value
+            normalized[field] = _ModelDataState.bind_owner(value, self, field)
         object.__setattr__(self, "data_vars", normalized)
 
         for spec in self.sample_schema.slots:
@@ -128,7 +135,15 @@ class SampleBase(BaseModel):
         object.__setattr__(self, "_loaded_categories", set(self.data_vars))
         object.__setattr__(self, "_dirty_categories", set())
         object.__setattr__(self, "_load_mode", SampleLoadMode.EAGER)
-        object.__setattr__(self, "_storage_presence", {field: True for field in self.data_vars})
+        object.__setattr__(
+            self, "_storage_presence", {spec.field: spec.field in normalized for spec in self.sample_schema.slots}
+        )
+        object.__setattr__(self, "_slot_state", deepcopy(getattr(self.metadata, "_stored_sample_state", {})))
+        object.__setattr__(self, "_committed_slot_state", deepcopy(self._slot_state))
+        for field, model in normalized.items():
+            _SampleResultState(self).restore(field, model)
+        if getattr(self.metadata, "_change_callback", None) is not None:
+            object.__setattr__(self, "metadata", deepcopy(self.metadata))
         self._bind_metadata(self.metadata)
         if not self.alias or not self.alias.strip():
             self._set_alias_internal(self._default_alias_for_metadata(), mark_override=False)
@@ -137,6 +152,56 @@ class SampleBase(BaseModel):
             mark_override = resolved_alias != self._default_alias_for_metadata()
             self._set_alias_internal(resolved_alias, mark_override=mark_override)
         return self
+
+    def __getattribute__(self, name: str) -> Any:
+        """槽位映射仅以快照暴露，模型自身仍支持正式更新。"""
+        value = super().__getattribute__(name)
+        return dict(value) if name == "data_vars" else value
+
+    @property
+    def _data_map(self) -> dict[SampleField, DataModelBase]:
+        """返回仅供聚合层使用的内部槽位映射。"""
+        return self.__dict__["data_vars"]
+
+    def _clone_for_view(self) -> Self:
+        """建立独立样本壳，共享不可变模型数组，保留懒槽位。"""
+        result = type(self)(
+            metadata=deepcopy(self.metadata),
+            alias=self.alias,
+            strict=self.strict,
+            data_vars={field: deepcopy(model) for field, model in self._data_map.items()},
+        )
+        for name in (
+            "_alias_overridden",
+            "_loaded_categories",
+            "_dirty_categories",
+            "_load_mode",
+            "_originated_from_storage",
+            "_storage_payload_id",
+            "_storage_presence",
+            "_slot_state",
+            "_committed_slot_state",
+        ):
+            object.__setattr__(result, name, deepcopy(getattr(self, name)))
+        return result
+
+    def __deepcopy__(self, memo: dict[int, Any] | None = None) -> Self:
+        """复制样本状态，不复制仓库及原拥有者。"""
+        memo = {} if memo is None else memo
+        result = self._clone_for_view()
+        memo[id(self)] = result
+        return result
+
+    def _on_model_representation_changed(self, field: SampleField) -> None:
+        """正式原位单位转换更新槽位和摘要脏状态。"""
+        if str(field) in self._slot_state:
+            model = self._data_map.get(field)
+            if model is not None:
+                self._slot_state[str(field)]["output_units"] = model.current_units()
+                model.__dict__["_provenance"] = deepcopy(self._slot_state[str(field)])
+        self._dirty_categories.add(field)
+        if self._storage_set is not None:
+            self._storage_set.storage_dirty = True
 
     def __getattr__(self, name: str) -> Any:
         private_attributes = object.__getattribute__(self, "__private_attributes__")
@@ -162,12 +227,14 @@ class SampleBase(BaseModel):
 
     def __setattr__(self, name: str, value: Any) -> None:
         if name.startswith("_"):
-            super().__setattr__(name, value)
+            object.__setattr__(self, name, value)
             return
         if name == "metadata":
             raise AttributeError("禁止直接写入 metadata，请改用 replace_metadata() 或 update_metadata()")
         if name == "alias":
             raise AttributeError("禁止直接写入 alias，请改用 set_alias()、clear_alias_override() 或 refresh_alias()")
+        if name == "data_vars":
+            raise AttributeError("禁止直接写入 data_vars，请改用 update_data() 或 update()")
         if self.sample_schema.has_slot(name):
             raise AttributeError(f"禁止直接写入样本槽位 '{name}'，请改用 update_data() 或 update()")
         if name in type(self).model_fields:
@@ -277,7 +344,11 @@ class SampleBase(BaseModel):
                     f"数据项 '{spec.property_name}' 只接受 {spec.model_type.__name__}，实际得到 {type(value).__name__}"
                 )
             normalized[field] = value
-        object.__setattr__(self, "data_vars", normalized)
+        for model in self._data_map.values():
+            _ModelDataState.detach_owner(model, self)
+        self._data_map.clear()
+        for field, model in normalized.items():
+            self._replace_data_var_internal(field, model)
         object.__setattr__(self, "_loaded_categories", set(normalized))
         object.__setattr__(self, "_dirty_categories", set())
 
@@ -319,16 +390,26 @@ class SampleBase(BaseModel):
 
         if not isinstance(metadata, MetadataBase):
             raise TypeError("metadata 必须是 MetadataBase 实例")
+        state = _SampleIdentityState(self)
+        state.validate_uid(metadata.uid)
+        callback = metadata._change_callback
+        if callback is not None and getattr(callback, "__self__", None) is not self:
+            metadata = deepcopy(metadata)
         old_metadata = getattr(self, "metadata", None)
         old_uid = old_metadata.uid if isinstance(old_metadata, MetadataBase) else None
         old_metadata_alias = getattr(old_metadata, "alias", None) if isinstance(old_metadata, MetadataBase) else None
         if isinstance(old_metadata, MetadataBase):
             old_metadata.bind_change_callback(None)
-        super().__setattr__("metadata", metadata)
+        object.__setattr__(self, "metadata", metadata)
         self._bind_metadata(metadata)
-        self._sync_identity_state(old_uid=old_uid, old_metadata_alias=old_metadata_alias)
-        if self._storage_set is not None and old_uid is not None:
-            self._storage_set._on_sample_metadata_changed(self, old_uid)
+        try:
+            state.publish_change(old_uid or self.uid, old_metadata_alias)
+        except Exception:
+            metadata.bind_change_callback(None)
+            object.__setattr__(self, "metadata", old_metadata)
+            if isinstance(old_metadata, MetadataBase):
+                self._bind_metadata(old_metadata)
+            raise
 
     def _on_metadata_changed(
         self,
@@ -338,9 +419,7 @@ class SampleBase(BaseModel):
     ) -> None:
         """响应元数据对象内部字段变化。"""
 
-        self._sync_identity_state(old_uid=old_uid, old_metadata_alias=old_metadata_alias)
-        if self._storage_set is not None:
-            self._storage_set._on_sample_metadata_changed(self, old_uid)
+        _SampleIdentityState(self).publish_change(old_uid, old_metadata_alias)
 
     def get_data_var(self, name: SampleField | DataCategory | str) -> DataModelBase | None:
         """按内部字段、公开分类或属性别名读取样本数据项。"""
@@ -400,7 +479,9 @@ class SampleBase(BaseModel):
         pending_fields = [
             field
             for field in selected_fields
-            if field not in self._loaded_categories and self._storage_presence.get(field, True)
+            if field not in self._loaded_categories
+            and field not in self._dirty_categories
+            and self._storage_presence.get(field, False)
         ]
         if not pending_fields:
             if self._load_mode is SampleLoadMode.METADATA_ONLY:
@@ -434,7 +515,9 @@ class SampleBase(BaseModel):
         selected_fields = self._normalize_public_categories(categories)
         targets = selected_fields or list(self.data_vars.keys())
         for field in targets:
-            self.data_vars.pop(field, None)
+            old = self._data_map.pop(field, None)
+            if old is not None:
+                _ModelDataState.detach_owner(old, self)
             self._loaded_categories.discard(field)
         return self
 
@@ -444,15 +527,25 @@ class SampleBase(BaseModel):
         field = self._resolve_field(name)
         spec = self.sample_schema.field_spec(field)
         if value is None:
-            self.data_vars.pop(field, None)
+            old = self._data_map.pop(field, None)
+            if old is not None:
+                _ModelDataState.detach_owner(old, self)
             self._loaded_categories.discard(field)
             self._dirty_categories.add(field)
+            _SampleResultState(self).updated(field, None)
+            if self._storage_set is not None:
+                self._storage_set.storage_dirty = True
             return
         if not spec.supports(value):
             raise TypeError(
                 f"数据项 '{spec.property_name}' 只接受 {spec.model_type.__name__}，实际得到 {type(value).__name__}"
             )
-        self.data_vars[field] = value
+        old = self._data_map.get(field)
+        replacement = _ModelDataState.bind_owner(value, self, field)
+        if old is not None and old is not replacement:
+            _ModelDataState.detach_owner(old, self)
+        self._data_map[field] = replacement
+        _SampleResultState(self).updated(field, self._data_map[field])
         self._loaded_categories.add(field)
         self._dirty_categories.add(field)
         if self._storage_set is not None:
@@ -463,7 +556,9 @@ class SampleBase(BaseModel):
 
         field = self._resolve_field(name)
         if value is None:
-            self.data_vars.pop(field, None)
+            old = self._data_map.pop(field, None)
+            if old is not None:
+                _ModelDataState.detach_owner(old, self)
             self._loaded_categories.discard(field)
             return
         spec = self.sample_schema.field_spec(field)
@@ -471,7 +566,12 @@ class SampleBase(BaseModel):
             raise TypeError(
                 f"数据项 '{spec.property_name}' 只接受 {spec.model_type.__name__}，实际得到 {type(value).__name__}"
             )
-        self.data_vars[field] = value
+        old = self._data_map.get(field)
+        replacement = _ModelDataState.bind_owner(value, self, field)
+        if old is not None and old is not replacement:
+            _ModelDataState.detach_owner(old, self)
+        self._data_map[field] = replacement
+        _SampleResultState(self).restore(field, self._data_map[field])
         self._loaded_categories.add(field)
 
     def update_data(self, strict: bool | None = None, **data_patch: DataModelBase | None) -> Self:
@@ -498,12 +598,12 @@ class SampleBase(BaseModel):
 
         strict_mode = self.strict if strict is None else strict
         valid_slots = set(self.sample_schema.property_names())
-        for name, value in data_patch.items():
-            if name not in valid_slots:
-                if strict_mode:
-                    raise KeyError(f"未知样本槽位: {name}")
-                continue
-            self.set_data_var(name, value)
+        unknown = set(data_patch) - valid_slots
+        if unknown and strict_mode:
+            raise KeyError(f"未知样本槽位：{sorted(unknown)}")
+        _SampleMutation(self).apply(
+            {"data_vars": {key: value for key, value in data_patch.items() if key in valid_slots}}, strict=strict_mode
+        )
         return self
 
     def update(self, *, strict: bool | None = None, **kwargs: Any) -> None:
@@ -526,31 +626,7 @@ class SampleBase(BaseModel):
             `storage_dirty`。手工传入 `alias` 会把当前样本标记为“手工 alias 覆盖”。
         """
 
-        strict_mode = self.strict if strict is None else strict
-        if "data_vars" in kwargs:
-            raw_data_vars = kwargs.pop("data_vars")
-            if not isinstance(raw_data_vars, dict):
-                raise TypeError("data_vars 必须是 dict[str, DataModelBase]")
-            for key, value in raw_data_vars.items():
-                self.set_data_var(str(key), value)
-
-        valid_keys = {"alias", "metadata", *self.sample_schema.slot_names()}
-        for key, value in kwargs.items():
-            if key not in valid_keys:
-                if not strict_mode:
-                    continue
-                raise KeyError(f"字段 '{key}' 不存在于样本中，无法更新。有效字段: {sorted(valid_keys)}")
-            if key == "alias":
-                if value is None:
-                    self.clear_alias_override()
-                else:
-                    self.set_alias(str(value))
-            elif key == "metadata":
-                if not isinstance(value, MetadataBase):
-                    raise TypeError("metadata 必须是 MetadataBase 实例")
-                self._replace_metadata(value)
-            else:
-                self.set_data_var(key, value)
+        _SampleMutation(self).apply(kwargs, strict=self.strict if strict is None else strict)
 
     @classmethod
     def sample_set_type(cls) -> type:
@@ -1004,10 +1080,11 @@ class SampleBase(BaseModel):
         return StructuredPayload(
             entity_type="sample",
             domain=self._payload_domain,
-            category=self.__class__.__name__,
+            category=self._payload_category or self.__class__.__name__,
             data_vars=data_vars,
             attrs={
                 "alias": self.alias,
+                "_dyntool_state": deepcopy(self._slot_state),
                 "schema_name": self.schema_name,
                 "schema_version": self.schema_version,
             },
@@ -1027,6 +1104,7 @@ class SampleBase(BaseModel):
             raise ValueError("样本 payload 缺少 metadata 信息")
 
         metadata_obj = metadata_from_structured_payload(metadata_payload)
+        object.__setattr__(metadata_obj, "_stored_sample_state", deepcopy(normalized.attrs.get("_dyntool_state", {})))
         alias = str(normalized.attrs.get("alias", ""))
         sample_data: dict[str, Any] = {"metadata": metadata_obj, "data_vars": {}}
         if alias:

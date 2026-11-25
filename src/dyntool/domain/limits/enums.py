@@ -6,9 +6,9 @@ from enum import StrEnum
 
 
 class ZVLLimitStandard(StrEnum):
-    """Z 振级限值支持的标准枚举。"""
+    """Z 振级限值标准，值只接受统一的规范编号。"""
 
-    GB_10070_1988 = "GB_10070-1988"
+    GB_10070_1988 = "GB 10070-1988"
     GB_T_50355_2018 = "GB/T 50355-2018"
 
 
@@ -25,7 +25,9 @@ class FPVDVLimitStandard(StrEnum):
 
 
 class FDMVLLimitStandard(StrEnum):
-    """分频振级限值标准枚举占位。"""
+    """分频最大振级限值支持的标准枚举。"""
+
+    JGJ_T_170_2009 = "JGJ/T 170-2009"
 
 
 __all__ = [

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import uuid
+from copy import deepcopy
 from abc import abstractmethod
 from datetime import date, datetime
 from pathlib import Path
@@ -192,29 +193,33 @@ class MetadataBase(BaseModel):
         del force
         return self.build_alias()
 
+    def __getattribute__(self, name: str) -> Any:
+        """嵌套字段以快照读取，编辑快照不改变身份。"""
+        value = super().__getattribute__(name)
+        if not name.startswith("_") and isinstance(value, (dict, list, set)):
+            return deepcopy(value)
+        return value
+
+    def model_post_init(self, context: Any) -> None:
+        """隔离构造时传入的嵌套字段。"""
+        for name, value in self.__dict__.items():
+            if isinstance(value, (dict, list, set)):
+                self.__dict__[name] = deepcopy(value)
+
+    def __deepcopy__(self, memo: dict[int, Any] | None = None) -> Self:
+        """复制元数据字段，不复制原拥有者的回调。"""
+        memo = {} if memo is None else memo
+        payload = self.model_dump(exclude={"uid", "alias", "schema_name", "schema_version"})
+        result = type(self).model_validate(deepcopy(payload, memo))
+        memo[id(self)] = result
+        return result
+
     def __setattr__(self, name: str, value: Any) -> None:
-        """追踪元数据字段赋值，并在需要时通知拥有者。"""
-
-        if name.startswith("_") or name not in self.__class__.model_fields:
-            super().__setattr__(name, value)
+        """字段赋值与多字段更新共用候选验证及回滚。"""
+        if name in type(self).model_fields and hasattr(self, "__pydantic_fields_set__"):
+            self.update(**{name: value})
             return
-
-        old_value = getattr(self, name, None)
-        old_uid = self.uid
-        old_alias = getattr(self, "alias", None)
         super().__setattr__(name, value)
-
-        if self._change_callback is None or self._suspend_change_callback:
-            return
-        try:
-            self._change_callback(self, old_uid, old_alias)
-        except Exception:
-            self._suspend_change_callback = True
-            try:
-                super().__setattr__(name, old_value)
-            finally:
-                self._suspend_change_callback = False
-            raise
 
     def bind_change_callback(
         self,
@@ -256,34 +261,28 @@ class MetadataBase(BaseModel):
         }
 
     def update(self, **kwargs: Any) -> None:
-        """原地更新字段。"""
-
-        old_payload = self.model_dump()
+        """先验证全部候选字段，再发布；回调失败恢复原字段。"""
+        for key in kwargs:
+            if key not in type(self).model_fields:
+                raise KeyError(f"未知元数据字段: {key}")
+        payload = self.model_dump(exclude={"uid", "alias", "schema_name", "schema_version"})
+        payload.update(kwargs)
+        candidate = type(self).model_validate(payload)
+        old_fields = self.__dict__
+        old_fields_set = self.__pydantic_fields_set__
+        old_extra = self.__pydantic_extra__
         old_uid = self.uid
         old_alias = getattr(self, "alias", None)
-        self._suspend_change_callback = True
+        object.__setattr__(self, "__dict__", candidate.__dict__)
+        object.__setattr__(self, "__pydantic_fields_set__", candidate.__pydantic_fields_set__)
+        object.__setattr__(self, "__pydantic_extra__", candidate.__pydantic_extra__)
         try:
-            for key, value in kwargs.items():
-                if key not in self.__class__.model_fields:
-                    raise KeyError(f"未知元数据字段: {key}")
-                super().__setattr__(key, value)
+            if self._change_callback is not None and not self._suspend_change_callback:
+                self._change_callback(self, old_uid, old_alias)
         except Exception:
-            self._suspend_change_callback = False
-            raise
-        self._suspend_change_callback = False
-
-        if self._change_callback is None:
-            return
-        try:
-            self._change_callback(self, old_uid, old_alias)
-        except Exception:
-            self._suspend_change_callback = True
-            try:
-                for key, value in old_payload.items():
-                    if key in self.__class__.model_fields:
-                        super().__setattr__(key, value)
-            finally:
-                self._suspend_change_callback = False
+            object.__setattr__(self, "__dict__", old_fields)
+            object.__setattr__(self, "__pydantic_fields_set__", old_fields_set)
+            object.__setattr__(self, "__pydantic_extra__", old_extra)
             raise
 
     def copy_with(self, **kwargs: Any) -> Self:
@@ -332,11 +331,14 @@ class MetadataBase(BaseModel):
         """从字典恢复对象。"""
 
         payload = dict(data)
+        state = payload.pop("_dyntool_state", {})
         payload.pop("uid", None)
         payload.pop("alias", None)
         payload.pop("schema_name", None)
         payload.pop("schema_version", None)
-        return cls(**payload)
+        result = cls(**payload)
+        object.__setattr__(result, "_stored_sample_state", deepcopy(state))
+        return result
 
     def to_json(self, path: str | PathLike) -> None:
         """保存为 JSON 文件。"""

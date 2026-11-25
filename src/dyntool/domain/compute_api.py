@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Iterable, Mapping, Self
 
+import numpy as np
 import pandas as pd
 
 from ..compute.features import (
@@ -36,6 +37,9 @@ class ComputeSource(StrEnum):
     VEL = "vel"
     DISP = "disp"
     FORCE = "force"
+    MOMENT = "moment"
+    STRESS = "stress"
+    STRAIN = "strain"
 
 
 class ComputeOperation(StrEnum):
@@ -130,7 +134,7 @@ class ComputePlan:
 class _ComputeSourceResolver:
     """集中处理样本中的时程序列来源解析。"""
 
-    _TIME_SERIES_SLOTS = ("accel", "vel", "disp", "force")
+    _TIME_SERIES_SLOTS = ("accel", "vel", "disp", "force", "moment", "stress", "strain")
 
     def normalize(self, source: ComputeSource | str | None) -> str | None:
         """统一规范化来源名称。"""
@@ -251,59 +255,59 @@ class DataModelComputeNamespace:
             raise TypeError("处理流未返回同类模型对象。")
         return result
 
-    def _call_model_method(self, method_name: str, **kwargs: Any) -> Any:
+    def _call_model_method(self, method_name: str, **kwargs: Any) -> "DataModelBase":
         method = getattr(self._model, method_name, None)
         if method is None:
             raise TypeError(f"{type(self._model).__name__} 不支持 {method_name}。")
         return method(**kwargs)
 
-    def _model_values(self) -> Any:
+    def _model_values(self) -> np.ndarray:
         getter = getattr(self._model, "get_value", None)
         if getter is None:
             raise TypeError(f"{type(self._model).__name__} 不支持通用数值特征计算。")
         return getter()
 
-    def vel(self, **kwargs: Any) -> Any:
+    def vel(self, **kwargs: Any) -> "DataModelBase":
         """计算速度。"""
 
         return self._call_model_method("calc_vel", **kwargs)
 
-    def disp(self, **kwargs: Any) -> Any:
+    def disp(self, **kwargs: Any) -> "DataModelBase":
         """计算位移。"""
 
         return self._call_model_method("calc_disp", **kwargs)
 
-    def accel(self, **kwargs: Any) -> Any:
+    def accel(self, **kwargs: Any) -> "DataModelBase":
         """计算加速度。"""
 
         return self._call_model_method("calc_accel", **kwargs)
 
-    def freqspec(self, **kwargs: Any) -> Any:
+    def freqspec(self, **kwargs: Any) -> "DataModelBase":
         """计算频谱。"""
 
         return self._call_model_method("calc_freqspec", **kwargs)
 
-    def respspec(self, **kwargs: Any) -> Any:
+    def respspec(self, **kwargs: Any) -> "DataModelBase":
         """计算响应谱。"""
 
         return self._call_model_method("calc_respspec", **kwargs)
 
-    def zvl(self, **kwargs: Any) -> Any:
+    def zvl(self, **kwargs: Any) -> "DataModelBase":
         """执行 ZVL 评价。"""
 
         return self._call_model_method("eval_zvl", **kwargs)
 
-    def otovl(self, **kwargs: Any) -> Any:
+    def otovl(self, **kwargs: Any) -> "DataModelBase":
         """执行 OTOVL 评价。"""
 
         return self._call_model_method("eval_otovl", **kwargs)
 
-    def fdmvl(self, **kwargs: Any) -> Any:
+    def fdmvl(self, **kwargs: Any) -> "DataModelBase":
         """执行 FDMVL 评价。"""
 
         return self._call_model_method("eval_fdmvl", **kwargs)
 
-    def fpvdv(self, **kwargs: Any) -> Any:
+    def fpvdv(self, **kwargs: Any) -> "DataModelBase":
         """执行 FPVDV 评价。"""
 
         return self._call_model_method("eval_fpvdv", **kwargs)
@@ -397,7 +401,7 @@ class DataModelComputeNamespace:
             return False
         return normalized in self.available()
 
-    def run(self, operation: ComputeOperation | str, **kwargs: Any) -> Any:
+    def run(self, operation: ComputeOperation | str, **kwargs: Any) -> "DataModelBase | float":
         """按统一枚举入口调度模型计算。"""
 
         normalized = ComputeOperation(str(operation))
@@ -481,7 +485,7 @@ class SampleComputeNamespace:
         def _commit_handler(result: Any, *, replace: bool) -> Any:
             if not replace:
                 return result
-            self._sample.set_data_var(resolved, result)
+            self._sample.update_data(**{resolved: result})
             return self._sample
 
         return ComputeFlow(_result=model, commit_handler=_commit_handler, source=resolved)
@@ -534,17 +538,54 @@ class SampleComputeNamespace:
                 error=exc,
             )
 
-    def freqspec(self, *, source: ComputeSource | str | None = None, **kwargs: Any) -> "OperationResult[SampleBase]":
-        """计算频谱。"""
+    def _derived(
+        self,
+        slot: str,
+        method_name: str,
+        options: dict[str, Any],
+        *,
+        source: ComputeSource | str | None = None,
+    ) -> "OperationResult[SampleBase]":
+        """通用样本沿现有 namespace 计算，不新增样本公共方法。"""
+        from .samples.batch import make_operation_result
 
-        self._ensure_accel_only(source)
-        return self._sample.calc_freqspec(**kwargs)
+        options = dict(options)
+        overwrite = options.pop("overwrite", False)
+        current = self._sample.get_data_var(slot)
+        if current is not None and not overwrite:
+            stale = self._sample._slot_state.get(slot, {}).get("status") == "stale"
+            return make_operation_result(
+                action=slot,
+                success=False,
+                value=self._sample,
+                message=f"已存在{'且已过期' if stale else ''}，跳过 {slot}；重算需启用 overwrite",
+            )
+        try:
+            result = getattr(self._series(source), method_name)(**options)
+            self._sample.set_data_var(slot, result)
+            return make_operation_result(action=slot, success=True, value=self._sample, message=f"{slot} 计算完成")
+        except Exception as error:
+            return make_operation_result(
+                action=slot, success=False, value=self._sample, message=f"计算失败：{error}", error=error
+            )
+
+    def freqspec(self, *, source: ComputeSource | str | None = None, **kwargs: Any) -> "OperationResult[SampleBase]":
+        """计算指定时程来源的频谱，幅值单位随来源保持。"""
+
+        resolved = _SOURCE_RESOLVER.resolve_sample_source(self._sample, source)
+        method = getattr(self._sample, "calc_freqspec", None) if resolved == "accel" else None
+        return (
+            method(**kwargs)
+            if method is not None
+            else self._derived("freqspec", "calc_freqspec", kwargs, source=resolved)
+        )
 
     def respspec(self, *, source: ComputeSource | str | None = None, **kwargs: Any) -> "OperationResult[SampleBase]":
         """计算响应谱。"""
 
         self._ensure_accel_only(source)
-        return self._sample.calc_respspec(**kwargs)
+        method = getattr(self._sample, "calc_respspec", None)
+        return method(**kwargs) if method is not None else self._derived("respspec", "calc_respspec_bundle", kwargs)
 
     def zvl(self, **kwargs: Any) -> "OperationResult[SampleBase]":
         """执行 ZVL 评价。"""
@@ -696,7 +737,7 @@ class SampleComputeNamespace:
                 return False
         return True
 
-    def run(self, operation: ComputeOperation | str, **kwargs: Any) -> Any:
+    def run(self, operation: ComputeOperation | str, **kwargs: Any) -> "OperationResult[SampleBase] | float":
         """按统一枚举入口调度样本计算。"""
 
         normalized = ComputeOperation(str(operation))
@@ -813,11 +854,15 @@ class SampleSetComputeNamespace:
     def freqspec(self, **kwargs: Any) -> "BatchOperationReport[Any]":
         """执行批量频谱计算。"""
 
+        if not callable(getattr(self._sample_set.sample_type, "calc_freqspec", None)):
+            return self._sample_set._batch_sample_method("compute.freqspec", **kwargs)
         return self._sample_set.calc_freqspec(**kwargs)
 
     def respspec(self, **kwargs: Any) -> "BatchOperationReport[Any]":
         """执行批量响应谱计算。"""
 
+        if not callable(getattr(self._sample_set.sample_type, "calc_respspec", None)):
+            return self._sample_set._batch_sample_method("compute.respspec", **kwargs)
         return self._sample_set.calc_respspec(**kwargs)
 
     def zvl(self, **kwargs: Any) -> "BatchOperationReport[Any]":
@@ -874,7 +919,7 @@ class SampleSetComputeNamespace:
             return False
         return any(sample.compute.supports(normalized, source=source) for sample in self._sample_set.values())
 
-    def run(self, operation: ComputeOperation | str, **kwargs: Any) -> Any:
+    def run(self, operation: ComputeOperation | str, **kwargs: Any) -> "BatchOperationReport[Any]":
         """按统一枚举入口调度批量计算。"""
 
         normalized = ComputeOperation(str(operation))

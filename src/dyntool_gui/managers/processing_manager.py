@@ -2,17 +2,19 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from time import perf_counter
 from typing import Any, Callable
 
 import numpy as np
 from PySide6.QtCore import QObject, QThread, Signal, Slot
+from dyntool import BatchOperationReport, OperationResult
 from dyntool.compute.solvers import SDOFSolveMethod, WeightType
 from dyntool.compute.units import UnitSystem
 
+from .._scope import _ResolvedSampleScope
 from .._session_types import CapabilitySnapshot, build_capability_snapshot, summarize_runtime_sample_set
-from ..session import ProcessingRequestSnapshot, ProjectSession, resolve_scope_uids
+from ..session import ProcessingRequestSnapshot, ProjectSession
 
 
 @dataclass(slots=True)
@@ -24,6 +26,9 @@ class ProcessingResult:
     affected_count: int
     duration_ms: int
     skipped_count: int = 0
+    failed_count: int = 0
+    not_executed_count: int = 0
+    report: BatchOperationReport[object] | None = None
 
 
 @dataclass(slots=True)
@@ -116,20 +121,14 @@ class _ProcessingExecutionPlan:
         field = None
         resolve_field = getattr(schema, "resolve_field", None)
         if callable(resolve_field):
-            try:
-                field = resolve_field(source_slot)
-            except Exception:  # noqa: BLE001
-                field = None
+            field = resolve_field(source_slot)
         presence = getattr(sample, "_storage_presence", None)
         if field is not None and isinstance(presence, dict) and presence.get(field) is False:
             return False
         getter = getattr(sample, "get_data_var", None)
-        try:
-            if callable(getter):
-                return getter(source_slot) is not None
-            return getattr(sample, source_slot, None) is not None
-        except Exception:  # noqa: BLE001
-            return False
+        if callable(getter):
+            return getter(source_slot) is not None
+        return getattr(sample, source_slot, None) is not None
 
 
 _ACTION_REQUIREMENTS: dict[str, _ProcessingActionRequirement] = {
@@ -153,6 +152,59 @@ _ACTION_OUTPUT_SLOTS: dict[str, str] = {
     "eval_fdmvl": "fdmvl",
     "eval_fpvdv": "fpvdv",
 }
+
+
+@dataclass(slots=True)
+class _ProcessingBatch:
+    """聚合逐样本核心报告，保留成功、跳过、失败和未执行事实。"""
+
+    request: ProcessingRequestSnapshot
+    plan: _ProcessingExecutionPlan
+    report: BatchOperationReport[object] = field(init=False)
+    started: float = field(default_factory=perf_counter)
+
+    def __post_init__(self) -> None:
+        """登记前置数据缺失导致的跳过。"""
+
+        self.report = BatchOperationReport(action=self.request.action_name, strict=self.request.strict)
+        for uid in self.plan.skipped_uids:
+            label = self.plan.requirement.source_label if self.plan.requirement is not None else "所需"
+            self.report.add(uid, OperationResult(self.request.action_name, "skipped", f"缺少{label}数据"))
+
+    @property
+    def not_executed_count(self) -> int:
+        """返回尚未执行且未被前置检查跳过的样本数量。"""
+
+        return self.plan.total_count - self.report.stats.total
+
+    @property
+    def succeeded_uids(self) -> tuple[str, ...]:
+        """返回已成功生成结果的 UID。"""
+
+        return tuple(uid for uid, result in self.report.results.items() if result.success)
+
+    def include(self, uid: str, report: BatchOperationReport[object]) -> None:
+        """保留核心库该样本的原始结果和错误。"""
+
+        self.report.add(uid, report.results[uid])
+        self.report.stats.valid_samples += report.stats.valid_samples
+
+    def failed(self, uid: str, error: Exception) -> None:
+        """登记核心库未能形成报告的异常。"""
+
+        self.report.add(uid, OperationResult(self.request.action_name, "failed", str(error), error=error))
+
+    def summary(self) -> str:
+        """生成与实际报告一致的中文统计。"""
+
+        stats = self.report.stats
+        text = (
+            f"成功 {stats.succeeded} 个，跳过 {stats.skipped} 个，"
+            f"失败 {stats.failed} 个，未执行 {self.not_executed_count} 个"
+        )
+        if self.plan.skipped_count and self.plan.requirement is not None:
+            text += f"；跳过 {self.plan.skipped_count} 个缺少{self.plan.requirement.source_label}数据的样本"
+        return text
 
 
 class ProcessingTaskController:
@@ -233,6 +285,8 @@ class ProcessingManager(QObject):
         self._thread: QThread | None = None
         self._worker: _ProcessingWorker | None = None
         self._controller: ProcessingTaskController | None = None
+        self._task_finalized = False
+        self._task_title = "处理当前主样本集"
 
     @property
     def busy(self) -> bool:
@@ -286,7 +340,7 @@ class ProcessingManager(QObject):
         action_params: dict[str, str] | None = None,
         controller: ProcessingTaskController | None = None,
     ) -> ProcessingResult:
-        """同步执行处理动作。"""
+        """按冻结范围执行处理，并在成功、失败或中止后收口实际结果。"""
 
         if controller is not None:
             controller.checkpoint()
@@ -298,134 +352,122 @@ class ProcessingManager(QObject):
             overwrite=overwrite,
             action_params=dict(action_params or {}),
         )
-        resolved_uids = (
-            list(request.resolved_uids)
-            if request.resolved_uids
-            else resolve_scope_uids(self._session, request.uids_text)
-        )
-        if controller is not None:
-            controller.checkpoint()
+        scope = _ResolvedSampleScope.resolve(self._session, request.resolved_uids, uids_text=request.uids_text)
+        target_uids = scope.require_samples("处理")
         action = getattr(sample_set, request.action_name, None)
         if not callable(action):
             raise ValueError(f"当前主样本集不支持处理动作：{request.action_name}")
-
-        if resolved_uids:
-            target_uids = tuple(resolved_uids)
-        else:
-            keys = getattr(sample_set, "keys", None)
-            if not callable(keys):
-                raise ValueError("当前主样本集无法枚举 UID，GUI 不能启动不可中止的全量写任务。")
-            target_uids = tuple(str(uid) for uid in keys())
-        if not target_uids:
-            raise ValueError("当前范围没有可处理样本。")
-        started = perf_counter()
         translated_kwargs = self._translate_action_kwargs(request.action_name, request.action_params)
         if controller is not None:
             controller.checkpoint()
-        plan = _ProcessingExecutionPlan.build(
-            sample_set,
-            target_uids,
-            _ACTION_REQUIREMENTS.get(request.action_name),
-        )
-        if controller is not None:
-            controller.checkpoint()
-        if plan.target_uids and not plan.runnable_uids:
-            requirement = plan.requirement
-            source_label = requirement.source_label if requirement is not None else "所需"
-            raise ValueError(f"当前范围没有可用于 {request.action_name} 的{source_label}数据。")
-
-        total = len(plan.runnable_uids) if plan.runnable_uids else 1
-        if controller is not None:
-            detail = f"准备执行：{request.action_name}"
-            if plan.skipped_count and plan.requirement is not None:
-                detail += f"；将跳过 {plan.skipped_count} 个缺少{plan.requirement.source_label}数据的样本"
-            controller.report(
-                title="处理当前主样本集",
-                current=0,
-                total=total,
-                detail=detail,
-            )
-        if plan.runnable_uids:
+        plan = _ProcessingExecutionPlan.build(sample_set, target_uids, _ACTION_REQUIREMENTS.get(request.action_name))
+        batch = _ProcessingBatch(request, plan)
+        terminal_status = "已完成"
+        failure_message = ""
+        try:
+            if not plan.runnable_uids:
+                label = plan.requirement.source_label if plan.requirement is not None else "所需"
+                raise ValueError(f"当前范围没有可用于 {request.action_name} 的{label}数据。")
+            if controller is not None:
+                controller.checkpoint()
+                controller.report(
+                    title="处理当前主样本集",
+                    current=0,
+                    total=len(plan.runnable_uids),
+                    detail=f"准备执行：{request.action_name}",
+                )
             for index, uid in enumerate(plan.runnable_uids, start=1):
                 if controller is not None:
                     controller.checkpoint()
-                action(
-                    uids=(uid,),
-                    strict=request.strict,
-                    overwrite=request.overwrite,
-                    **translated_kwargs,
-                )
+                previous_report = getattr(sample_set, "last_operation_report", None)
+                try:
+                    report = action(
+                        uids=(uid,), strict=request.strict, overwrite=request.overwrite, **translated_kwargs
+                    )
+                    batch.include(uid, report)
+                except Exception as exc:
+                    report = getattr(sample_set, "last_operation_report", None)
+                    if (
+                        report is not previous_report
+                        and isinstance(report, BatchOperationReport)
+                        and uid in report.results
+                    ):
+                        batch.include(uid, report)
+                    else:
+                        batch.failed(uid, exc)
+                    raise
                 if controller is not None:
                     controller.checkpoint()
-                if controller is not None:
                     controller.report(
                         title="处理当前主样本集",
                         current=index,
-                        total=total,
-                        detail=f"已处理 {index}/{total} 个样本：{uid}",
+                        total=len(plan.runnable_uids),
+                        detail=f"已检查 {index}/{len(plan.runnable_uids)} 个样本：{uid}；{batch.summary()}",
                     )
-        else:
             if controller is not None:
                 controller.checkpoint()
-            action(
-                strict=request.strict,
-                overwrite=request.overwrite,
-                **translated_kwargs,
-            )
-            if controller is not None:
-                controller.report(
-                    title="处理当前主样本集",
-                    current=1,
-                    total=total,
-                    detail="已处理当前范围。",
-                )
-        duration_ms = int((perf_counter() - started) * 1000)
-        affected_count = len(plan.runnable_uids) if plan.runnable_uids else len(sample_set)  # type: ignore[arg-type]
-        message = f"已执行处理动作：{request.action_name}"
-        if plan.skipped_count and plan.requirement is not None:
-            message = (
-                f"{message}；处理 {affected_count} 个，"
-                f"跳过 {plan.skipped_count} 个缺少{plan.requirement.source_label}数据的样本"
-            )
+            if batch.report.stats.failed:
+                terminal_status = "部分失败"
+        except ProcessingCancelledError as exc:
+            terminal_status, failure_message = "已中止", str(exc)
+            raise
+        except Exception as exc:
+            terminal_status, failure_message = "失败", str(exc)
+            raise
+        finally:
+            result = self._finish_batch(sample_set, batch, terminal_status, failure_message)
+        return result
 
-        if controller is not None:
-            controller.checkpoint()
+    def _finish_batch(
+        self, sample_set: object, batch: _ProcessingBatch, status: str, failure_message: str
+    ) -> ProcessingResult:
+        """同步终态统计、问题与已生成数据，取消不回滚前序结果。"""
+
+        stats = batch.report.stats
+        duration_ms = int((perf_counter() - batch.started) * 1000)
+        message = f"{status}：{batch.request.action_name}；{batch.summary()}"
         state = self._session.processing_state
-        state.current_action = request.action_name
+        state.current_action = batch.request.action_name
+        state.current_request = batch.request
         state.last_message = message
-        state.last_action_count = affected_count
+        state.last_action_count = stats.succeeded
+        state.last_failed_count = stats.failed
+        state.last_skipped_count = stats.skipped
+        state.last_not_executed_count = batch.not_executed_count
+        state.last_report = batch.report
         state.last_duration_ms = duration_ms
-        state.last_failure_message = ""
-        state.current_request = request
-        self._refresh_session_capability(sample_set, request, tuple(resolved_uids))
-        self._session.bus.processing_state_changed.emit()
-        self._session.bus.primary_changed.emit()
-        self._session.bus.resource_tree_changed.emit()
-        progress_text = f"{affected_count} / {plan.total_count}" if plan.total_count else "1 / 1"
-        self._session._upsert_task("处理当前主样本集", "已完成", progress_text, message)
-        self._session._prepend_log(
-            "INFO", "gui.processing", f"{message}，样本数={affected_count}，耗时={duration_ms} ms"
-        )
-        if plan.skipped_count and plan.requirement is not None:
-            preview_uids = "、".join(plan.skipped_uids[:5])
-            suffix = " 等" if plan.skipped_count > 5 else ""
+        failures = [(uid, item) for uid, item in batch.report.results.items() if item.status == "failed"]
+        state.last_failure_message = failure_message or "；".join(f"{uid}：{item.message}" for uid, item in failures)
+        if batch.succeeded_uids:
+            self._refresh_session_capability(sample_set, batch.request, batch.succeeded_uids)
+            self._session.primary_sampleset.storage_dirty = bool(getattr(sample_set, "storage_dirty", True))
+        for uid, item in failures:
+            self._session._prepend_issue("失败", "处理当前主样本集", f"{uid}：{item.message}")
+        if batch.plan.skipped_count and batch.plan.requirement is not None:
             self._session._prepend_issue(
                 "提示",
                 "处理范围跳过",
-                (
-                    f"当前动作需要{plan.requirement.source_label}数据；"
-                    f"当前范围 {plan.total_count} 个样本，已跳过 {plan.skipped_count} 个：{preview_uids}{suffix}"
-                ),
+                f"缺少{batch.plan.requirement.source_label}数据：{'、'.join(batch.plan.skipped_uids)}",
             )
-            self._session.bus.issues_changed.emit()
+        self._task_finalized = True
+        self._session._upsert_task("处理当前主样本集", status, f"{stats.total} / {batch.plan.total_count}", message)
+        level = "WARNING" if status != "已完成" else "INFO"
+        self._session._prepend_log(level, "gui.processing", f"{message}，耗时={duration_ms} ms")
+        self._session.bus.processing_state_changed.emit()
+        self._session.bus.primary_changed.emit()
+        self._session.bus.resource_tree_changed.emit()
+        self._session.bus.issues_changed.emit()
         self._session.bus.task_changed.emit()
         self._session.bus.logs_changed.emit()
         return ProcessingResult(
-            action_name=request.action_name,
+            action_name=batch.request.action_name,
             message=message,
-            affected_count=affected_count,
+            affected_count=stats.succeeded,
             duration_ms=duration_ms,
-            skipped_count=plan.skipped_count,
+            skipped_count=stats.skipped,
+            failed_count=stats.failed,
+            not_executed_count=batch.not_executed_count,
+            report=batch.report,
         )
 
     def _refresh_session_capability(
@@ -469,7 +511,7 @@ class ProcessingManager(QObject):
         features: tuple[str, ...],
         data_var: str,
         peak_source: str,
-        scoped_uids: tuple[str, ...] = (),
+        scoped_uids: tuple[str, ...] | None = None,
         controller: ProcessingTaskController | None = None,
     ) -> ProcessingPreviewResult:
         """同步构建预览表。"""
@@ -477,16 +519,12 @@ class ProcessingManager(QObject):
         if controller is not None:
             controller.checkpoint()
         sample_set = self._require_runtime()
-        resolved_uids = (
-            list(scoped_uids)
-            if scoped_uids
-            else resolve_scope_uids(self._session, uids_text)
-            if preview_scope == "subset"
-            else []
+        scope = _ResolvedSampleScope.resolve(
+            self._session, scoped_uids, uids_text=uids_text, all_samples=preview_scope != "subset"
         )
         if controller is not None:
             controller.checkpoint()
-        uids = resolved_uids or None
+        uids = scope.require_samples("预览")
         started = perf_counter()
 
         scalar_rows: tuple[tuple[str, ...], ...] = ()
@@ -545,6 +583,7 @@ class ProcessingManager(QObject):
             series_rows=series_rows,
             peaks_rows=peaks_rows,
         )
+        self._task_finalized = True
         self._session._upsert_task("生成处理预览表", "已完成", "1 / 1", message)
         self._session._prepend_log("INFO", "gui.processing", message)
         self._session.bus.task_changed.emit()
@@ -573,6 +612,8 @@ class ProcessingManager(QObject):
     def _start(self, runner: Callable[[ProcessingTaskController], object], *, task_title: str, detail: str) -> None:
         if self.busy:
             raise ValueError("当前已有处理任务正在运行。")
+        self._task_finalized = False
+        self._task_title = task_title
         self._session.processing_state.busy = True
         self._session.processing_state.cancel_requested = False
         self._session._upsert_task(task_title, "进行中", "0 / 1", detail)
@@ -587,7 +628,7 @@ class ProcessingManager(QObject):
         self._thread.started.connect(self._worker.run)
         self._worker.progress.connect(self._handle_progress)
         self._worker.succeeded.connect(self.succeeded.emit)
-        self._worker.failed.connect(self.failed.emit)
+        self._worker.failed.connect(self._handle_failed)
         self._worker.cancelled.connect(self._handle_cancelled)
         self._worker.finished.connect(self._thread.quit)
         self._worker.finished.connect(self._worker.deleteLater)
@@ -598,7 +639,7 @@ class ProcessingManager(QObject):
 
     @Slot(object)
     def _handle_progress(self, payload: object) -> None:
-        if not isinstance(payload, ProcessingProgressUpdate):
+        if self._task_finalized or not isinstance(payload, ProcessingProgressUpdate):
             return
         if self._session.processing_state.cancel_requested:
             self._session._upsert_task(
@@ -615,11 +656,29 @@ class ProcessingManager(QObject):
     @Slot(str)
     def _handle_cancelled(self, message: str) -> None:
         self._session.processing_state.last_failure_message = message
-        self._session._upsert_task("处理当前主样本集", "已中止", "中止", message)
+        state = self._session.processing_state
+        detail = state.last_message if self._task_finalized and self._task_title == "处理当前主样本集" else message
+        self._task_finalized = True
+        self._session._upsert_task(self._task_title, "已中止", "中止", detail)
         self._session._prepend_log("WARNING", "gui.processing", message)
         self._session.bus.processing_state_changed.emit()
         self._session.bus.task_changed.emit()
         self._session.bus.logs_changed.emit()
+        self.state_changed.emit()
+
+    @Slot(str)
+    def _handle_failed(self, message: str) -> None:
+        """登记前置失败或保留已收口的批次失败，拒绝后续进度覆盖。"""
+
+        self._session.processing_state.last_failure_message = message
+        if not self._task_finalized:
+            self._session._upsert_task(self._task_title, "失败", "未完成", message)
+            self._session._prepend_log("ERROR", "gui.processing", message)
+            self._session.bus.task_changed.emit()
+            self._session.bus.logs_changed.emit()
+        self._task_finalized = True
+        self._session.bus.processing_state_changed.emit()
+        self.failed.emit(message)
         self.state_changed.emit()
 
     def _require_runtime(self) -> object:

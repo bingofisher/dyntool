@@ -6,9 +6,10 @@ from dataclasses import dataclass
 from typing import Protocol
 
 import numpy as np
+from pint.errors import DimensionalityError, UndefinedUnitError
 
 from ...compute.solvers import TransferSolver
-from ..constants import get_default_unit_system
+from ..constants import convert_array, get_default_unit_system
 from .frequency_spectrum import FreqSpec
 
 
@@ -45,7 +46,7 @@ class TransferFunctionAnalyzer:
         input_signal: np.ndarray | list[float],
         output_signal: np.ndarray | list[float],
         *,
-        fs: int,
+        fs: float,
         nperseg: int = 256,
         noverlap: int = 128,
         nfft: int = 512,
@@ -76,9 +77,9 @@ class TransferFunctionAnalyzer:
         self.output_signal = self._coerce_signal(output_signal, name="output_signal")
         if self.input_signal.shape != self.output_signal.shape:
             raise ValueError("输入与输出信号长度必须一致。")
-        if fs <= 0:
+        if not np.isfinite(fs) or fs <= 0:
             raise ValueError("采样频率 fs 必须为正数。")
-        self.fs = int(fs)
+        self.fs = float(fs)
         self.nperseg = int(nperseg)
         self.noverlap = int(noverlap)
         self.nfft = int(nfft)
@@ -90,7 +91,7 @@ class TransferFunctionAnalyzer:
         input_model: SignalModelProtocol,
         output_model: SignalModelProtocol,
         *,
-        fs: int | None = None,
+        fs: float | None = None,
         nperseg: int = 256,
         noverlap: int = 128,
         nfft: int = 512,
@@ -119,12 +120,21 @@ class TransferFunctionAnalyzer:
 
         input_signal, input_fs = cls._extract_model_signal(input_model, name="input_model")
         output_signal, output_fs = cls._extract_model_signal(output_model, name="output_model")
-        if input_fs != output_fs:
+        input_unit = getattr(input_model, "value_unit", None)
+        output_unit = getattr(output_model, "value_unit", None)
+        if (input_unit is None) != (output_unit is None):
+            raise ValueError("传递函数不能混用有单位与无单位的模型")
+        if input_unit is not None:
+            try:
+                output_signal = convert_array(output_signal, from_unit=output_unit, to_unit=input_unit)
+            except (DimensionalityError, UndefinedUnitError) as exc:
+                raise ValueError("传递函数的输入与输出模型必须具有相同量纲") from exc
+        if not np.isclose(input_fs, output_fs, rtol=1e-10, atol=0):
             raise ValueError("输入模型与输出模型的采样频率必须一致。")
         return cls(
             input_signal,
             output_signal,
-            fs=fs or input_fs,
+            fs=input_fs if fs is None else fs,
             nperseg=nperseg,
             noverlap=noverlap,
             nfft=nfft,
@@ -138,7 +148,7 @@ class TransferFunctionAnalyzer:
         output_sample: SampleWithSignalProtocol,
         *,
         data_attr: str = "accel",
-        fs: int | None = None,
+        fs: float | None = None,
         nperseg: int = 256,
         noverlap: int = 128,
         nfft: int = 512,
@@ -216,7 +226,7 @@ class TransferFunctionAnalyzer:
     def _coerce_signal(values: np.ndarray | list[float], *, name: str) -> np.ndarray:
         """将输入信号规范化为一维浮点数组。"""
 
-        arr = np.asarray(values, dtype=float).flatten()
+        arr = np.asarray(values, dtype=float)
         if arr.ndim != 1:
             raise ValueError(f"{name} 必须是一维数值序列。")
         if arr.size == 0:
@@ -229,15 +239,15 @@ class TransferFunctionAnalyzer:
         model: SignalModelProtocol,
         *,
         name: str,
-    ) -> tuple[np.ndarray, int]:
+    ) -> tuple[np.ndarray, float]:
         """从信号模型中提取数值序列与采样频率。"""
 
         dt = model.dt
         if float(dt) <= 0:
             raise ValueError(f"{name} 的采样步长 dt 必须为正数。")
         signal = cls._coerce_signal(model.get_value(), name=name)
-        fs = int(round(1.0 / float(dt)))
-        if fs <= 0:
+        fs = 1.0 / float(dt)
+        if not np.isfinite(fs) or fs <= 0:
             raise ValueError(f"{name} 的采样频率解析失败。")
         return signal, fs
 
@@ -247,9 +257,9 @@ class TransferFunctionAnalyzer:
 
         units = get_default_unit_system()
         return FreqSpec.from_data(
-            np.asarray(frequencies, dtype=float),
+            convert_array(frequencies, from_unit="hertz", to_unit=units.frequency),
             amp=np.abs(transfer_function),
-            pha=np.angle(transfer_function),
+            pha=convert_array(np.angle(transfer_function), from_unit="radian", to_unit=units.phase),
             units={
                 "freq": units.frequency,
                 "amp": "dimensionless",
@@ -263,7 +273,7 @@ def analyze_transfer_function(
     input_signal: np.ndarray | list[float],
     output_signal: np.ndarray | list[float],
     *,
-    fs: int,
+    fs: float,
     nperseg: int = 256,
     noverlap: int = 128,
     nfft: int = 512,

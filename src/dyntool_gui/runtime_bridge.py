@@ -39,6 +39,22 @@ class GuiRuntimeBridge:
         presence = getattr(sample, "_storage_presence", {})
         return bool(getattr(presence, "get", lambda *_args, **_kwargs: False)(field, False))
 
+    def sample_slot_names(self, sample: object, names: tuple[str, ...]) -> tuple[str, ...]:
+        """读取内存字段与存储存在索引，避免摘要查询触发懒加载。"""
+
+        schema = getattr(sample, "sample_schema", None)
+        values = getattr(sample, "data_vars", None)
+        if schema is None or not isinstance(values, dict):
+            return tuple(name for name in names if getattr(sample, name, None) is not None)
+        present: list[str] = []
+        for name in names:
+            if not schema.has_slot(name):
+                continue
+            field = schema.resolve_field(name)
+            if field in values or self.has_storage_presence(sample, field):
+                present.append(name)
+        return tuple(present)
+
     def release_sample_set_storage(self, sample_set: DefaultSampleSet | None) -> None:
         """释放临时样本集的存储绑定。"""
 

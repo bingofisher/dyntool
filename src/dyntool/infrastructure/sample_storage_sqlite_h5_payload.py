@@ -99,7 +99,8 @@ def _load_sample_from_resources(
         h5_file=h5_file,
     )
     if loaded_fields:
-        sample.update(**loaded_fields)
+        for field, model in loaded_fields.items():
+            sample._replace_data_var_internal(field, model)
     return sample
 
 
@@ -208,6 +209,9 @@ def _write_payload_group(
     units = payload.get("_units", {})
     dataset_options = strategy.ctx.h5_dataset_options()
     for key, value in payload.items():
+        if key == "_dyntool":
+            group.attrs["_dyntool"] = json.dumps(value, ensure_ascii=False)
+            continue
         if key == "_units" or value is None:
             continue
         if isinstance(value, dict):
@@ -243,6 +247,8 @@ def _read_group_payload(group: h5py.Group) -> dict[str, Any]:
             units[key] = node.attrs[H5_ATTR_UNIT]
     if units:
         payload["_units"] = units
+    if "_dyntool" in group.attrs:
+        payload["_dyntool"] = json.loads(str(group.attrs["_dyntool"]))
     return payload
 
 

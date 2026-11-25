@@ -189,6 +189,13 @@ class VibrationTestSample(SampleBase):
             return make_operation_result(action=attr_name, success=False, message="无加速度数据", value=self)
         current = getattr(self, attr_name)
         if not overwrite and current is not None:
+            if self._slot_state.get(attr_name, {}).get("status") == "stale":
+                return make_operation_result(
+                    action=attr_name,
+                    success=False,
+                    message=f"已存在且已过期，跳过 {attr_name}；重新计算需启用 overwrite",
+                    value=self,
+                )
             if use_eval_formatter:
                 return make_operation_result(
                     action=attr_name,

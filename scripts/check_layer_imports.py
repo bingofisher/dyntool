@@ -1,4 +1,4 @@
-"""Check imports between the repository implementation layers."""
+"""检查实现层、公开模块、类型叶模块与可解析动态导入的依赖边界。"""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ LAYERS = {"application", "domain", "compute", "infrastructure"}
 ALLOWED_NON_LAYER_TARGETS: dict[str, set[str]] = {
     "application": {"logging", "plotting", "storage", "config"},
     "domain": {"logging"},
-    "compute": set(),
+    "compute": {"resources"},
     "infrastructure": {"storage", "logging", "plotting", "config"},
 }
 ALLOWED_TARGETS: dict[str, set[str]] = {
@@ -21,14 +21,24 @@ ALLOWED_TARGETS: dict[str, set[str]] = {
     "compute": {"compute"},
     "infrastructure": {"infrastructure", "domain"},
 }
+# 层外公开模块承担组装职责；这些例外必须与架构文档同步。
+PUBLIC_MODULE_TARGETS = {
+    "storage": {"storage", "domain", "infrastructure", "compute", "logging", "reporting"},
+    "reporting": {"reporting", "domain", "compute", "plotting", "infrastructure"},
+    "plotting": {"plotting", "domain", "config"},
+    "logging": {"logging"},
+    "config": {"config"},
+}
+LEAF_MODULE_TARGETS = {
+    "dyntool.storage.types": {"domain", "storage"},
+    "dyntool.plotting.types": {"domain", "plotting"},
+}
+
 BOM = bytes((0xEF, 0xBB, 0xBF))
 
 
 def _iter_layer_files() -> list[Path]:
-    files: list[Path] = []
-    for layer in sorted(LAYERS):
-        files.extend(sorted((SOURCE_ROOT / layer).rglob("*.py")))
-    return files
+    return sorted(SOURCE_ROOT.rglob("*.py"))
 
 
 def _resolve_import_name(*, current_module: str, imported_module: str | None, level: int) -> str | None:
@@ -71,11 +81,52 @@ def _iter_imported_modules(path: Path) -> list[tuple[int, str]]:
         elif isinstance(node, ast.ImportFrom):
             resolved = _resolve_import_name(current_module=module, imported_module=node.module, level=node.level)
             if resolved is not None:
-                imports.append((node.lineno, resolved))
+                if resolved == "dyntool":
+                    # 顶层重导出也必须按实际所属层检查，防止绕过 compute -> domain 限制。
+                    for alias in node.names:
+                        public_name = alias.name
+                        target = (
+                            public_name
+                            if public_name in {*PUBLIC_MODULE_TARGETS, "resources"}
+                            else "compute"
+                            if public_name == "UnitSystem"
+                            else "storage"
+                            if public_name
+                            in {
+                                "StorageMode",
+                                "StorageScheme",
+                                "StorageConnectOptions",
+                                "AttrDataFormat",
+                                "ContainerFormat",
+                            }
+                            else "logging"
+                            if public_name == "LoggingMode"
+                            else "domain"
+                        )
+                        imports.append((node.lineno, f"dyntool.{target}"))
+                else:
+                    imports.append((node.lineno, resolved))
         elif _is_dynamic_import_call(node):
             imported_name = _extract_dynamic_import_name(node)
             if imported_name is not None:
-                imports.append((node.lineno, imported_name))
+                if imported_name.startswith("."):
+                    package = next(
+                        (
+                            kw.value.value
+                            for kw in node.keywords
+                            if kw.arg == "package"
+                            and isinstance(kw.value, ast.Constant)
+                            and isinstance(kw.value.value, str)
+                        ),
+                        None,
+                    )
+                    if package is not None:
+                        dots = len(imported_name) - len(imported_name.lstrip("."))
+                        imported_name = _resolve_import_name(
+                            current_module=f"{package}.__init__", imported_module=imported_name.lstrip("."), level=dots
+                        )
+                if imported_name is not None:
+                    imports.append((node.lineno, imported_name))
     return imports
 
 
@@ -99,7 +150,7 @@ def _extract_dynamic_import_name(node: ast.Call) -> str | None:
 
 def _layer_of_path(path: Path) -> str | None:
     top = path.relative_to(SOURCE_ROOT).parts[0]
-    return top if top in LAYERS else None
+    return top if top in LAYERS or top in PUBLIC_MODULE_TARGETS else None
 
 
 def main() -> int:
@@ -110,6 +161,9 @@ def main() -> int:
             layer = _layer_of_path(pyfile)
             if layer is None:
                 continue
+            current_module = ".".join(pyfile.relative_to(PROJECT_ROOT / "src").with_suffix("").parts)
+            public_targets = PUBLIC_MODULE_TARGETS.get(layer)
+            leaf_targets = LEAF_MODULE_TARGETS.get(current_module)
             for lineno, imported in _iter_imported_modules(pyfile):
                 if not imported.startswith("dyntool."):
                     continue
@@ -117,6 +171,14 @@ def main() -> int:
                 if len(parts) < 2:
                     continue
                 target_layer = parts[1]
+                if public_targets is not None:
+                    allowed = leaf_targets or public_targets
+                    if target_layer not in allowed:
+                        violations.append(
+                            f"{pyfile.relative_to(PROJECT_ROOT)}:{lineno}: forbidden public module dependency "
+                            f"{layer} -> {target_layer} ({imported})"
+                        )
+                    continue
                 if target_layer not in LAYERS:
                     if target_layer in ALLOWED_NON_LAYER_TARGETS[layer]:
                         continue

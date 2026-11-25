@@ -15,6 +15,16 @@ from ...compute.metrics import (
 from ...compute.signals import fft_with_phase
 
 
+class _SpectrumUnits:
+    """分辨默认幅值表示与显式输出单位上下文。"""
+
+    @staticmethod
+    def amplitude(series: Any, output: Any | None) -> str:
+        if output is None:
+            return series.value_unit
+        return type(series)._default_current_units(resolve_unit_system(output))["value"]
+
+
 def calc_fft_with_phase_time_series(
     series: Any,
     *,
@@ -30,7 +40,7 @@ def calc_fft_with_phase_time_series(
         data,
         dt=series.dt,
         value_unit=series._base_value_unit(),
-        output_value_unit=series.value_unit,
+        output_value_unit=_SpectrumUnits.amplitude(series, output_unit_system),
         output_frequency_unit=output_units.frequency,
         output_phase_unit=output_units.phase,
     )
@@ -46,7 +56,7 @@ def calc_freqspec_time_series(
     from .frequency_spectrum import FreqSpec
 
     units = output_unit_system or get_default_unit_system()
-    freqs, mag, phase = calc_fft_with_phase_time_series(series, output_unit_system=units)
+    freqs, mag, phase = calc_fft_with_phase_time_series(series, output_unit_system=output_unit_system)
     return FreqSpec.from_compute_result(
         {
             "freq": freqs,
@@ -54,7 +64,7 @@ def calc_freqspec_time_series(
             "pha": phase,
             "units": {
                 "freq": units.frequency,
-                "amp": series.value_unit,
+                "amp": _SpectrumUnits.amplitude(series, output_unit_system),
                 "phase": units.phase,
             },
             "unit_system": units,
@@ -73,11 +83,11 @@ def calc_fft_amp_series_from_accel(
     from .frequency_spectrum import FreqAmpSeries
 
     units = output_unit_system or get_default_unit_system()
-    freqs, mag = series.calc_fft(output_unit_system=units)
+    freqs, mag = series.calc_fft(output_unit_system=output_unit_system)
     return FreqAmpSeries.from_data(
         freqs,
         mag,
-        units={"freq": units.frequency, "amp": series.value_unit},
+        units={"freq": units.frequency, "amp": _SpectrumUnits.amplitude(series, output_unit_system)},
         unit_system=units,
     )
 
@@ -92,7 +102,7 @@ def calc_fft_phase_series_from_accel(
     from .frequency_spectrum import FreqPhaSeries
 
     units = output_unit_system or get_default_unit_system()
-    freqs, _, phase = calc_fft_with_phase_time_series(series, output_unit_system=units)
+    freqs, _, phase = calc_fft_with_phase_time_series(series, output_unit_system=output_unit_system)
     return FreqPhaSeries.from_data(
         freqs,
         phase,
@@ -111,14 +121,14 @@ def calc_freqspec_from_accel_series(
     from .frequency_spectrum import FreqSpec
 
     units = output_unit_system or get_default_unit_system()
-    freqs, mag, phase = calc_fft_with_phase_time_series(series, output_unit_system=units)
+    freqs, mag, phase = calc_fft_with_phase_time_series(series, output_unit_system=output_unit_system)
     return FreqSpec.from_data(
         freqs,
         amp=mag,
         pha=phase,
         units={
             "freq": units.frequency,
-            "amp": series.value_unit,
+            "amp": _SpectrumUnits.amplitude(series, output_unit_system),
             "phase": units.phase,
         },
         unit_system=units,

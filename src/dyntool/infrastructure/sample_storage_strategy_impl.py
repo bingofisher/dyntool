@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import json
 import shutil
+import warnings
+from uuid import uuid4
+from zipfile import ZipFile
 from typing import TYPE_CHECKING, Any
 
 import h5py
 import numpy as np
 import pandas as pd
 
+from ._storage_commit import _FileCommit, _StorageConsistencyError, _WriteMarker
 from .sample_storage_strategy_base import _StorageReadSession, _StorageStrategy, _StorageWriteSession
 from .sample_storage_sqlite_h5_strategy import _SetSqliteH5Strategy
 from .storage_constants import (
@@ -32,11 +36,14 @@ if TYPE_CHECKING:
 
 class _SampleJsonStrategy(_StorageStrategy):
     def prepare_layout(self) -> None:
+        _WriteMarker.check(self.ctx.base_dir)
         self.ctx.base_dir.mkdir(parents=True, exist_ok=True)
 
     def uid_name_index(self) -> dict[str, str]:
         index: dict[str, str] = {}
         for file_path in self.ctx.base_dir.glob("*.json"):
+            if file_path.name.startswith(".dyntool-"):
+                continue
             with open(file_path, encoding="utf-8") as f:
                 payload = json.load(f)
             uid = payload.get("metadata", {}).get("uid")
@@ -45,15 +52,20 @@ class _SampleJsonStrategy(_StorageStrategy):
         return index
 
     def save_sample(self, sample: SampleBaseModel, categories: list[str] | None = None) -> None:
+        if categories == []:
+            return
         name = self.ctx.resolve_name(sample)
-        data_dict = self.ctx.sample_data_dict(sample, categories)
-        payload = {
-            "alias": sample.alias,
-            "metadata": sample.metadata.model_dump(),
-            "data": {k: self.ctx.to_jsonable(self.ctx.serialize_container(v)) for k, v in data_dict.items()},
-        }
-        with open(self.ctx.base_dir / f"{name}.json", "w", encoding="utf-8") as f:
-            json.dump(payload, f, ensure_ascii=False, indent=2, default=str)
+        plan = self.ctx.write_plan(sample, categories)
+        data_dict = plan.data
+        target = self.ctx.base_dir / f"{name}.json"
+        with self.ctx.write_lock, _FileCommit(self.ctx.base_dir, f"JSON 样本 {sample.uid}") as commit:
+            old_data = json.loads(target.read_text(encoding="utf-8")).get("data", {}) if target.exists() else {}
+            old_data.update({k: self.ctx.to_jsonable(self.ctx.serialize_container(v)) for k, v in data_dict.items()})
+            payload = {"alias": plan.alias, "metadata": plan.metadata, "data": old_data}
+            commit.stage(target).write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8"
+            )
+            commit.commit()
 
     def load_sample(
         self,
@@ -69,8 +81,12 @@ class _SampleJsonStrategy(_StorageStrategy):
         for category, value in payload.get("data", {}).items():
             if category not in selected_categories:
                 continue
-            sample.update(**{category: self.ctx.deserialize_container(category, value)})
+            sample._replace_data_var_internal(category, self.ctx.deserialize_container(category, value))
         return sample
+
+    def sample_presence(self, uid: str, name: str) -> dict[str, bool]:
+        payload = json.loads((self.ctx.base_dir / f"{name}.json").read_text(encoding="utf-8"))
+        return {category: category in payload.get("data", {}) for category in self.ctx.category_fields()}
 
     def organize(self, valid_uids: set[str]) -> int:
         removed = 0
@@ -86,6 +102,7 @@ class _SampleJsonStrategy(_StorageStrategy):
 
 class _SampleH5Strategy(_StorageStrategy):
     def prepare_layout(self) -> None:
+        _WriteMarker.check(self.ctx.base_dir)
         self.ctx.base_dir.mkdir(parents=True, exist_ok=True)
 
     def uid_name_index(self) -> dict[str, str]:
@@ -93,6 +110,8 @@ class _SampleH5Strategy(_StorageStrategy):
 
         index: dict[str, str] = {}
         for file_path in self.ctx.base_dir.glob("*.h5"):
+            if file_path.name.startswith(".dyntool-"):
+                continue
             if file_path.name == self.ctx.set_filename:
                 continue
             try:
@@ -110,6 +129,9 @@ class _SampleH5Strategy(_StorageStrategy):
         units = payload.get("_units", {})
         dataset_options = self.ctx.h5_dataset_options()
         for key, value in payload.items():
+            if key == "_dyntool":
+                group.attrs["_dyntool"] = json.dumps(value, ensure_ascii=False)
+                continue
             if key == "_units" or value is None:
                 continue
             if isinstance(value, dict):
@@ -149,19 +171,28 @@ class _SampleH5Strategy(_StorageStrategy):
                 units[key] = node.attrs[H5_ATTR_UNIT]
         if units:
             payload["_units"] = units
+        if "_dyntool" in group.attrs:
+            payload["_dyntool"] = json.loads(str(group.attrs["_dyntool"]))
         return payload
 
     def save_sample(self, sample: SampleBaseModel, categories: list[str] | None = None) -> None:
-        import h5py
-
+        if categories == []:
+            return
         name = self.ctx.resolve_name(sample)
-        data_dict = self.ctx.sample_data_dict(sample, categories)
-        with h5py.File(self.ctx.base_dir / f"{name}.h5", "w") as f:
-            f.attrs[H5_ATTR_UID] = sample.uid
-            f.attrs[H5_ATTR_ALIAS] = sample.alias
-            f.attrs[H5_ATTR_METADATA_JSON] = json.dumps(sample.metadata.model_dump(), ensure_ascii=False, default=str)
-            for category, data in data_dict.items():
-                self._write_group(f, category, data)
+        plan = self.ctx.write_plan(sample, categories)
+        data_dict = plan.data
+        target = self.ctx.base_dir / f"{name}.h5"
+        with self.ctx.write_lock, _FileCommit(self.ctx.base_dir, f"H5 样本 {sample.uid}") as commit:
+            staged = commit.stage(target, preserve=True)
+            with h5py.File(staged, "a" if target.exists() else "w") as f:
+                f.attrs[H5_ATTR_UID] = sample.uid
+                f.attrs[H5_ATTR_ALIAS] = sample.alias
+                f.attrs[H5_ATTR_METADATA_JSON] = json.dumps(plan.metadata, ensure_ascii=False, default=str)
+                for category, data in data_dict.items():
+                    if category in f:
+                        del f[category]
+                    self._write_group(f, category, data)
+            commit.commit()
 
     def load_sample(
         self,
@@ -185,7 +216,9 @@ class _SampleH5Strategy(_StorageStrategy):
                 group = f[category]
                 if not isinstance(group, h5py.Group):
                     continue
-                sample.update(**{category: self.ctx.deserialize_container(category, self._read_group_payload(group))})
+                sample._replace_data_var_internal(
+                    category, self.ctx.deserialize_container(category, self._read_group_payload(group))
+                )
         return sample
 
     def load_sample_fields(
@@ -248,21 +281,81 @@ class _SetH5Strategy(_SampleH5Strategy):
             return index
         with h5py.File(set_path, "r") as f:
             for uid in f.keys():
-                index[uid] = uid
+                if not uid.startswith(".dyntool-"):
+                    index[uid] = uid
         return index
 
     def save_sample(self, sample: SampleBaseModel, categories: list[str] | None = None) -> None:
-        import h5py
-
-        data_dict = self.ctx.sample_data_dict(sample, categories)
-        with h5py.File(self.ctx.set_h5_path(), "a") as f:
-            if sample.uid in f:
-                del f[sample.uid]
-            grp = f.create_group(sample.uid)
-            grp.attrs[H5_ATTR_ALIAS] = sample.alias
-            grp.attrs[H5_ATTR_METADATA_JSON] = json.dumps(sample.metadata.model_dump(), ensure_ascii=False, default=str)
-            for category, data in data_dict.items():
-                self._write_group(grp, category, data)
+        if categories == []:
+            return
+        plan = self.ctx.write_plan(sample, categories)
+        data_dict = plan.data
+        with self.ctx.write_lock:
+            _WriteMarker.check(self.ctx.base_dir)
+            marker = _WriteMarker(self.ctx.base_dir, f"集合 H5 样本 {sample.uid}")
+            marker.start()
+            staged = f".dyntool-stage-{uuid4().hex}"
+            backup = f".dyntool-backup-{uuid4().hex}"
+            write_error: BaseException | None = None
+            try:
+                with h5py.File(self.ctx.set_h5_path(), "a") as f:
+                    published = False
+                    try:
+                        grp = f.create_group(staged)
+                        if sample.uid in f:
+                            previous = f[sample.uid]
+                            for category in previous:
+                                if category not in data_dict:
+                                    grp[category] = previous[category]
+                        grp.attrs[H5_ATTR_ALIAS] = sample.alias
+                        grp.attrs[H5_ATTR_METADATA_JSON] = json.dumps(plan.metadata, ensure_ascii=False, default=str)
+                        for category, data in data_dict.items():
+                            self._write_group(grp, category, data)
+                        f.flush()
+                        if sample.uid in f:
+                            f.move(sample.uid, backup)
+                        f.move(staged, sample.uid)
+                        published = True
+                        f.flush()
+                    except BaseException as error:
+                        write_error = error
+                        try:
+                            if backup in f:
+                                if sample.uid in f:
+                                    del f[sample.uid]
+                                f.move(backup, sample.uid)
+                            elif published and sample.uid in f:
+                                del f[sample.uid]
+                            if staged in f:
+                                del f[staged]
+                            f.flush()
+                        except BaseException as rollback_error:
+                            error.add_note(f"H5 回滚失败：{rollback_error}")
+                            raise _StorageConsistencyError("集合 H5 回滚失败，必须停止批次") from error
+                    if write_error is None and backup in f:
+                        try:
+                            del f[backup]
+                        except Exception as cleanup_error:
+                            warnings.warn(
+                                f"样本已提交，旧 H5 group 留待整理：{backup}：{cleanup_error}",
+                                RuntimeWarning,
+                                stacklevel=2,
+                            )
+            except _StorageConsistencyError:
+                raise
+            except BaseException as close_error:
+                # 句柄退出失败时无法确认 flush/close 的最终状态，保留标记供只读检查。
+                raise _StorageConsistencyError("集合 H5 退出失败，保留中断标记并停止批次") from (
+                    write_error or close_error
+                )
+            try:
+                marker.finish()
+            except OSError as cleanup_error:
+                raise _StorageConsistencyError(
+                    "集合 H5 中断标记无法移除，必须停止批次", committed=write_error is None
+                ) from (write_error or cleanup_error)
+            if write_error is not None:
+                raise write_error
 
     def load_sample(
         self,
@@ -290,7 +383,9 @@ class _SetH5Strategy(_SampleH5Strategy):
                 cat_grp = grp[category]
                 if not isinstance(cat_grp, h5py.Group):
                     continue
-                sample.update(**{category: self.ctx.deserialize_container(category, self._read_group_payload(cat_grp))})
+                sample._replace_data_var_internal(
+                    category, self.ctx.deserialize_container(category, self._read_group_payload(cat_grp))
+                )
         return sample
 
     def load_sample_fields(
@@ -348,7 +443,7 @@ class _SetH5Strategy(_SampleH5Strategy):
         return loaded
 
     def write_session(self) -> _StorageWriteSession:
-        return _SetH5WriteSession(self)
+        return _StorageWriteSession(self)
 
     def read_session(self) -> _StorageReadSession:
         return _SetH5ReadSession(self)
@@ -392,6 +487,7 @@ class _SetH5Strategy(_SampleH5Strategy):
 
 class _AttrTableStrategy(_StorageStrategy):
     def prepare_layout(self) -> None:
+        _WriteMarker.check(self.ctx.base_dir)
         self.ctx.base_dir.mkdir(parents=True, exist_ok=True)
         for category in self.ctx.category_fields():
             (self.ctx.base_dir / category).mkdir(parents=True, exist_ok=True)
@@ -409,35 +505,42 @@ class _AttrTableStrategy(_StorageStrategy):
         return index
 
     def save_sample(self, sample: SampleBaseModel, categories: list[str] | None = None) -> None:
+        if categories == []:
+            return
         name = self.ctx.resolve_name(sample)
-        data_dict = self.ctx.sample_data_dict(sample, categories)
-        fmt = self.ctx.attr_data_format()
-        for category, data in data_dict.items():
-            attr_dir = self.ctx.base_dir / category
-            attr_dir.mkdir(parents=True, exist_ok=True)
-            if fmt is AttrDataFormat.CSV:
-                file_path = attr_dir / f"{name}.csv"
-                options: dict[str, Any] = {}
-                if self.ctx.float_format() is not None:
-                    options["float_format"] = self.ctx.float_format()
-                data_for_csv = self.ctx.prepare_container_for_csv(category, data)
-                self.ctx.data_storage.save(
-                    file_path,
-                    data_for_csv,
-                    fmt=ContainerFormat.CSV,
-                    category=category,
-                    options=options,
-                )
-            else:
-                file_path = attr_dir / f"{name}.npy"
-                data_for_npy = self.ctx.prepare_container_for_csv(category, data)
-                self.ctx.data_storage.save(
-                    file_path,
-                    data_for_npy,
-                    fmt=ContainerFormat.NPY,
-                    category=category,
-                )
-        self.ctx.upsert_metadata_table_row(sample, name)
+        plan = self.ctx.write_plan(sample, categories)
+        data_dict = plan.data
+        with self.ctx.write_lock, _FileCommit(self.ctx.base_dir, f"属性表样本 {sample.uid}") as commit:
+            fmt = self.ctx.attr_data_format()
+            for category, data in data_dict.items():
+                attr_dir = self.ctx.base_dir / category
+                attr_dir.mkdir(parents=True, exist_ok=True)
+                if fmt is AttrDataFormat.CSV:
+                    file_path = attr_dir / f"{name}.csv"
+                    options: dict[str, Any] = {}
+                    if self.ctx.float_format() is not None:
+                        options["float_format"] = self.ctx.float_format()
+                    data_for_csv = self.ctx.prepare_container_for_csv(category, data)
+                    self.ctx.data_storage.save(
+                        commit.stage(file_path),
+                        data_for_csv,
+                        fmt=ContainerFormat.CSV,
+                        category=category,
+                        options=options,
+                    )
+                else:
+                    file_path = attr_dir / f"{name}.npy"
+                    data_for_npy = self.ctx.prepare_container_for_csv(category, data)
+                    self.ctx.data_storage.save(
+                        commit.stage(file_path),
+                        data_for_npy,
+                        fmt=ContainerFormat.NPY,
+                        category=category,
+                    )
+            updated = self.ctx.metadata_table_update(sample, name, metadata=plan.metadata)
+            updated.to_csv(commit.stage(self.ctx.metadata_table_path()), index=False, encoding="utf-8-sig")
+            commit.commit()
+            self.ctx._metadata_table_cache = updated
 
     def load_sample(
         self,
@@ -474,8 +577,15 @@ class _AttrTableStrategy(_StorageStrategy):
                     category=category,
                     container_type=self.ctx.resolve_field_type(category),
                 )
-            sample.update(**{category: data})
+            sample._replace_data_var_internal(category, data)
         return sample
+
+    def sample_presence(self, uid: str, name: str) -> dict[str, bool]:
+        suffix = ".csv" if self.ctx.attr_data_format() is AttrDataFormat.CSV else ".npy"
+        return {
+            category: (self.ctx.base_dir / category / f"{name}{suffix}").is_file()
+            for category in self.ctx.category_fields()
+        }
 
     def organize(self, valid_uids: set[str]) -> int:
         removed = 0
@@ -497,6 +607,7 @@ class _AttrTableStrategy(_StorageStrategy):
 
 class _SampleDirStrategy(_StorageStrategy):
     def prepare_layout(self) -> None:
+        _WriteMarker.check(self.ctx.base_dir)
         self.ctx.base_dir.mkdir(parents=True, exist_ok=True)
 
     def uid_name_index(self) -> dict[str, str]:
@@ -516,21 +627,32 @@ class _SampleDirStrategy(_StorageStrategy):
         return index
 
     def save_sample(self, sample: SampleBaseModel, categories: list[str] | None = None) -> None:
+        if categories == []:
+            return
         name = self.ctx.resolve_name(sample)
         sample_dir = self.ctx.base_dir / name
-        sample_dir.mkdir(parents=True, exist_ok=True)
-        with open(sample_dir / METADATA_JSON_FILENAME, "w", encoding="utf-8") as f:
-            json.dump(
-                {"alias": sample.alias, "metadata": sample.metadata.model_dump()},
-                f,
-                ensure_ascii=False,
-                indent=2,
-                default=str,
+        plan = self.ctx.write_plan(sample, categories)
+        data_dict = plan.data
+        with self.ctx.write_lock, _FileCommit(self.ctx.base_dir, f"目录样本 {sample.uid}") as commit:
+            metadata_path = commit.stage(sample_dir / METADATA_JSON_FILENAME)
+            metadata_path.write_text(
+                json.dumps({"alias": plan.alias, "metadata": plan.metadata}, ensure_ascii=False, indent=2, default=str),
+                encoding="utf-8",
             )
-        data_pack: dict[str, Any] = {}
-        for category, data in self.ctx.sample_data_dict(sample, categories).items():
-            data_pack[category] = np.array([self.ctx.serialize_container(data)], dtype=object)
-        np.savez_compressed(sample_dir / DATA_NPZ_FILENAME, **data_pack)
+            target = sample_dir / DATA_NPZ_FILENAME
+            staged = commit.stage(target)
+            data_pack = {
+                category: np.array([self.ctx.serialize_container(data)], dtype=object)
+                for category, data in data_dict.items()
+            }
+            np.savez_compressed(staged, **data_pack)
+            # 未选择的 NPZ 项直接复制，不反序列化历史槽位。
+            if target.exists():
+                with ZipFile(target, "r") as old, ZipFile(staged, "a") as new:
+                    for info in old.infolist():
+                        if info.filename.removesuffix(".npy") not in data_dict:
+                            new.writestr(info, old.read(info.filename))
+            commit.commit()
 
     def load_sample(
         self,
@@ -554,7 +676,7 @@ class _SampleDirStrategy(_StorageStrategy):
                 if category not in selected_categories:
                     continue
                 payload = npz[category].item()
-                sample.update(**{category: self.ctx.deserialize_container(category, payload)})
+                sample._replace_data_var_internal(category, self.ctx.deserialize_container(category, payload))
         return sample
 
     def load_sample_fields(
@@ -614,37 +736,6 @@ STRATEGY_REGISTRY: dict[StorageScheme, type[_StorageStrategy]] = {
 }
 
 
-class _SetH5WriteSession(_StorageWriteSession):
-    def __init__(self, strategy: _SetH5Strategy) -> None:
-        super().__init__(strategy)
-        self._strategy = strategy
-        self._file: Any | None = None
-
-    def __enter__(self) -> "_SetH5WriteSession":
-        import h5py
-
-        self._file = h5py.File(self._strategy.ctx.set_h5_path(), "a")
-        return self
-
-    def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
-        del exc_type, exc, tb
-        if self._file is not None:
-            self._file.close()
-            self._file = None
-
-    def save_sample(self, sample: SampleBaseModel, categories: list[str] | None = None) -> None:
-        if self._file is None:
-            raise RuntimeError("SET_H5 写入会话尚未打开")
-        data_dict = self._strategy.ctx.sample_data_dict(sample, categories)
-        if sample.uid in self._file:
-            del self._file[sample.uid]
-        grp = self._file.create_group(sample.uid)
-        grp.attrs[H5_ATTR_ALIAS] = sample.alias
-        grp.attrs[H5_ATTR_METADATA_JSON] = json.dumps(sample.metadata.model_dump(), ensure_ascii=False, default=str)
-        for category, data in data_dict.items():
-            self._strategy._write_group(grp, category, data)
-
-
 class _SetH5ReadSession(_StorageReadSession):
     def __init__(self, strategy: _SetH5Strategy) -> None:
         super().__init__(strategy)
@@ -690,12 +781,9 @@ class _SetH5ReadSession(_StorageReadSession):
             cat_grp = grp[category]
             if not isinstance(cat_grp, h5py.Group):
                 continue
-            sample.update(
-                **{
-                    category: self._strategy.ctx.deserialize_container(
-                        category, self._strategy._read_group_payload(cat_grp)
-                    )
-                }
+            sample._replace_data_var_internal(
+                category,
+                self._strategy.ctx.deserialize_container(category, self._strategy._read_group_payload(cat_grp)),
             )
         return sample
 

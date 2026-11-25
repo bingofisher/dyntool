@@ -38,6 +38,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from dyntool import BatchOperationReport, OperationResult
 from dyntool_gui.facades import GuiImportFacade, ImportPreview, SampleSetImportRequest
 from dyntool_gui.layout import LANDSCAPE_1080P_PROFILE, LANDSCAPE_2K_PROFILE, resolve_workbench_layout_profile
 from dyntool_gui.main_window import MainWindow
@@ -675,9 +676,15 @@ def test_processing_execute_reports_per_sample_progress() -> None:
         def keys(self) -> tuple[str, str]:
             return ("u1", "u2")
 
-        def calc_freqspec(self, *, uids: tuple[str, ...], strict: bool, overwrite: bool) -> None:
-            del strict, overwrite
+        def calc_freqspec(
+            self, *, uids: tuple[str, ...], strict: bool, overwrite: bool
+        ) -> BatchOperationReport[object]:
+            del overwrite
             self.calls.append(uids)
+            report = BatchOperationReport[object](action="calc_freqspec", strict=strict)
+            for uid in uids:
+                report.add(uid, OperationResult(action="calc_freqspec", status="success", message="处理成功"))
+            return report
 
     session = ProjectSession.build_empty()
     runtime = _Runtime()
@@ -1824,7 +1831,10 @@ def test_processing_workspace_uses_compact_status_summary_without_large_numbers(
     assert metrics_frame is not None
     assert metrics_frame.maximumHeight() <= 34
     assert summary_label is not None
-    assert "完成结果" in summary_label.text()
+    assert "成功：" in summary_label.text()
+    assert "跳过：" in summary_label.text()
+    assert "失败：" in summary_label.text()
+    assert "未执行：" in summary_label.text()
     assert not hasattr(widget, "_metric_done")
     assert not hasattr(widget, "_metric_gap")
     assert not hasattr(widget, "_metric_time")

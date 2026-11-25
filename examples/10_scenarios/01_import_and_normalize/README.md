@@ -8,3 +8,5 @@
 运行命令：`python examples/10_scenarios/01_import_and_normalize/main.py`  
 关键 API：`AccelSeries.from_csv()`、`DefaultSampleSet.save()`、`DefaultSampleSet.from_storage()`  
 对应测试：`tests/test_examples_systems.py::test_scenario_import_and_normalize`
+
+输入是用于演示的短记录，因此显式使用 `time_windows=-1` 评价全记录。真实分窗评价仍要求至少一个完整窗口，不会自动缩窗。

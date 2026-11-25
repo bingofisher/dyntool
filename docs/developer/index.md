@@ -14,7 +14,7 @@
 - GUI 按钮矩阵
 - GUI 视觉参考
 - GUI 生图 Prompt 区
-- Web 工作台实验线（冻结）
+- GUI 单路线迁移与可靠性
 - Skill 治理与主入口
 - API 设计与公开面约束
 - DefaultSample / DefaultSampleSet 与 storage 主链
@@ -22,3 +22,6 @@
 - Git / 项目管理工作流
 - 测试策略与限值模型维护
 - 自定义扩展
+
+- [核心架构整改与迁移](core_architecture_remediation.md)
+- [核心整改验证记录](core_architecture_verification.md)

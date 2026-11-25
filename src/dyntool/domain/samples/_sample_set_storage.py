@@ -258,7 +258,8 @@ def save_sample_set(
     require_storage_scheme(storage_scheme)
     require_name_resolver(name_resolver)
     resolved_categories = sample_set._categories_to_fields(categories)
-
+    if resolved_categories == []:
+        return sample_set
     result = resolve_sample_set_runtime(sample_set, action="save").save_sample_set(
         sample_set,
         path=str(path) if path is not None else None,
@@ -273,7 +274,9 @@ def save_sample_set(
         name_resolver=name_resolver,
         set_filename=set_filename,
     )
-    result.storage_dirty = False
+    report = result.last_operation_report
+    if categories is None and filter is None and report is not None and report.stats.failed == 0:
+        result.storage_dirty = False
     return result
 
 
@@ -346,6 +349,8 @@ def convert_storage_sample_set(
         storage_scheme=storage_scheme,
         set_filename=set_filename,
     )
+    if sample_set.storage is not None:
+        sample_set.storage._assert_write_allowed(target_base_dir)
     if matches_current_storage_target(
         sample_set.storage,
         target_base_dir=target_base_dir,

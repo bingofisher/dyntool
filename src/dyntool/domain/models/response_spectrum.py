@@ -30,6 +30,7 @@ class ResponseSpectrum(DataModelBase):
 
     category: ClassVar[DataCategory] = DataCategory.RS
     axis_field: ClassVar[str | None] = "period"
+    _xarray_axis_key: ClassVar[str] = "T"
     value_field: ClassVar[str | None] = "value"
 
     def __init__(self, data: xr.DataArray) -> None:
@@ -418,6 +419,13 @@ class RespSpec(DataModelBase):
     category: ClassVar[DataCategory] = DataCategory.RS_SPEC
     axis_field: ClassVar[str | None] = "period"
     value_field: ClassVar[str | None] = None
+    _xarray_components: ClassVar[dict[str, type[DataModelBase]]] = {
+        "sa": SpecAccelSeries,
+        "sv": SpecVelSeries,
+        "sd": SpecDispSeries,
+        "psa": PSpecAccelSeries,
+        "psv": PSpecVelSeries,
+    }
 
     def __init__(
         self,
@@ -429,7 +437,8 @@ class RespSpec(DataModelBase):
         psv: PSpecVelSeries | None = None,
     ) -> None:
         if all(item is None for item in (sa, sv, sd, psa, psv)):
-            raise ValueError("RespSpec requires at least one component.")
+            raise ValueError("组合响应谱至少需要一个分量")
+        self._validate_component_axes((sa, sv, sd, psa, psv), "second")
         self.sa = sa
         self.sv = sv
         self.sd = sd

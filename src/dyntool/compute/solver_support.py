@@ -95,7 +95,7 @@ def band_rms(
     center_freq: float,
     window_n: int,
     window_nfft: int,
-    fs: int,
+    fs: float,
     octave: float,
 ) -> float:
     """根据 FFT 窗口计算单个倍频带的 RMS。"""

@@ -327,6 +327,25 @@ def detect_text_issues(path: Path, project_root: Path, *, strict_doc: bool) -> l
     if strict_doc and not contains_cjk(text):
         issues.append(TextIssue(path, "missing_cjk", "should contain Chinese documentation"))
 
+    if path.suffix == ".py":
+        try:
+            tree = ast.parse(text)
+        except SyntaxError:
+            tree = None
+        if tree is not None:
+            for node in ast.walk(tree):
+                if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+                    doc = ast.get_docstring(node)
+                    if doc and re.search(r"\?{3,}", doc):
+                        issues.append(
+                            TextIssue(
+                                path,
+                                "damaged_docstring",
+                                "中文说明含连续问号，需要人工核对原意",
+                                line=getattr(node, "lineno", 1),
+                            )
+                        )
+
     if path.name not in SELF_PATTERN_EXEMPT_FILES:
         remaining_text = text
         for fragment, replacement in KNOWN_MOJIBAKE_REPLACEMENTS.items():

@@ -36,6 +36,7 @@ class TimeSeriesCategory(StrEnum):
         - ``VEL``: 速度时程。
         - ``DISP``: 位移时程。
         - ``FORCE``: 力时程。
+        - ``MOMENT``/``STRESS``/``STRAIN``: 力矩、应力、应变时程。
     """
 
     BASE = "ts"
@@ -43,6 +44,9 @@ class TimeSeriesCategory(StrEnum):
     VEL = "vel"
     DISP = "disp"
     FORCE = "force"
+    MOMENT = "moment"
+    STRESS = "stress"
+    STRAIN = "strain"
 
 
 class ResponseSpectrumCategory(StrEnum):
@@ -104,6 +108,9 @@ class DataCategory(StrEnum):
     TS_VEL = TimeSeriesCategory.VEL
     TS_DISP = TimeSeriesCategory.DISP
     TS_FORCE = TimeSeriesCategory.FORCE
+    TS_MOMENT = TimeSeriesCategory.MOMENT
+    TS_STRESS = TimeSeriesCategory.STRESS
+    TS_STRAIN = TimeSeriesCategory.STRAIN
 
     RS = ResponseSpectrumCategory.BASE
     RS_SA = ResponseSpectrumCategory.SA
@@ -157,6 +164,9 @@ _DATA_CATEGORY_TO_SAMPLE_ATTR: dict[DataCategory, str] = {
     DataCategory.TS_VEL: "vel",
     DataCategory.TS_DISP: "disp",
     DataCategory.TS_FORCE: "force",
+    DataCategory.TS_MOMENT: "moment",
+    DataCategory.TS_STRESS: "stress",
+    DataCategory.TS_STRAIN: "strain",
     DataCategory.FS_SPEC: "freqspec",
     DataCategory.RS_SPEC: "respspec",
     DataCategory.ZVL_EVAL: "zvl",

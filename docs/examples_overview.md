@@ -2,7 +2,7 @@
 
 稳定性：`Public API`
 
-正式示例只展示顶层对象 API 与正式模块 API，不直接依赖内部导入路径。
+核心库正式示例展示顶层对象 API 与正式模块 API，不直接依赖核心内部导入路径。建筑振动展示为正式维护的 GUI 场景，其桌面启动属于 `Internal API`，生成器为 `Private / implementation detail`。
 
 ## 正式场景
 
@@ -12,7 +12,8 @@
 - `examples/10_scenarios/04_store_and_reload/main.py`
 - `examples/10_scenarios/05_plot_and_export/main.py`
 - `examples/10_scenarios/06_logged_run/main.py`
-- `examples/10_scenarios/07_resource_driven_eval/main.py`
+- `examples/10_scenarios/07_resource_driven_eval/main.py`：规范资源与 JGJ/T 170 分频最大振级标量阈值、H5 重开及限值绘图
+- `examples/10_scenarios/09_gui_building_showcase/main.py`：[建筑室内振动与隔振效果展示](usage/gui_building_showcase.md)
 
 ## Recipes
 

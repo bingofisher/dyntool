@@ -14,7 +14,8 @@ from PySide6.QtCore import QObject, QThread, Signal, Slot
 
 from dyntool.plotting import BoxPlotter, FramePlotter, OneThirdOctavePlotter, PlotDataset, PlotTheme
 
-from ..session import PlotRequestSnapshot, ProjectSession, resolve_scope_uids
+from .._scope import _ResolvedSampleScope
+from ..session import PlotRequestSnapshot, ProjectSession
 from ..theme import ThemeManager
 
 
@@ -172,7 +173,7 @@ class PlotManager(QObject):
         source_name: str,
         selected_uid: str = "",
         selected_uids: tuple[str, ...] = (),
-        scoped_uids: tuple[str, ...] = (),
+        scoped_uids: tuple[str, ...] | None = None,
         theme_path: str | None = None,
         point_limit: int = 20000,
         save_mode: str = "preview",
@@ -180,6 +181,7 @@ class PlotManager(QObject):
         """同步生成绘图结果。"""
 
         sample_set = self._require_runtime()
+        scoped_uids = _ResolvedSampleScope.resolve(self._session, scoped_uids).require_samples("绘制")
         theme = PlotTheme.default() if not theme_path else PlotTheme.from_file(theme_path)
         figure = Figure(figsize=(7.4, 4.8))
         ax = figure.subplots()
@@ -277,7 +279,7 @@ class PlotManager(QObject):
         scoped_uids: tuple[str, ...],
         point_limit: int,
     ) -> PlotRenderResult:
-        uid_token = selected_uid or (scoped_uids[0] if scoped_uids else _first_scope_uid(self._session))
+        uid_token = selected_uid or scoped_uids[0]
         uid, sample = _resolve_sample(sample_set, uid_token)
         model = _sample_model(sample, source_name)
         if model is None:
@@ -308,7 +310,7 @@ class PlotManager(QObject):
         scoped_uids: tuple[str, ...],
         point_limit: int,
     ) -> PlotRenderResult:
-        scoped_uids = tuple(selected_uids) or tuple(scoped_uids) or tuple(resolve_scope_uids(self._session))
+        scoped_uids = tuple(selected_uids) or scoped_uids
         if source_kind == "sample_model":
             target_uids = scoped_uids
             if len(target_uids) < 2:
@@ -320,7 +322,7 @@ class PlotManager(QObject):
                 if source_name == "otovl"
                 else FramePlotter(ax=ax, theme=theme)
             )
-            for uid_token in target_uids:
+            for index, uid_token in enumerate(target_uids):
                 uid, sample = _resolve_sample(sample_set, uid_token)
                 model = _sample_model(sample, source_name)
                 if model is None:
@@ -331,7 +333,8 @@ class PlotManager(QObject):
                     source_name=source_name,
                     point_limit=point_limit,
                 )
-                plotter.plot_dataset(dataset)
+                dataset.set_style("sample", str(sample.alias), {"color": f"C{index % 10}", "linewidth": 0.8})
+                plotter.plot_dataset(dataset, legend_options={})
             message = f"已渲染多样本比较图：{source_name} / {len(target_uids)} 个样本"
             return PlotRenderResult(
                 figure=ax.figure,
@@ -342,7 +345,7 @@ class PlotManager(QObject):
             )
 
         if source_kind == "scalar_frame":
-            frame = sample_set.scalar_frame(uids=scoped_uids or None, strict=False)
+            frame = sample_set.scalar_frame(uids=scoped_uids, strict=False)
             dataset = PlotDataset.from_dataframe(_sample_frame(frame, point_limit), category="sample")
             BoxPlotter(ax=ax, theme=theme).plot_dataset(dataset)
             message = "已渲染样本集标量分布图"
@@ -356,7 +359,7 @@ class PlotManager(QObject):
             )
 
         if source_kind == "series_frame":
-            frame = sample_set.series_frame(source_name, uids=scoped_uids or None, strict=False)
+            frame = sample_set.series_frame(source_name, uids=scoped_uids, strict=False)
             dataset = PlotDataset.from_dataframe(_sample_frame(frame, point_limit), category="sample")
             FramePlotter(ax=ax, theme=theme).plot_dataset(dataset)
             message = f"已渲染样本集序列表：{source_name}"
@@ -384,16 +387,6 @@ class PlotManager(QObject):
         if sample_set is None:
             raise ValueError("当前没有可绘制的主样本集。")
         return sample_set
-
-
-def _first_scope_uid(session: ProjectSession) -> str:
-    scoped = resolve_scope_uids(session)
-    if scoped:
-        return scoped[0]
-    runtime = session.primary_runtime
-    if runtime is None:
-        return ""
-    return str(next(iter(runtime.keys())))
 
 
 def _resolve_sample(sample_set: Any, selected_uid: str) -> tuple[str, object]:

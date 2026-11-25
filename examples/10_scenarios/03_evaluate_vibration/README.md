@@ -31,3 +31,5 @@
 - `tests/test_examples_systems.py::test_scenario_evaluate_vibration`
 - `tests/test_transfer_function.py`
 - `tests/test_plotting.py`
+
+传递函数稳定性：`Public API`。采样率保留浮点 Hz，二维输入须先选通道；相位表示输出相对输入。历史相位采用错误方向的结果需显式重新计算，不能自动修改旧结果。

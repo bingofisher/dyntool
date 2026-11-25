@@ -31,6 +31,11 @@ class _ModelStorageRuntimeMixin:
         """保存模型文件。"""
 
         target = Path(path)
+        owner_ref = model.__dict__.get("_owner_ref")
+        owner = owner_ref() if owner_ref is not None else None
+        sample_set = getattr(owner, "_storage_set", None)
+        if sample_set is not None and sample_set.storage is not None:
+            sample_set.storage._assert_write_allowed(target)
         target.parent.mkdir(parents=True, exist_ok=True)
         logger.info("save_model request")
         try:

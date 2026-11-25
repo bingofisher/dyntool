@@ -18,15 +18,22 @@ from dyntool import (
     AccelSeries,
     DefaultSample,
     DefaultSampleSet,
+    FDMVLLimit,
+    FDMVLLimitStandard,
     OTOVLLimit,
     OTOVLLimitStandard,
     LoggingMode,
     Metadata,
+    ForceSeries,
+    MomentSeries,
+    StressSeries,
+    StrainSeries,
     ZVLLimit,
     ZVLLimitStandard,
     SampleDomain,
     StorageScheme,
     TimeSeries,
+    UnitSystem,
     VibrationTestMetadata,
 )
 
@@ -79,7 +86,7 @@ def _make_reporting_sample_set(*, suffix: str, with_eval: bool = False) -> Any:
         sample_domain=SampleDomain.VIBRATION_TEST,
     )
     if with_eval:
-        sample_set.eval_zvl(overwrite=True, freq_range=(2.0, 60.0))
+        sample_set.eval_zvl(overwrite=True, freq_range=(2.0, 60.0), time_windows=-1)
         sample_set.eval_otovl(overwrite=True, freq_range=(2.0, 80.0))
     return sample_set
 
@@ -103,7 +110,7 @@ def _scenario_import_and_normalize(output_dir: Path | None = None) -> dict[str, 
         accel=normalized,
         **_make_vibration_kwargs(suffix="import"),
     )
-    sample.eval_zvl(overwrite=True, freq_range=(2.0, 60.0))
+    sample.eval_zvl(overwrite=True, freq_range=(2.0, 60.0), time_windows=-1)
     sample_set = DefaultSampleSet.from_samples([sample], sample_domain=SampleDomain.VIBRATION_TEST)
     sample_set.save(store_path, storage_scheme=StorageScheme.SET_H5)
     loaded = DefaultSampleSet.from_storage(
@@ -128,11 +135,20 @@ def _scenario_build_and_manage_samples(output_dir: Path | None = None) -> dict[s
         _make_vibration_sample(suffix="build-b", values=[0.0, -0.05, 0.03, 0.02]),
     ]
     sample_set = DefaultSampleSet.from_samples(samples, sample_domain=SampleDomain.VIBRATION_TEST)
-    sample_set.eval_zvl(overwrite=True, freq_range=(2.0, 60.0))
+    sample_set.eval_zvl(overwrite=True, freq_range=(2.0, 60.0), time_windows=-1)
     evaluated_count = sum(1 for sample in sample_set.values() if sample.zvl is not None)
+    mechanical = DefaultSample(
+        metadata=Metadata(identity={"case": "力学时程示例"}),
+        force=ForceSeries.from_data([1, 2, 3], dt=0.01, data_unit="kilonewton"),
+        moment=MomentSeries.from_data([1, 2, 3], dt=0.01, data_unit="kilonewton * meter"),
+        stress=StressSeries.from_data([1, 2, 3], dt=0.01, data_unit="megapascal"),
+        strain=StrainSeries.from_data([100, 200, 300], dt=0.01, data_unit="microstrain"),
+    )
     return {
         "sample_count": len(sample_set),
         "evaluated_count": evaluated_count,
+        "mechanical_stress_unit": mechanical.stress.value_unit,
+        "mechanical_strain_si": float(mechanical.strain.get_value(unit="dimensionless")[-1]),
     }
 
 
@@ -144,7 +160,7 @@ def _scenario_evaluate_vibration(output_dir: Path | None = None) -> dict[str, ob
     )
     sample.calc_freqspec()
     sample.calc_respspec(overwrite=True)
-    sample.eval_zvl(overwrite=True, freq_range=(2.0, 60.0))
+    sample.eval_zvl(overwrite=True, freq_range=(2.0, 60.0), time_windows=-1)
     return {
         "freqspec_type": type(sample.freqspec).__name__,
         "respspec_type": type(sample.respspec).__name__,
@@ -160,7 +176,7 @@ def _scenario_store_and_reload(output_dir: Path | None = None) -> dict[str, obje
     sample = _make_vibration_sample(suffix="store", values=[0.0, 0.08, -0.02, 0.03, 0.0])
     sample.calc_freqspec(overwrite=True)
     sample.calc_respspec(overwrite=True)
-    sample.eval_zvl(overwrite=True, freq_range=(2.0, 60.0))
+    sample.eval_zvl(overwrite=True, freq_range=(2.0, 60.0), time_windows=-1)
     sample_set = DefaultSampleSet.from_samples([sample], sample_domain=SampleDomain.VIBRATION_TEST)
     sample_set.save(store_path, storage_scheme=StorageScheme.SET_H5)
     loaded = DefaultSampleSet.from_storage(
@@ -298,7 +314,7 @@ def _scenario_logged_run(output_dir: Path | None = None) -> dict[str, object]:
     )
 
     sample = _make_vibration_sample(suffix="logged", values=[0.0, 0.05, -0.01, 0.02, 0.0])
-    sample.eval_zvl(overwrite=True, freq_range=(2.0, 60.0))
+    sample.eval_zvl(overwrite=True, freq_range=(2.0, 60.0), time_windows=-1)
     dt_logging.get_logger("evaluation").info("logged run complete")
 
     return {
@@ -317,6 +333,10 @@ def _scenario_resource_driven_eval(output_dir: Path | None = None) -> dict[str, 
         ZVLLimitStandard.GB_10070_1988,
         scene="特殊住宅区昼间",
     )
+    # DataFrame 的 attrs 保留规范来源，数值列仍按现有单位显示。
+    city_limit = ZVLLimit.from_pandas(city_limit.to_pandas())
+    # xarray 保持标量形状，并通过独立 attrs 传递规范来源和追溯。
+    city_limit = ZVLLimit.from_xarray(city_limit.to_xarray())
     otovl_limit = OTOVLLimit.from_standard(
         OTOVLLimitStandard.GB_T_50355_2018,
         scene="卧室昼间一级",
@@ -326,12 +346,42 @@ def _scenario_resource_driven_eval(output_dir: Path | None = None) -> dict[str, 
         values=np.sin(np.linspace(0.0, 2.0 * np.pi, 1024)) * 0.02,
     )
     sample.eval_otovl(freq_range=(2.0, 80.0))
+    fdmvl_limit = FDMVLLimit.from_standard(
+        FDMVLLimitStandard.JGJ_T_170_2009,
+        scene="居民文教区夜间",
+    )
+    # 使用足够采样率的合成记录展示 4–200 Hz 口径，不作工程合格判定。
+    times = np.arange(1024) / 512.0
+    accel = AccelSeries.from_data(
+        0.001 * np.sin(2.0 * np.pi * 16.0 * times),
+        dt=1.0 / 512.0,
+        axis_unit="second",
+        data_unit="meter/second**2",
+    )
+    fdmvl_eval = accel.eval_fdmvl(freq_range=(4.0, 200.0))
+    limit_path = dt_storage.save_model(fdmvl_limit, output_root / "fdmvl_limit.h5")
+    restored_limit = dt_storage.load_model(limit_path, FDMVLLimit)
+    dataset = dt_plotting.PlotDataset.from_model(fdmvl_eval, name="合成记录")
+    dataset.add_limit(restored_limit, axis=fdmvl_eval.get_field("freq"), name="夜间规范阈值")
+    plot_path = output_root / "fdmvl_with_limit.png"
+    plot = dt_plotting.OneThirdOctavePlotter().plot_dataset(dataset)
+    try:
+        assert plot.figure is not None
+        plot.figure.savefig(plot_path, dpi=120)
+    finally:
+        from matplotlib import pyplot as plt
+
+        plt.close(plot.figure)
     summary_path.write_text(
         (
             f"freq_start={float(freqs[0])}\n"
             f"freq_end={float(freqs[-1])}\n"
             f"city_limit={float(city_limit.zvl.flat[0])}\n"
+            f"city_standard={city_limit.standard.value}\n"
             f"otovl_scene={otovl_limit.scene}\n"
+            f"fdmvl_standard={restored_limit.standard.value}\n"
+            f"fdmvl_limit_dB={float(restored_limit.fdmvl)}\n"
+            f"fdmvl_value_dB={float(fdmvl_eval.fdmvl)}\n"
         ),
         encoding="utf-8",
     )
@@ -339,7 +389,14 @@ def _scenario_resource_driven_eval(output_dir: Path | None = None) -> dict[str, 
         "freq_start": float(freqs[0]),
         "freq_end": float(freqs[-1]),
         "city_limit": float(city_limit.zvl.flat[0]),
+        "city_standard": city_limit.standard.value,
         "otovl_scene": otovl_limit.scene,
+        "fdmvl_standard": restored_limit.standard.value,
+        "fdmvl_limit": float(restored_limit.fdmvl),
+        "fdmvl_value": float(fdmvl_eval.fdmvl),
+        "fdmvl_freq_range": (4.0, 200.0),
+        "fdmvl_limit_path": str(limit_path),
+        "fdmvl_plot_path": str(plot_path),
         "summary_path": str(summary_path),
     }
 
@@ -446,15 +503,15 @@ def _scenario_custom_extension(output_dir: Path | None = None) -> dict[str, obje
             **_make_vibration_kwargs(suffix="custom-ext"),
         )
         external_set = ExternalVibrationSampleSet.from_samples([external_sample])
-        compute_result = external_sample.compute.evaluate.zvl(overwrite=True, freq_range=(2.0, 60.0))
+        compute_result = external_sample.compute.evaluate.zvl(overwrite=True, freq_range=(2.0, 60.0), time_windows=-1)
         convenience_sample = ExternalVibrationSample.from_accel_data(
             values,
             dt=0.01,
             metadata_cls=ExternalVibrationMetadata,
             **_make_vibration_kwargs(suffix="custom-ext"),
         )
-        convenience_result = convenience_sample.eval_zvl(overwrite=True, freq_range=(2.0, 60.0))
-        vib_sample.compute.evaluate.zvl(overwrite=True, freq_range=(2.0, 60.0))
+        convenience_result = convenience_sample.eval_zvl(overwrite=True, freq_range=(2.0, 60.0), time_windows=-1)
+        vib_sample.compute.evaluate.zvl(overwrite=True, freq_range=(2.0, 60.0), time_windows=-1)
 
         payload_roundtrip = sample_from_structured_payload(external_sample.to_structured_payload())
         external_set.save(sample_path, storage_scheme=StorageScheme.SET_H5)
@@ -501,8 +558,19 @@ def _recipe_units_and_unit_views(output_dir: Path | None = None) -> dict[str, ob
     accel = AccelSeries.from_csv(INPUT_DATA_DIR / "simple_accel_with_units.csv")
     converted = accel.convert_units({"time": "second", "value": "meter/second**2"}, replace=False)
     converted.to_csv(saved_path)
+    si_velocity = accel.calc_vel(calc_unit_system=UnitSystem.si())
+    engineering_velocity = accel.calc_vel(calc_unit_system=UnitSystem.engineering())
+    same_velocity = np.allclose(si_velocity.get_value(unit="m/s"), engineering_velocity.get_value(unit="m/s"))
+    multi_path = output_root / "multichannel_cm.csv"
+    multi = AccelSeries.from_data(
+        np.column_stack([accel.get_value(unit="cm/s**2")] * 2), time=accel.get_axis(unit="s"), data_unit="cm/s**2"
+    )
+    multi.to_csv(multi_path)
+    recovered = AccelSeries.from_csv(multi_path)
     return {
         "saved_path": str(saved_path),
+        "same_velocity": bool(same_velocity),
+        "multichannel_roundtrip": bool(np.allclose(multi.get_value(unit="m/s**2"), recovered.get_value(unit="m/s**2"))),
         "saved_units": AccelSeries.inspect_units(saved_path, fmt="csv"),
     }
 
@@ -525,7 +593,7 @@ def _recipe_sample_set_filter_parallel_io(output_dir: Path | None = None) -> dic
         _make_vibration_sample(suffix="batch-b", values=[0.0, -0.04, 0.01, 0.02]),
     ]
     source = DefaultSampleSet.from_samples(source_samples, sample_domain=SampleDomain.VIBRATION_TEST)
-    source.eval_zvl(overwrite=True, freq_range=(2.0, 60.0))
+    source.eval_zvl(overwrite=True, freq_range=(2.0, 60.0), time_windows=-1)
     source.save(store_dir, storage_scheme=StorageScheme.SET_DIR, workers=2, chunk_size=1)
 
     keep_uid = source_samples[0].uid
@@ -618,6 +686,8 @@ def _recipe_compute_flow(output_dir: Path | None = None) -> dict[str, object]:
     branch = flow.branch("hp-branch")
     preview = branch.highpass(1.0).commit(replace=False)
     comparison = branch.compare("trimmed")
+    committed = branch.commit(replace=True)
+    assert committed is sample
 
     flow.restore("trimmed")
     flow.lowpass(30.0).commit(replace=True)
@@ -627,6 +697,7 @@ def _recipe_compute_flow(output_dir: Path | None = None) -> dict[str, object]:
         "preview_type": type(preview).__name__,
         "sample_type": type(sample).__name__,
         "preview_is_detached": bool(preview is not sample.accel),
+        "branch_commit_is_sample": bool(committed is sample),
         "final_length": int(sample.accel.get_value().shape[0]),
         "original_length": int(original_values.shape[0]),
         "branch_history_len": len(branch.history()),

@@ -31,8 +31,8 @@ def test_ci_workflow_covers_current_repository_quality_gates() -> None:
 
     expected_commands = (
         "uv run python -B scripts/check_codex_assets.py",
-        "uv run ruff check --no-cache src/dyntool tests examples",
-        "uv run ruff format --check src/dyntool tests examples",
+        "uv run ruff check --no-cache src/dyntool src/dyntool_gui tests examples scripts",
+        "uv run ruff format --check --no-cache src/dyntool src/dyntool_gui tests examples scripts",
         "uv run python -B scripts/check_layer_imports.py",
         "uv run python -B scripts/check_text_quality.py",
         "uv run python -B scripts/check_docstring_coverage.py",

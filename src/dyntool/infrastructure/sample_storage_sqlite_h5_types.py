@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 _SQLITE_H5_LOCK_TIMEOUT_SECONDS = 15.0
-_SQLITE_H5_WRITE_FLUSH_BATCH_SIZE = 64
 _SQLITE_H5_SCHEMA_VERSION_V1 = 1
 _SQLITE_H5_SCHEMA_VERSION_V2 = 2
 
@@ -38,6 +37,7 @@ class _SqliteSampleUpsertArtifact:
     payload_id: str
     metadata_json: str
     timestamp: str
+    previous_payload_id: str | None = None
 
 
 @dataclass(slots=True)
@@ -104,7 +104,6 @@ __all__ = [
     "_SQLITE_H5_LOCK_TIMEOUT_SECONDS",
     "_SQLITE_H5_SCHEMA_VERSION_V1",
     "_SQLITE_H5_SCHEMA_VERSION_V2",
-    "_SQLITE_H5_WRITE_FLUSH_BATCH_SIZE",
     "_SqliteMetadataArtifact",
     "_SqliteFlushResult",
     "_SqlitePresenceArtifact",

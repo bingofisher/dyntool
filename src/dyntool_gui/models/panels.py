@@ -295,7 +295,8 @@ class PanelDataBuilder:
                     f"主样本集：{session.primary_sampleset.name}",
                     f"可用数据：{capability}",
                     f"最近动作：{state.current_action or '-'}",
-                    f"影响样本数：{state.last_action_count}",
+                    f"成功样本数：{state.last_action_count}",
+                    f"跳过：{state.last_skipped_count} / 失败：{state.last_failed_count} / 未执行：{state.last_not_executed_count}",
                 ),
             ),
             PanelSection(

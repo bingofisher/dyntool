@@ -1,0 +1,76 @@
+{
+  "说明": "同一主机、固定随机种子、临时 SQLite/H5 仓库；耗时包含公开入口，体积为部分更新后未整理的文件总大小。",
+  "environment": {
+    "python": "3.13.12",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "numpy": "2.4.2",
+    "scipy": "1.17.1",
+    "h5py": "3.15.1",
+    "pandas": "3.0.1",
+    "pint": "0.25.2"
+  },
+  "before": {
+    "seed": 20260922,
+    "samples": 20,
+    "points": 2000,
+    "repeat": 3,
+    "runs": [
+      {
+        "save_seconds": 0.4560409998521209,
+        "read_seconds": 0.012763200094923377,
+        "summary_seconds": 0.003234799951314926,
+        "partial_update_seconds": 0.4369532000273466,
+        "compare_seconds": 0.019928700057789683,
+        "bytes": 673866.0
+      },
+      {
+        "save_seconds": 0.4675119000021368,
+        "read_seconds": 0.021263400092720985,
+        "summary_seconds": 0.0034672000911086798,
+        "partial_update_seconds": 0.418374199885875,
+        "compare_seconds": 0.01850349991582334,
+        "bytes": 673498.0
+      },
+      {
+        "save_seconds": 0.40954039990901947,
+        "read_seconds": 0.015878899954259396,
+        "summary_seconds": 0.002848900156095624,
+        "partial_update_seconds": 0.3702236998360604,
+        "compare_seconds": 0.017471899976953864,
+        "bytes": 671738.0
+      }
+    ]
+  },
+  "after": {
+    "seed": 20260922,
+    "samples": 20,
+    "points": 2000,
+    "repeat": 3,
+    "runs": [
+      {
+        "save_seconds": 0.2929952999111265,
+        "read_seconds": 0.013357500080019236,
+        "summary_seconds": 0.0028009999077767134,
+        "partial_update_seconds": 0.2619902000296861,
+        "compare_seconds": 0.021433099871501327,
+        "bytes": 1400930.0
+      },
+      {
+        "save_seconds": 0.2653018001001328,
+        "read_seconds": 0.013797899940982461,
+        "summary_seconds": 0.0022360999137163162,
+        "partial_update_seconds": 0.26684040017426014,
+        "compare_seconds": 0.02091389987617731,
+        "bytes": 1400930.0
+      },
+      {
+        "save_seconds": 0.277892499929294,
+        "read_seconds": 0.012453200062736869,
+        "summary_seconds": 0.0022945001255720854,
+        "partial_update_seconds": 0.26048269984312356,
+        "compare_seconds": 0.021026300033554435,
+        "bytes": 1400930.0
+      }
+    ]
+  }
+}
