@@ -20,15 +20,15 @@ class ThemeTokens:
         '"Microsoft YaHei UI", "Microsoft YaHei", "Noto Sans SC", "Noto Sans CJK SC", '
         '"SimHei", "SimSun", "SongTNR", sans-serif'
     )
-    window_background: str = "#F4F6F8"
+    window_background: str = "#F3F4F6"
     panel_background: str = "#F8FAFC"
     card_background: str = "#FFFFFF"
-    border_color: str = "#E2E8F0"
-    muted_border: str = "#CBD5E1"
-    divider_color: str = "#E8ECF1"
-    title_background: str = "#EEF2F6"
-    header_gradient_start: str = "#273142"
-    header_gradient_end: str = "#273142"
+    border_color: str = "#DDE3EA"
+    muted_border: str = "#E3E8EF"
+    divider_color: str = "#EDF1F5"
+    title_background: str = "#F3F6FA"
+    header_gradient_start: str = "#1E3A8A"
+    header_gradient_end: str = "#1D4ED8"
     accent_color: str = "#2563EB"
     accent_hover: str = "#3B82F6"
     accent_light: str = "#DBEAFE"
@@ -48,16 +48,16 @@ class ThemeTokens:
     disabled_text: str = "#94A3B8"
     body_font_pt: int = 10
     header_font_pt: int = 11
-    page_title_font_pt: int = 13
+    page_title_font_pt: int = 12
     radius_sm: int = 4
-    radius_md: int = 6
-    radius_lg: int = 8
-    toolbar_height: int = 48
-    nav_height: int = 36
+    radius_md: int = 4
+    radius_lg: int = 4
+    toolbar_height: int = 40
+    nav_height: int = 30
     context_bar_height: int = 40
     dock_title_height: int = 28
     status_height: int = 24
-    splitter_width: int = 4
+    splitter_width: int = 3
 
 
 class ThemeManager:
@@ -263,8 +263,8 @@ QMenu::item:selected {
 
 /* ── 工具栏 ── */
 QToolBar {
-    spacing: 10px;
-    padding: 6px 12px;
+    spacing: 8px;
+    padding: 4px 10px;
     background: %(card_background)s;
     border: none;
     border-bottom: 1px solid %(border_color)s;
@@ -276,7 +276,7 @@ QToolBar::separator {
 QToolButton {
     border: 1px solid transparent;
     border-radius: %(radius_md)spx;
-    padding: 6px 10px;
+    padding: 5px 9px;
     background: transparent;
     color: %(muted_text)s;
 }
@@ -292,7 +292,7 @@ QToolButton:pressed {
 QPushButton {
     border: 1px solid %(muted_border)s;
     border-radius: %(radius_md)spx;
-    padding: 5px 14px;
+    padding: 3px 10px;
     background: %(card_background)s;
     min-height: 20px;
     font-size: %(body_font_pt)spt;
@@ -314,7 +314,7 @@ QPushButton[buttonRole="primary"] {
     border-color: %(accent_color)s;
     color: #FFFFFF;
     font-weight: 600;
-    border-bottom: 2px solid #1D4ED8;
+    border-bottom: 1px solid #1D4ED8;
 }
 QPushButton[buttonRole="primary"]:hover {
     background: %(accent_hover)s;
@@ -336,7 +336,7 @@ QPushButton[buttonRole="secondary"]:hover {
     background: %(accent_surface)s;
 }
 QPushButton[buttonRole="ghost"] {
-    background: %(panel_background)s;
+    background: transparent;
     color: %(muted_text)s;
     border-style: dashed;
     border-color: %(muted_border)s;
@@ -345,36 +345,18 @@ QPushButton[buttonRole="ghost"]:hover {
     background: %(hover_background)s;
     color: %(text_color)s;
 }
-QPushButton[buttonRole="segmented"] {
-    min-height: 28px;
-    border: 1px solid %(muted_border)s;
-    border-radius: %(radius_sm)spx;
-    background: %(card_background)s;
-    color: %(muted_text)s;
-    font-weight: 600;
-    padding: 4px 10px;
-}
-QPushButton[buttonRole="segmented"]:hover {
-    background: %(hover_background)s;
-    color: %(text_color)s;
-}
-QPushButton[buttonRole="segmented"]:checked {
-    background: %(accent_surface)s;
-    border-color: %(accent_color)s;
-    color: %(accent_color)s;
-}
 
 /* ── 模块导航按钮 ── */
 QPushButton[navButton="true"] {
     min-height: %(nav_height)spx;
     border: none;
-    border-bottom: 3px solid transparent;
+    border-bottom: 2px solid transparent;
     border-radius: 0;
     background: transparent;
     color: %(muted_text)s;
     font-weight: 600;
     font-size: %(header_font_pt)spt;
-    padding: 4px 16px;
+    padding: 2px 14px;
 }
 QPushButton[navButton="true"]:hover {
     background: %(hover_background)s;
@@ -383,28 +365,64 @@ QPushButton[navButton="true"]:hover {
 }
 QPushButton[navButton="true"]:checked,
 QPushButton[navButton="true"][current="true"] {
-    background: %(accent_surface)s;
-    border-bottom: 3px solid %(accent_color)s;
+    background: %(card_background)s;
+    border-bottom: 2px solid %(accent_color)s;
+    color: %(accent_color)s;
+}
+QPushButton[disclosureButton="true"] {
+    border: none;
+    background: transparent;
+    color: %(muted_text)s;
+    padding: 2px 4px;
+    text-align: left;
+    font-size: 9pt;
+}
+QPushButton[disclosureButton="true"]:hover {
+    background: %(hover_background)s;
+    color: %(text_color)s;
+}
+QWidget[surfaceRole="segmentedControl"] {
+    background: %(panel_background)s;
+    border: 1px solid %(muted_border)s;
+    border-radius: %(radius_md)spx;
+}
+QPushButton[segmentedButton="true"] {
+    min-height: 24px;
+    padding: 2px 10px;
+    border: 1px solid transparent;
+    border-radius: %(radius_sm)spx;
+    background: transparent;
+    color: %(muted_text)s;
+    font-weight: 600;
+}
+QPushButton[segmentedButton="true"]:hover {
+    background: %(hover_background)s;
+    color: %(text_color)s;
+}
+QPushButton[segmentedButton="true"]:checked,
+QPushButton[segmentedButton="true"][current="true"] {
+    background: %(card_background)s;
+    border-color: %(accent_light)s;
     color: %(accent_color)s;
 }
 
 /* ── 分组框（卡片） ── */
 QGroupBox {
-    border: 1px solid %(border_color)s;
+    border: 1px solid %(muted_border)s;
     border-radius: %(radius_md)spx;
-    margin-top: 18px;
-    padding: 12px 10px 10px 12px;
-    background: %(card_background)s;
+    margin-top: 12px;
+    padding: 8px 8px 8px 8px;
+    background: transparent;
 }
 QGroupBox::title {
     subcontrol-origin: margin;
     subcontrol-position: top left;
-    left: 12px;
+    left: 10px;
     top: 2px;
     padding: 0 6px;
-    color: %(text_color)s;
-    font-size: %(header_font_pt)spt;
-    font-weight: 700;
+    color: %(muted_text)s;
+    font-size: %(body_font_pt)spt;
+    font-weight: 600;
 }
 
 /* ── 输入控件 ── */
@@ -415,11 +433,27 @@ QLineEdit, QPlainTextEdit, QComboBox, QTableView, QTreeView, QTableWidget, QList
 }
 QLineEdit, QPlainTextEdit, QComboBox {
     padding: 4px 8px;
-    min-height: 20px;
+    min-height: 22px;
 }
 QLineEdit:focus, QPlainTextEdit:focus, QComboBox:focus {
     border-color: %(accent_color)s;
     background: %(accent_surface)s;
+    padding: 4px 8px;
+}
+QLineEdit:disabled, QPlainTextEdit:disabled, QComboBox:disabled {
+    background: %(disabled_background)s;
+    color: %(disabled_text)s;
+    border-color: %(border_color)s;
+}
+QComboBox::drop-down {
+    border: none;
+    width: 20px;
+}
+QComboBox QAbstractItemView {
+    background: %(card_background)s;
+    border: 1px solid %(border_color)s;
+    selection-background-color: %(selection_background)s;
+    selection-color: %(text_color)s;
 }
 
 /* ── Dock ── */
@@ -441,15 +475,16 @@ QTabWidget::pane {
     border: 1px solid %(border_color)s;
     background: %(card_background)s;
     border-radius: %(radius_lg)spx;
+    top: -1px;
 }
 QTabBar::tab {
-    background: %(panel_background)s;
+    background: transparent;
     color: %(muted_text)s;
-    padding: 7px 16px;
-    margin-right: 2px;
+    padding: 5px 12px;
+    margin-right: 1px;
     border-top-left-radius: %(radius_md)spx;
     border-top-right-radius: %(radius_md)spx;
-    border: 1px solid %(border_color)s;
+    border: 1px solid transparent;
     border-bottom: none;
     font-size: %(body_font_pt)spt;
 }
@@ -457,7 +492,8 @@ QTabBar::tab:selected {
     background: %(card_background)s;
     color: %(accent_color)s;
     font-weight: 600;
-    border-bottom: 2px solid %(accent_color)s;
+    border-color: %(border_color)s;
+    border-bottom: 1px solid %(card_background)s;
 }
 QTabBar::tab:hover:!selected {
     background: %(hover_background)s;
@@ -467,7 +503,7 @@ QTabBar::tab:hover:!selected {
 QHeaderView::section {
     background: %(title_background)s;
     color: %(muted_text)s;
-    padding: 6px 10px;
+    padding: 5px 8px;
     border: none;
     border-right: 1px solid %(border_color)s;
     border-bottom: 1px solid %(border_color)s;
@@ -479,12 +515,18 @@ QHeaderView::section {
 QTableView, QTreeView, QTableWidget {
     gridline-color: %(divider_color)s;
     alternate-background-color: %(panel_background)s;
+    selection-background-color: %(selection_background)s;
+    selection-color: %(text_color)s;
+}
+QTableView::item, QTreeView::item, QTableWidget::item {
+    padding: 2px 4px;
+    border: none;
 }
 QTreeView::item:selected, QTableView::item:selected, QTableWidget::item:selected {
     background: %(selection_background)s;
     color: %(text_color)s;
 }
-QTreeView::item:hover, QTableView::item:hover {
+QTreeView::item:hover, QTableView::item:hover, QTableWidget::item:hover {
     background: %(hover_background)s;
 }
 
@@ -504,15 +546,15 @@ QProgressBar::chunk {
 /* ── 语义标签 ── */
 QLabel[cardRole="header"] {
     color: %(accent_color)s;
-    font-size: %(page_title_font_pt)spt;
-    font-weight: 700;
+    font-size: %(header_font_pt)spt;
+    font-weight: 600;
     padding: 2px 0;
 }
 QLabel[cardRole="pageTitle"] {
     color: %(text_color)s;
     font-size: %(page_title_font_pt)spt;
     font-weight: 700;
-    padding: 4px 0 0 0;
+    padding: 2px 0 0 0;
 }
 QLabel[cardRole="pageSubtitle"] {
     color: %(muted_text)s;
@@ -522,11 +564,11 @@ QLabel[cardRole="pageSubtitle"] {
 QLabel[cardRole="pageSummary"] {
     background: %(panel_background)s;
     border: none;
-    border-left: 3px solid %(accent_color)s;
+    border-left: 2px solid %(accent_color)s;
     border-radius: 0;
     color: %(muted_text)s;
     font-weight: 500;
-    padding: 5px 10px;
+    padding: 4px 8px;
 }
 QLabel[cardRole="heroSummary"] {
     background: %(accent_surface)s;
@@ -537,125 +579,148 @@ QLabel[cardRole="heroSummary"] {
     padding: 6px 12px;
 }
 QLabel[cardRole="status"] {
-    background: transparent;
-    border: none;
-    color: %(muted_text)s;
-    padding: 2px 0;
+    background: %(card_background)s;
+    border: 1px solid %(border_color)s;
+    border-radius: %(radius_md)spx;
+    padding: 6px 10px;
     line-height: 1.5;
+}
+QLabel[cardRole="phaseStatus"] {
+    color: %(muted_text)s;
+    background: transparent;
+    font-size: 9pt;
+    padding: 0 2px;
+}
+QLabel[cardRole="metricSummary"] {
+    color: %(muted_text)s;
+    background: transparent;
+    font-size: 9pt;
+    padding: 0;
+}
+QLabel[cardRole="hint"] {
+    color: %(subtle_text)s;
+    background: transparent;
+    font-size: 9pt;
+    padding: 0;
+}
+QLabel[cardRole="railTitle"],
+QLabel[cardRole="sectionTitle"],
+QLabel[cardRole="surfaceTitle"] {
+    color: %(text_color)s;
+    background: transparent;
+    font-size: %(header_font_pt)spt;
+    font-weight: 600;
+    padding: 0;
+}
+QLabel[cardRole="sectionSubtitle"],
+QLabel[cardRole="emptyDescription"] {
+    color: %(muted_text)s;
+    background: transparent;
+    font-size: 9pt;
+    padding: 0;
+}
+QLabel[cardRole="emptyTitle"] {
+    color: %(muted_text)s;
+    background: transparent;
+    font-size: %(body_font_pt)spt;
+    font-weight: 500;
+    padding: 0;
+}
+QLabel[cardRole="summaryKey"] {
+    color: %(subtle_text)s;
+    background: transparent;
+    font-size: 8pt;
+    padding: 0;
+}
+QLabel[cardRole="summaryValue"] {
+    color: %(text_color)s;
+    background: transparent;
+    font-size: %(body_font_pt)spt;
+    font-weight: 600;
+    padding: 0;
 }
 QLabel[cardRole="emptyState"] {
     background: %(panel_background)s;
     border: 1px dashed %(muted_border)s;
     border-radius: %(radius_md)spx;
     color: %(subtle_text)s;
-    padding: 14px 16px;
-    font-size: %(body_font_pt)spt;
-}
-QLabel[cardRole="inlineEmptyState"] {
-    background: %(panel_background)s;
-    border: 1px solid %(divider_color)s;
-    border-radius: %(radius_sm)spx;
-    color: %(muted_text)s;
-    padding: 7px 10px;
-    font-size: %(body_font_pt)spt;
-}
-QLabel[cardRole="inlineStatus"],
-QLabel[cardRole="summaryText"] {
-    background: transparent;
-    border: none;
-    color: %(muted_text)s;
+    padding: 12px 14px;
     font-size: %(body_font_pt)spt;
 }
 
 /* ── 上下文条 ── */
 QFrame#contextBar {
-    background: %(header_gradient_start)s;
-    border-bottom: 1px solid #1F2937;
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+        stop:0 %(header_gradient_start)s,
+        stop:1 %(header_gradient_end)s);
     min-height: %(context_bar_height)spx;
     max-height: %(context_bar_height)spx;
 }
-QLabel#ContextBarTitleLabel {
+QFrame#contextBar QLabel {
+    color: white;
+}
+QLabel[barRole="contextTitle"] {
     background: transparent;
-    color: #F8FAFC;
-    font-size: %(header_font_pt)spt;
+    color: #FFFFFF;
+    font-size: 11pt;
     font-weight: 600;
     padding-left: 16px;
 }
-QLabel#ContextBarProgressLabel {
+QLabel[barRole="contextProgress"] {
     background: transparent;
-    color: #CBD5E1;
-    font-size: %(body_font_pt)spt;
+    color: %(accent_light)s;
+    font-size: 9pt;
     padding-right: 16px;
-}
-QWidget#ModuleNavigationBar {
-    background: %(card_background)s;
-    border-bottom: 1px solid %(border_color)s;
 }
 
 /* ── 面板容器 ── */
+QWidget[surfaceRole="moduleNav"] {
+    background: %(card_background)s;
+    border-bottom: 1px solid %(border_color)s;
+}
 QWidget[pageHeader="true"],
 QWidget[surfaceRole="pageHeader"] {
     background: %(card_background)s;
-    border: none;
-    border-bottom: 1px solid %(border_color)s;
-    border-radius: 0;
-}
-QWidget[surfaceRole="actionPanel"] {
-    background: %(panel_background)s;
-    border: 1px solid %(divider_color)s;
+    border: 1px solid %(border_color)s;
     border-radius: %(radius_md)spx;
 }
+QWidget[surfaceRole="actionPanel"],
 QWidget[surfaceRole="resultPanel"],
 QWidget[surfaceRole="summaryPanel"] {
+    background: %(panel_background)s;
+    border: 1px solid %(border_color)s;
+    border-radius: %(radius_md)spx;
+}
+QWidget[surfaceRole="actionRail"] {
+    background: %(panel_background)s;
+    border: 1px solid %(border_color)s;
+    border-radius: %(radius_md)spx;
+}
+QWidget[surfaceRole="railSection"],
+QWidget[surfaceRole="workspaceSection"] {
+    background: %(card_background)s;
+    border: 1px solid %(muted_border)s;
+    border-radius: %(radius_md)spx;
+}
+QWidget[surfaceRole="resultSurface"] {
     background: %(card_background)s;
     border: 1px solid %(border_color)s;
     border-radius: %(radius_md)spx;
 }
-QFrame[surfaceRole="summaryStrip"] {
+QWidget[surfaceRole="emptyState"] {
     background: %(panel_background)s;
-    border: 1px solid %(divider_color)s;
-    border-radius: %(radius_sm)spx;
+    border: 1px dashed %(muted_border)s;
+    border-radius: %(radius_md)spx;
 }
-QWidget[surfaceRole="plotCanvas"] {
+QFrame[surfaceRole="metricStrip"] {
     background: %(card_background)s;
-    border: 1px solid %(divider_color)s;
-    border-radius: %(radius_sm)spx;
-}
-QFrame[surfaceRole="section"] {
-    background: transparent;
-    border: 1px solid %(divider_color)s;
-    border-radius: %(radius_sm)spx;
-}
-QFrame[surfaceRole="booleanGroupControls"] {
-    background: %(panel_background)s;
-    border: 1px solid %(divider_color)s;
-    border-radius: %(radius_sm)spx;
-}
-QFrame[surfaceRole="conditionBlock"] {
-    background: %(card_background)s;
-    border: 1px solid %(divider_color)s;
-    border-left: 2px solid %(muted_border)s;
-    border-radius: %(radius_sm)spx;
-}
-QWidget[surfaceRole="segmentedControl"] {
-    background: %(panel_background)s;
     border: 1px solid %(border_color)s;
     border-radius: %(radius_md)spx;
-    padding: 3px;
 }
-QLabel[cardRole="sectionTitle"] {
-    color: %(text_color)s;
-    font-size: %(header_font_pt)spt;
-    font-weight: 700;
-}
-QLabel[cardRole="conditionTitle"] {
-    color: %(text_color)s;
-    font-weight: 700;
-    padding-bottom: 1px;
-}
-QLabel[cardRole="fieldLabel"] {
-    color: %(muted_text)s;
-    font-weight: 600;
+QFrame[surfaceRole="resultSummaryStrip"] {
+    background: %(panel_background)s;
+    border: 1px solid %(muted_border)s;
+    border-radius: %(radius_sm)spx;
 }
 
 /* ── 状态栏 ── */
@@ -680,7 +745,11 @@ QSplitter::handle:hover {
 }
 
 QScrollArea {
+    background: transparent;
     border: none;
+}
+QScrollArea > QWidget > QWidget {
+    background: transparent;
 }
 
 /* ── Checkbox/Radio ── */
@@ -696,16 +765,16 @@ QCheckBox::indicator, QRadioButton::indicator {
 
 _PLOT_TOOLBAR_QSS = """
 QToolBar {
-    background: %(card_background)s;
+    background: rgba(255, 255, 255, 220);
     border: 1px solid %(border_color)s;
     border-radius: %(radius_md)spx;
-    padding: 4px 6px;
-    spacing: 6px;
+    padding: 3px 5px;
+    spacing: 4px;
 }
 QToolButton {
     border: 1px solid transparent;
     border-radius: %(radius_sm)spx;
-    padding: 5px;
+    padding: 4px;
     background: transparent;
     color: %(muted_text)s;
 }

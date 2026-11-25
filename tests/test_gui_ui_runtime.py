@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+
 from dataclasses import FrozenInstanceError
 import os
 from pathlib import Path
@@ -336,6 +337,34 @@ def test_result_preview_dialog_mounts_real_result_tabs(qapp: QApplication) -> No
     tables = dialog.findChildren(QTableWidget)
     assert len(tables) >= 3
     assert dialog.findChildren(QPlainTextEdit) == []
+
+
+def test_preview_close_buttons_reject_dialogs(qapp: QApplication) -> None:
+    """整合后的预览窗口保留显式关闭入口并真正关闭窗口。"""
+    from PySide6.QtWidgets import QDialogButtonBox
+
+    dialogs = (FigurePreviewDialog(), ResultPreviewDialog(ProjectSession.build_demo()))
+    try:
+        for dialog in dialogs:
+            dialog.show()
+            qapp.processEvents()
+            boxes = dialog.findChildren(QDialogButtonBox)
+            close = next(
+                (
+                    box.button(QDialogButtonBox.StandardButton.Close)
+                    for box in boxes
+                    if box.button(QDialogButtonBox.StandardButton.Close)
+                ),
+                None,
+            )
+            assert close is not None
+            close.click()
+            qapp.processEvents()
+            assert not dialog.isVisible()
+    finally:
+        for dialog in dialogs:
+            dialog.close()
+            dialog.deleteLater()
 
 
 def test_settings_dialog_mounts_real_preference_fields(qapp: QApplication) -> None:

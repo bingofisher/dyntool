@@ -100,6 +100,8 @@ AdvDynTool 以数值结果正确、单位一致和结果可追溯为第一优先
 
 ## 正式公开面
 
+GUI 遗留整合仅调整内部主题、布局密度及预览关闭入口；保留当前参数对话框和最新会话、保存、处理生命周期。旧工作区原始实现独立保存在快照中，不通过覆盖整文件回退核心或 GUI 可靠性逻辑。详见 [GUI 整合复核](docs/developer/gui_integration_review.md)。
+
 `ForceSeries`、`MomentSeries`、`StressSeries`、`StrainSeries` 同级继承 `TimeSeries`，通过现有类别注册、`DefaultSample.sample_schema` 和计算源解析接入原有生命周期；不新增层、后端或存储布局。`Public API` 为四类模型及 `DefaultSample` 四个槽位；注册和来源解析仍为 `Private / implementation detail`。这些槽位复用通用处理、单位交换和持久化，不增加应力张量、材料本构或自动方向识别。`VibrationTestSample` 保持原 schema。
 
 ### 顶层对象层

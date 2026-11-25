@@ -33,6 +33,8 @@ AdvDynTool 是一个面向动力学计算、振动处理与评价的 Python 库�
 
 ## GUI 骨架
 
+GUI 整合保留当前四页与参数对话框，吸收旧工作区的紧凑主题及预览关闭入口；见[操作手册](docs/user_manual.md)及[整合复核](docs/developer/gui_integration_review.md)。
+
 - 项目层桌面骨架位于 `src/dyntool_gui/`
 - 该 GUI 不属于 `dyntool` 库级 `Public API`
 - 当前 GUI 第八轮已固定“真实工程库整体验证 + 全页面收敛”口径：

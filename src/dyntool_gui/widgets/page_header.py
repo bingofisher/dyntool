@@ -26,8 +26,8 @@ class PageHeader(QWidget):
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(12, 6, 12, 6)
-        layout.setSpacing(12)
+        layout.setContentsMargins(10, 4, 10, 4)
+        layout.setSpacing(10)
 
         title_column = QWidget(self)
         title_layout = QVBoxLayout(title_column)
@@ -37,14 +37,14 @@ class PageHeader(QWidget):
         self._title_label = QLabel(title, self)
         self._title_label.setObjectName(f"{page_key}PageHeaderTitle")
         self._title_label.setProperty("cardRole", "pageTitle")
-        self._title_label.setMaximumHeight(24)
+        self._title_label.setMaximumHeight(22)
         title_layout.addWidget(self._title_label)
 
         self._subtitle_label = QLabel(subtitle, self)
         self._subtitle_label.setObjectName(f"{page_key}PageHeaderSubtitle")
         self._subtitle_label.setWordWrap(False)
         self._subtitle_label.setProperty("cardRole", "pageSubtitle")
-        self._subtitle_label.setMaximumHeight(20)
+        self._subtitle_label.setMaximumHeight(18)
         title_layout.addWidget(self._subtitle_label)
         layout.addWidget(title_column, 0)
 
@@ -53,7 +53,7 @@ class PageHeader(QWidget):
         self._summary_label.setWordWrap(False)
         self._summary_label.setProperty("cardRole", "pageSummary")
         self._summary_label.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
-        self._summary_label.setMaximumHeight(32)
+        self._summary_label.setMaximumHeight(30)
         self._summary_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         layout.addWidget(self._summary_label, 1)
 

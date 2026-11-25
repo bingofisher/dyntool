@@ -392,6 +392,10 @@ class FigurePreviewDialog(QDialog):
             "当前显示最近一次图形预览的只读大图。" if figure is not None else "生成图形后可在这里查看大图预览。"
         )
 
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, self)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
 
 class ExportPrecheckDialog(QDialog):
     """导出预检窗。"""
@@ -527,6 +531,10 @@ class ResultPreviewDialog(QDialog):
         self._tabs.addTab(_build_result_table(state.series_rows, self), "序列结果")
         self._tabs.addTab(_build_result_table(state.peaks_rows, self), "峰值结果")
         layout.addWidget(self._tabs, 1)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, self)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
 
 
 def _build_readonly_text(body: str, parent: QWidget) -> QWidget:
