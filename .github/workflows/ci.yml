@@ -97,6 +97,9 @@ jobs:
         run: uv python install 3.12.12
       - name: Sync core validation dependencies
         run: uv sync --locked --python 3.12.12 --group dev
+      - name: Prepare core temp directory
+        shell: pwsh
+        run: New-Item -ItemType Directory -Force .pytest_tmp | Out-Null
       - name: Core regression
         run: uv run python -B -m pytest tests/test_core_architecture_contracts.py tests/test_core_numerical_contracts.py tests/test_core_storage_contracts.py tests/test_core_review_followup.py tests/test_mechanical_series.py -q --basetemp .pytest_tmp/core-minimum -p no:cacheprovider
       - name: Build wheel
