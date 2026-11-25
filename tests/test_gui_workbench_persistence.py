@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import json
 
 import pytest
 
@@ -11,7 +12,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QMessageBox
 
 from dyntool_gui.main_window import MainWindow
 from dyntool_gui.persistence.project_store import ProjectFileStore
@@ -88,6 +89,101 @@ def test_project_file_store_round_trip_preserves_gui_project_state(tmp_path: Pat
     assert restored.current_scope.scope_kind == "saved_subset"
     assert restored.current_scope.subset_ids == ("subset.bridge.a",)
     assert restored.subset_state.subsets
+
+
+@pytest.mark.parametrize("failure_stage", ["serialization", "write", "replace"])
+def test_project_save_failure_preserves_existing_file_and_dirty_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure_stage: str
+) -> None:
+    """序列化、暂存写入或替换失败不能破坏已有项目文件。"""
+
+    session = ProjectSession.build_demo()
+    store = ProjectFileStore()
+    target = tmp_path / "project.dyntool.json"
+    store.save(session, target)
+    previous = target.read_bytes()
+    session.note = "尚未保存的中文修改"
+    session.dirty = True
+    previous_saved = session.last_saved
+
+    def fail_serialization(*args: object, **kwargs: object) -> str:
+        raise ValueError("注入序列化失败")
+
+    def fail_write(path: Path, *args: object, **kwargs: object) -> int:
+        path.write_bytes(b"incomplete")
+        raise OSError("注入写入失败")
+
+    def fail_replace(path: Path, destination: str | Path) -> Path:
+        raise OSError("注入替换失败")
+
+    if failure_stage == "serialization":
+        monkeypatch.setattr(json, "dumps", fail_serialization)
+    elif failure_stage == "write":
+        monkeypatch.setattr(Path, "write_text", fail_write)
+    else:
+        monkeypatch.setattr(Path, "replace", fail_replace)
+
+    with pytest.raises((ValueError, OSError), match="注入"):
+        store.save(session, target)
+
+    assert target.read_bytes() == previous
+    assert list(tmp_path.iterdir()) == [target]
+    assert session.dirty
+    assert session.last_saved == previous_saved
+    assert store.load(target).note != session.note
+
+
+def test_project_save_replaces_complete_utf8_lf_document(tmp_path: Path) -> None:
+    """成功保存替换完整 JSON，并保持中文、UTF-8 无 BOM 与 LF。"""
+
+    session = ProjectSession.build_demo()
+    store = ProjectFileStore()
+    target = tmp_path / "项目.dyntool.json"
+    store.save(session, target)
+    session.note = "更新后的项目说明"
+    store.save(session, target)
+
+    raw = target.read_bytes()
+    assert not raw.startswith(b"\xef\xbb\xbf")
+    assert b"\r\n" not in raw
+    assert store.load(target).note == session.note
+    assert list(tmp_path.iterdir()) == [target]
+
+
+@pytest.mark.parametrize("existing_target", [False, True])
+def test_main_window_reports_project_save_failure_without_marking_saved(
+    qapp: QApplication, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, existing_target: bool
+) -> None:
+    """首次保存及覆盖保存失败均提示原因，并保留脏状态和项目引用。"""
+
+    del qapp
+    session = ProjectSession.build_demo()
+    store = ProjectFileStore()
+    window = MainWindow(session, settings_store=AppSettingsStore(tmp_path / "settings.ini"), project_store=store)
+    session.workdir = tmp_path
+    session.dirty = True
+    previous_saved = session.last_saved
+    previous_target = tmp_path / "existing.dyntool.json" if existing_target else None
+    window._current_project_file = previous_target
+    warnings: list[tuple[str, str]] = []
+    settings_updates: list[bool] = []
+
+    def fail_save(session: ProjectSession, path: str | Path) -> Path:
+        raise OSError("目标目录不可写")
+
+    monkeypatch.setattr(store, "save", fail_save)
+    monkeypatch.setattr(QMessageBox, "warning", lambda parent, title, message: warnings.append((title, message)))
+    monkeypatch.setattr(window, "_save_settings_from_session", lambda: settings_updates.append(True))
+    try:
+        window.actions_map["保存项目"].trigger()
+        assert warnings == [("项目保存失败", "项目文件未保存：目标目录不可写")]
+        assert session.dirty
+        assert session.last_saved == previous_saved
+        assert window._current_project_file == previous_target
+        assert settings_updates == []
+        assert window.statusBar().currentMessage() == "项目文件保存失败。"
+    finally:
+        window.deleteLater()
 
 
 def test_project_file_store_round_trip_preserves_filter_sorting_and_paging(tmp_path: Path) -> None:

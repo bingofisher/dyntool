@@ -478,6 +478,8 @@ class PlottingWorkspace(QWidget):
     def _sync_mode_ui(self) -> None:
         is_multi = self.plot_mode() == "multi_sample"
         self._mode_stack.setCurrentIndex(1 if is_multi else 0)
+        if is_multi and self._current_session is not None:
+            self._set_scope_target_text(self._current_session)
         self._preview_title.setText("图形预览" if not is_multi else "多样本图形预览")
         self._plot_mode_segment.set_value("multi_sample" if is_multi else "single_sample")
         self._sync_compute_action()
@@ -616,7 +618,7 @@ class PlottingWorkspace(QWidget):
 
     def _multi_source_candidates(self, slots: tuple[str, ...]) -> tuple[str, ...]:
         if str(self._multi_source_kind_combo.currentData()) == "sample_model":
-            ordered = ("accel", "vel", "disp", "force", "freqspec", "respspec")
+            ordered = ("accel", "vel", "disp", "force", "freqspec", "respspec", "otovl")
             return tuple(item for item in ordered if item in slots) or ("accel",)
         return tuple(item for item in slots) or ("accel",)
 

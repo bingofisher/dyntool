@@ -19,11 +19,17 @@ AdvDynTool 是一个面向动力学计算、振动处理与评价的 Python 库�
 
 ## 推荐入口
 
+力学时程沿用现有 `TimeSeries`：`ForceSeries`、`MomentSeries`、`StressSeries`、`StrainSeries` 分别对应力、力矩、应力和应变，注册为 `DefaultSample` 的 `force/moment/stress/strain` 槽位。默认单位为 N、N·m、Pa、无量纲，应变可输入 `microstrain` 或 `percent`。用法见[样本与样本集](docs/usage/02_samples_and_sets.md)。
+
 - 样本与样本集：`DefaultSample`、`DefaultSampleSet`
 - 存储：`dyntool.storage`
 - 绘图：`dyntool.plotting`
 - 报告导出：`dyntool.reporting`
 - 资源与配置：`dyntool.resources`、`dyntool.config`
+
+分频最大振级规范阈值使用 `FDMVLLimit.from_standard(FDMVLLimitStandard.JGJ_T_170_2009, scene="居民文教区夜间")`，该场景返回 62 dB 标量。全部区域昼夜标准值、适用条件及原曲线占位接口调整见 [规范限值说明](docs/developer/limit_models.md)。
+
+标准枚举值只接受统一规范编号，例如 `ZVLLimitStandard.GB_10070_1988.value` 为 `"GB 10070-1988"`；旧编号 `"GB_10070-1988"` 明确拒绝，不提供兼容映射。限值 DataFrame / xarray 快照保留规范来源和可选追溯；标量恢复必须恰好一个值，CSV 往返仍需另行提供元信息。
 
 ## GUI 骨架
 
@@ -58,6 +64,9 @@ AdvDynTool 是一个面向动力学计算、振动处理与评价的 Python 库�
 - 第六轮主视图已切到 `Model/View`：左侧资源树使用 `QTreeView + ResourceTreeModel`，底部任务/日志/问题区使用 `QTableView + 表模型`
 - 页面主区摘要原位更新；`_reload_view()` 仅保留首屏初始化和整项目加载后的冷启动刷新
 - GUI 项目文件已采用 JSON 持久化；窗口几何、Dock 布局、最近目录和主题偏好通过 `QSettings` 持久化
+- 项目 JSON 先写入同目录暂存文件再替换；保存失败提示原因，并保留已有文件与未保存状态
+- “保存分析数据”（`Ctrl+Shift+S`）另存完整主集到独立 SQLite/H5 仓库，默认放在项目目录的 `analysis_data` 下；成功后再“保存项目”记录仓库引用
+- 关闭、新建、打开或替换主集前，分别提示未保存的分析数据与项目状态；保存失败或取消时保留当前工作区
 - GUI 内部新增 `ImportManager` 与 `GuiRuntimeBridge`，分别负责导入任务编排与 runtime/private 行为隔离；这些都属于 `Internal API`
 - 项目目录与导入源路径可以不一致；首次打开从项目目录开始，后续记住最近来源目录
 - 导入成功后默认绑定为当前项目主集
@@ -86,21 +95,15 @@ uv run python -B -m dyntool_gui.app --demo bridge
 uv run python -B -m dyntool_gui.app --demo generic
 ```
 
-## Web 工作台实验线（冻结）
+## GUI 单路线与行为说明
 
-稳定性：`Internal API`
+GUI 是当前唯一正式项目壳，核心 Python 库继续独立使用。Web 路线已退出：源码、专属依赖、启动入口和发行包已移除，历史实现通过 Git 历史追溯。
 
-- GUI 是当前唯一正式项目壳；Web 工作台仅保留为实验/验证路线，不再作为当前推荐工作台入口。
-- Web 工作台位于 `src/dyntool_web/`；它不属于 `dyntool` 库级 `Public API`，本轮只保留源码、测试和可运行性，不继续扩张功能面。
-- 第一阶段采用本地 `FastAPI` 服务、可直接服务的静态页面和 `Vite + React + TypeScript` 前端源码，不引入 Tauri，不引入 Plotly；正式图形仍由 `Matplotlib + PlotDataset + PlotTheme` 在后端生成 `SVG/PNG`。
-- Web 工作台保留当前 `总览 / 导入与筛选 / 数据处理 / 图形绘制` 四页与现有真实主流程，用于内部验证 `轻量预览 -> 绑定主样本集 -> 子集范围 -> calc_freqspec -> Matplotlib SVG/PNG 渲染 -> 导出预检`；`demo=True` 仅保留为内部测试和演示入口。
-- Web 工作台当前会记录会话版本、内存子集、任务进度和预览过期状态；子集保存仍是 Web 会话内存态，不改变项目持久化格式。
-- 当前 Web 服务接口均为 `Internal API`，不改变存储格式、单位语义和 `dyntool` 正式公开面；Web 相关验证独立保留，但不再与 GUI 按对称主线推进。
+需要完整可操作的展示项目时，运行 `uv run --group gui python -B -m examples.10_scenarios.09_gui_building_showcase.main --open`。该入口生成 36 条明确标注的合成建筑振动数据、实际派生结果和子集，并自动显示隔振前后对比图。多样本模型图以不同颜色和图例区分曲线，支持 OTOVL 来源。核心计算使用 `Public API`，桌面展示属于 GUI `Internal API`；详见 [建筑振动展示](docs/usage/gui_building_showcase.md)。
 
-```powershell
-uv sync --group web
-uv run python -B -m dyntool_web.server
-```
+处理、预览、绘图和导出的空范围不再回退为全量。处理反馈汇总核心报告中的成功、跳过、失败和未执行数量；严格失败或中止保留已完成结果，并同步数据状态。
+
+项目 JSON 保存工作区描述、原始来源和成功的分析仓库引用，不保存模型数组。“保存分析数据”另存全部主集，后续沿用成功目标；重新打开项目优先恢复已保存结果，不自动写回原始来源。详见 [GUI 单路线迁移与可靠性](docs/developer/gui_single_route_migration.md)。
 
 ## 快速开始
 
@@ -121,7 +124,7 @@ sample = DefaultSample.from_accel_data(
     record="R1",
     timestamp="2026-03-08 12:00:00",
 )
-sample.eval_zvl(overwrite=True, freq_range=(2.0, 60.0))
+sample.eval_zvl(overwrite=True, freq_range=(2.0, 60.0), time_windows=-1)
 dt_storage.save_sample(sample, "output/sample.h5")
 freqs, _ = dt_resources.center_freqs((2.0, 80.0))
 print(freqs[:3])
@@ -177,14 +180,14 @@ plotting TOML 当前正式采用点层级 schema：
 
 ## 文档与质量命令
 
-主开发与主回归以 `src/dyntool` 和 `src/dyntool_gui` 为中心；`src/dyntool_web` 仍应保留独立验证，但不再作为与 GUI 对称推进的正式主线。不要使用普通 `uv run pytest`；测试前先创建 `.pytest_tmp`，测试后使用生成物清理脚本移除 `__pycache__` 等临时产物。
+主开发与主回归覆盖独立核心库 `src/dyntool` 和唯一桌面界面 `src/dyntool_gui`。不要使用普通 `uv run pytest`；测试前先创建 `.pytest_tmp`，测试后使用生成物清理脚本移除 `__pycache__` 等临时产物。
 
 ```powershell
 uv run python -B scripts/clean_generated_artifacts.py --apply
 New-Item -ItemType Directory -Force -Path .pytest_tmp | Out-Null
 $env:PYTHONDONTWRITEBYTECODE='1'; uv run python -B -m mkdocs build --strict --site-dir .pytest_tmp/mkdocs-site
-uv run ruff check --no-cache src/dyntool src/dyntool_gui src/dyntool_web tests examples scripts
-uv run ruff format --check src/dyntool src/dyntool_gui src/dyntool_web tests examples scripts
+uv run ruff check --no-cache src/dyntool src/dyntool_gui tests examples scripts
+uv run ruff format --check src/dyntool src/dyntool_gui tests examples scripts
 uv run python -B scripts/check_text_quality.py
 uv run python -B scripts/check_docstring_coverage.py
 uv run python -B scripts/check_mkdocs_site.py
@@ -193,3 +196,15 @@ uv run python -B scripts/check_helper_structure.py
 $env:PYTHONDONTWRITEBYTECODE='1'; uv run python -B -m pytest -q --basetemp .pytest_tmp/pytest -p no:cacheprovider
 uv run python -B scripts/clean_generated_artifacts.py --apply
 ```
+
+本轮核心库修正采用 SI 计算、完整单边 FFT 和单样本原子保存。行为变化与重新计算建议见 [核心库迁移说明](docs/developer/core_correctness_migration.md)。
+
+## 核心库整改合同
+
+查询返回独立样本状态，默认禁止写回源仓库，允许计算与另存；模型数组只读，编辑使用正式更新方法。报告数值统一 SI 并标注单位，普通 `scalar_frame()` 显示单位保持不变。派生结果新增可选计算依据与过期状态；旧数据继续可读，旧版重存可能丢失追溯扩展。行为及显式交换载荷迁移见 [核心架构整改说明](docs/developer/core_architecture_remediation.md)。
+
+单位原位转换在内部通知失败时恢复模型和拥有者状态；结构化交换载荷的重复数值、单位及追溯信息冲突均明确拒绝，历史缺少可选追溯的载荷继续可读。
+
+存储精度选项只处理数值载荷，计算参数和追溯保持原精度；输入数值未改变时，不因追溯表示差异使派生结果过期。
+
+核心后续整改固定：传递函数采用输出/输入相位且保留浮点 Hz；组合谱须具有同一物理轴；评价载荷缺失标量不补零。xarray 快照保留形状、单位及可选追溯，样本流分支显式提交写回原槽位。行为迁移与复核见 [核心架构整改](docs/developer/core_architecture_remediation.md) 和 [复核记录](docs/developer/core_architecture_verification.md)。

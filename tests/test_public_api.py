@@ -83,6 +83,9 @@ def test_top_level_exports_match_current_public_surface() -> None:
         "VelSeries",
         "DispSeries",
         "ForceSeries",
+        "MomentSeries",
+        "StressSeries",
+        "StrainSeries",
         "FreqAmpSeries",
         "FreqPhaSeries",
         "FreqSpec",
@@ -289,7 +292,7 @@ def test_default_sample_and_set_support_current_public_flow(tmp_path: Path) -> N
         metadata_cls=VibrationTestMetadata,
         **_make_vibration_kwargs(),
     )
-    result = sample.eval_zvl(overwrite=True, freq_range=(2.0, 60.0))
+    result = sample.eval_zvl(overwrite=True, freq_range=(2.0, 60.0), time_windows=-1)
     sample_set = DefaultSampleSet.from_samples([sample], sample_domain=SampleDomain.VIBRATION_TEST)
     store_path = tmp_path / "sample_set.h5"
     sample_set.save(store_path, storage_scheme=StorageScheme.SET_H5)
@@ -300,7 +303,9 @@ def test_default_sample_and_set_support_current_public_flow(tmp_path: Path) -> N
     )
 
     assert isinstance(result, OperationResult)
-    assert isinstance(sample_set.eval_zvl(overwrite=True, freq_range=(2.0, 60.0)), BatchOperationReport)
+    assert isinstance(
+        sample_set.eval_zvl(overwrite=True, freq_range=(2.0, 60.0), time_windows=-1), BatchOperationReport
+    )
     assert hasattr(sample_set, "convert_storage")
     comparison = sample_set.compare_with(sample_set, data_vars=["zvl"], features=["pga"])
     assert comparison.same_type is True

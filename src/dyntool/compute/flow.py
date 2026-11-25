@@ -137,15 +137,17 @@ class ComputeFlow:
         return self.from_checkpoint(name)
 
     def branch(self, name: str) -> "ComputeFlow":
-        """创建深拷贝分支流。"""
+        """创建独立分支，保留来源与显式提交能力。"""
 
         branch_flow = ComputeFlow(
             _result=deepcopy(self._result),
-            context=self.context,
+            context=deepcopy(self.context),
             _artifacts=deepcopy(self._artifacts),
             _metrics=deepcopy(self._metrics),
             _checkpoints=deepcopy(self._checkpoints),
             _history=deepcopy(self._history),
+            commit_handler=self.commit_handler,
+            source=self.source,
         )
         branch_flow._history.append({"action": "branch", "name": name})
         return branch_flow

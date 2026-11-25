@@ -7,6 +7,7 @@ from typing import Any, ClassVar, Mapping, Self, cast
 
 import numpy as np
 import pandas as pd
+import xarray as xr
 
 from ..constants import (
     DataCategory,
@@ -19,6 +20,10 @@ from ..constants import (
 from ..compute_api import DataModelComputeNamespace
 from ..runtime import resolve_model_runtime
 from .conversion import MagnitudeConversion
+from ._model_data_state import _ModelDataState
+from ._model_payload import _ModelPayloadCodec
+from ._model_xarray import _ModelXarrayExchange
+from ..serialization import StructuredPayload
 
 PathLike = str | Path
 
@@ -41,6 +46,7 @@ class DataModelBase:
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
+        _ModelDataState.prepare_class(cls)
         if not hasattr(cls, "category"):
             raise NotImplementedError(f"子类 {cls.__name__} 必须定义 category。")
         category_value = cls._normalize_category(cls.category)
@@ -49,6 +55,36 @@ class DataModelBase:
         if category_value in DataModelBase._registry:
             raise ValueError(f"分类 {category_value} 已由 {DataModelBase._registry[category_value].__name__} 注册。")
         DataModelBase._registry[category_value] = cls
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        """已拥有的组合载荷只能通过样本更新或模型正式单位方法替换。"""
+        if (
+            not name.startswith("_")
+            and self.__dict__.get("_owner_ref") is not None
+            and (isinstance(self.__dict__.get(name), DataModelBase) or isinstance(value, DataModelBase))
+        ):
+            raise AttributeError(f"禁止直接替换已绑定模型分量 {name!r}，请构造模型后使用样本 update_data()")
+        object.__setattr__(self, name, value)
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> Self:
+        """复制独立模型状态并共享不可变载荷。"""
+        return cast(Self, _ModelDataState.clone(self, memo))
+
+    def _validate_component_axes(self, components: tuple[DataModelBase | None, ...], unit: str) -> None:
+        """组合分量必须具有同一物理轴，不隐式插值或按位置误对齐。"""
+        axes = [component.get_axis(unit=unit) for component in components if component is not None]
+        if any(axis.shape != axes[0].shape or not np.allclose(axis, axes[0], rtol=1e-10, atol=0) for axis in axes[1:]):
+            raise ValueError(f"{type(self).__name__} 的分量物理轴必须一致（{unit}）")
+
+    def _respspec_from_compute_result(self, result: Mapping[str, Any], parameters: Mapping[str, Any]) -> DataModelBase:
+        """为数值流水线恢复领域响应谱，计算层不依赖领域类。"""
+        from .response_spectrum import RespSpec
+
+        from .._provenance import _ResultProvenance
+
+        spectrum = RespSpec.from_compute_result(result, unit_system=result["unit_system"])
+        _ResultProvenance.computed(self, spectrum, "resp_eval_template", dict(parameters))
+        return spectrum
 
     @classmethod
     def from_category(cls, category: str | DataCategory) -> type[Self]:
@@ -125,7 +161,7 @@ class DataModelBase:
         return self.current_units()
 
     def base_units(self) -> dict[str, str]:
-        """返回模型固定的内部基础单位。"""
+        """返回当前模型的内部存储单位；它可能由构造时的单位系统确定。"""
 
         raise NotImplementedError(f"{self.__class__.__name__} 未实现 base_units()。")
 
@@ -202,94 +238,19 @@ class DataModelBase:
 
         raise NotImplementedError(f"{self.__class__.__name__} 未实现 convert_units(units, replace=...)。")
 
-    def to_xarray(self) -> Any:
-        """导出为 xarray 对象。"""
-
-        xr_obj = getattr(self, "xr", None)
-        if xr_obj is not None:
-            return xr_obj
-        try:
-            import xarray as xr  # type: ignore[import-not-found]
-        except ImportError as exc:  # pragma: no cover
-            raise ImportError("导出 xarray 需要安装 xarray") from exc
-
-        payload = self.to_dict()
-        units = payload.get("_units", {})
-        data_vars: dict[str, Any] = {}
-        for key, value in payload.items():
-            if key == "_units" or value is None:
-                continue
-            if isinstance(value, Mapping):
-                continue
-            data_vars[key] = np.asarray(value)
-        if not data_vars:
-            raise TypeError(f"{self.__class__.__name__} 无法自动导出为 xarray")
-        ds = xr.Dataset({name: (("dim_0",), arr.flatten()) for name, arr in data_vars.items()})
-        ds.attrs["_units"] = dict(units) if isinstance(units, Mapping) else {}
-        ds.attrs["_category"] = self._normalize_category(self.category)
-        ds.attrs["_model_type"] = self.__class__.__name__
-        return ds
+    def to_xarray(self) -> xr.Dataset | xr.DataArray:
+        """导出隔离的 xarray 快照，保留形状、单位和可选追溯。"""
+        return _ModelXarrayExchange.export(self)
 
     @classmethod
     def from_xarray(
         cls,
-        xr_obj: Any,
+        xr_obj: xr.Dataset | xr.DataArray,
         *,
         units: Mapping[str, str | None] | None = None,
     ) -> Self:
-        """从 xarray 对象恢复模型。"""
-
-        try:
-            import xarray as xr  # type: ignore[import-not-found]
-        except ImportError as exc:  # pragma: no cover
-            raise ImportError("导入 xarray 需要安装 xarray") from exc
-
-        if isinstance(xr_obj, xr.DataArray):
-            dim_name = xr_obj.dims[0] if xr_obj.dims else "dim_0"
-            axis = (
-                np.asarray(xr_obj.coords[dim_name].to_numpy())
-                if dim_name in xr_obj.coords
-                else np.arange(np.asarray(xr_obj.to_numpy()).shape[0], dtype=float)
-            )
-            values = np.asarray(xr_obj.to_numpy())
-            merged_units = units
-            attrs_units = xr_obj.attrs.get("_units")
-            if merged_units is None and isinstance(attrs_units, Mapping):
-                merged_units = attrs_units
-            if merged_units is None:
-                inferred_units: dict[str, str] = {}
-                axis_key = cls.axis_field or dim_name
-                if dim_name in xr_obj.coords:
-                    axis_unit = xr_obj.coords[dim_name].attrs.get("units")
-                    if isinstance(axis_unit, str) and axis_unit:
-                        inferred_units[axis_key] = axis_unit
-                value_key = cls.value_field
-                value_unit = xr_obj.attrs.get("units")
-                if value_key is not None and isinstance(value_unit, str) and value_unit:
-                    inferred_units[value_key] = value_unit
-                if inferred_units:
-                    merged_units = inferred_units
-            return cls.from_arrays(axis, values, units=merged_units)
-
-        if isinstance(xr_obj, xr.Dataset):
-            payload: dict[str, Any] = {}
-            for name in xr_obj.data_vars:
-                payload[name] = np.asarray(xr_obj[name].to_numpy())
-            if xr_obj.coords:
-                first_coord = next(iter(xr_obj.coords))
-                payload[first_coord] = np.asarray(xr_obj.coords[first_coord].to_numpy())
-            merged_units = units
-            attrs_units = xr_obj.attrs.get("_units")
-            if merged_units is None and isinstance(attrs_units, Mapping):
-                merged_units = attrs_units
-            if merged_units is not None:
-                payload["_units"] = dict(merged_units)
-            try:
-                return cls.from_dict(payload, units=merged_units)
-            except TypeError:
-                return cls.from_dict(payload)
-
-        raise TypeError(f"不支持的 xarray 对象类型: {type(xr_obj).__name__}")
+        """恢复字段单位一致的快照；外部编辑后须移除旧计算依据。"""
+        return cast(Self, _ModelXarrayExchange.restore(cls, xr_obj, units))
 
     def to_dict(self) -> dict[str, Any]:
         """导出为字典。"""
@@ -307,81 +268,14 @@ class DataModelBase:
 
         raise NotImplementedError(f"{cls.__name__} 未实现 from_dict()。")
 
-    def to_structured_payload(self) -> Any:
-        """转换为 `StructuredPayload`。"""
-
-        from ..serialization import StructuredPayload
-
-        raw_dict = self.to_dict()
-        units = raw_dict.get("_units", {})
-        coords: dict[str, Any] = {}
-        data_vars: dict[str, Any] = {}
-        try:
-            xr_obj = self.to_xarray()
-        except Exception:
-            xr_obj = None
-
-        if xr_obj is not None:
-            try:
-                import xarray as xr  # type: ignore[import-not-found]
-            except ImportError:  # pragma: no cover
-                xr = None  # type: ignore[assignment]
-            if xr is not None and isinstance(xr_obj, xr.DataArray):
-                for name in xr_obj.coords:
-                    coords[name] = np.asarray(xr_obj.coords[name].to_numpy())
-                data_name = xr_obj.name or self.value_field or "value"
-                data_vars[data_name] = np.asarray(xr_obj.to_numpy())
-            elif xr is not None and isinstance(xr_obj, xr.Dataset):
-                for name in xr_obj.coords:
-                    coords[name] = np.asarray(xr_obj.coords[name].to_numpy())
-                for name in xr_obj.data_vars:
-                    data_vars[name] = np.asarray(xr_obj[name].to_numpy())
-
-        if not data_vars:
-            for key, value in raw_dict.items():
-                if key == "_units" or value is None or isinstance(value, Mapping):
-                    continue
-                data_vars[key] = np.asarray(value)
-
-        return StructuredPayload(
-            entity_type=self.__class__.__name__,
-            domain="default",
-            category=self._normalize_category(self.category),
-            coords=coords,
-            data_vars=data_vars,
-            units=dict(units) if isinstance(units, Mapping) else {},
-            attrs={
-                "model_type": self.__class__.__name__,
-                "category": self._normalize_category(self.category),
-            },
-            meta={"raw_dict": raw_dict},
-        )
+    def to_structured_payload(self) -> StructuredPayload:
+        """导出当前单位的权威字段，追溯通过可选扩展属性保留。"""
+        return _ModelPayloadCodec.export(self)
 
     @classmethod
-    def from_structured_payload(cls, payload: Any) -> Self:
-        """从 `StructuredPayload` 恢复数据模型。"""
-
-        from ..serialization import StructuredPayload, normalize_payload
-
-        normalized: StructuredPayload = (
-            normalize_payload(payload) if not isinstance(payload, StructuredPayload) else payload
-        )
-
-        raw = normalized.meta.get("raw_dict")
-        if isinstance(raw, Mapping):
-            try:
-                return cls.from_dict(dict(raw), units=normalized.units or None)
-            except TypeError:
-                return cls.from_dict(dict(raw))
-
-        merged: dict[str, Any] = dict(normalized.coords)
-        merged.update(normalized.data_vars)
-        if normalized.units:
-            merged["_units"] = dict(normalized.units)
-        try:
-            return cls.from_dict(merged, units=normalized.units or None)
-        except TypeError:
-            return cls.from_dict(merged)
+    def from_structured_payload(cls, payload: Mapping[str, Any] | StructuredPayload) -> Self:
+        """恢复权威字段，拒绝重复数据冲突和不支持的版本。"""
+        return cast(Self, _ModelPayloadCodec.restore(cls, payload))
 
     @classmethod
     def from_compute_result(

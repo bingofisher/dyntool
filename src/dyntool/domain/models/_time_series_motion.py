@@ -21,10 +21,9 @@ def integrate_accel_series_to_vel(
 
     from .time_series import VelSeries
 
-    calc_units = calc_unit_system or get_default_unit_system()
     out_units = output_unit_system or get_default_unit_system()
     vel_array = Integration(
-        y=series.get_value(unit=calc_units.acceleration),
+        y=series.get_value(unit="meter/second**2"),
         dx=series.dt,
     ).integ1d(method=method, **options)
     target_value_unit = output_unit or out_units.velocity
@@ -32,7 +31,7 @@ def integrate_accel_series_to_vel(
     return VelSeries._from_base_data(
         convert_array(
             vel_array,
-            from_unit=calc_units.velocity,
+            from_unit="meter/second",
             to_unit=target_value_unit,
         ),
         time=series.get_axis(unit=out_units.time),
@@ -54,10 +53,9 @@ def integrate_vel_series_to_disp(
 
     from .time_series import DispSeries
 
-    calc_units = calc_unit_system or get_default_unit_system()
     out_units = output_unit_system or get_default_unit_system()
     disp_array = Integration(
-        y=series.get_value(unit=calc_units.velocity),
+        y=series.get_value(unit="meter/second"),
         dx=series.dt,
     ).integ1d(method=method, **options)
     target_value_unit = output_unit or out_units.displacement
@@ -65,7 +63,7 @@ def integrate_vel_series_to_disp(
     return DispSeries._from_base_data(
         convert_array(
             disp_array,
-            from_unit=calc_units.displacement,
+            from_unit="meter",
             to_unit=target_value_unit,
         ),
         time=series.get_axis(unit=out_units.time),
@@ -87,10 +85,9 @@ def differentiate_vel_series_to_accel(
 
     from .time_series import AccelSeries
 
-    calc_units = calc_unit_system or get_default_unit_system()
     out_units = output_unit_system or get_default_unit_system()
     accel_array = Differentiation(
-        y=series.get_value(unit=calc_units.velocity),
+        y=series.get_value(unit="meter/second"),
         dx=series.dt,
     ).diff1d(method=method, **options)
     target_value_unit = output_unit or out_units.acceleration
@@ -98,7 +95,7 @@ def differentiate_vel_series_to_accel(
     return AccelSeries._from_base_data(
         convert_array(
             accel_array,
-            from_unit=calc_units.acceleration,
+            from_unit="meter/second**2",
             to_unit=target_value_unit,
         ),
         time=series.get_axis(unit=out_units.time),
@@ -120,10 +117,9 @@ def differentiate_disp_series_to_vel(
 
     from .time_series import VelSeries
 
-    calc_units = calc_unit_system or get_default_unit_system()
     out_units = output_unit_system or get_default_unit_system()
     vel_array = Differentiation(
-        y=series.get_value(unit=calc_units.displacement),
+        y=series.get_value(unit="meter"),
         dx=series.dt,
     ).diff1d(method=method, **options)
     target_value_unit = output_unit or out_units.velocity
@@ -131,7 +127,7 @@ def differentiate_disp_series_to_vel(
     return VelSeries._from_base_data(
         convert_array(
             vel_array,
-            from_unit=calc_units.velocity,
+            from_unit="meter/second",
             to_unit=target_value_unit,
         ),
         time=series.get_axis(unit=out_units.time),

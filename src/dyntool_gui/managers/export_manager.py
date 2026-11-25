@@ -10,7 +10,8 @@ from typing import Any
 
 from PySide6.QtCore import QObject, QThread, Signal, Slot
 
-from ..session import ExportRecord, ProjectSession, resolve_scope_uids
+from .._scope import _ResolvedSampleScope
+from ..session import ExportRecord, ProjectSession
 
 
 @dataclass(slots=True)
@@ -50,6 +51,8 @@ class _ExportScopeRuntime:
     def has_series_frame(self, data_var: str) -> bool:
         """检查当前范围是否能生成指定序列表。"""
 
+        if not self.scoped_uids:
+            return False
         if not data_var:
             return True
         if data_var in self.fallback_slots:
@@ -63,6 +66,8 @@ class _ExportScopeRuntime:
     def has_peaks_frame(self, source: str) -> bool:
         """检查当前范围是否能生成指定峰值表。"""
 
+        if not self.scoped_uids:
+            return False
         if not source:
             return True
         if source in self.fallback_slots:
@@ -73,8 +78,8 @@ class _ExportScopeRuntime:
             return False
         return not frame.empty
 
-    def _uids_or_none(self) -> tuple[str, ...] | None:
-        return self.scoped_uids or None
+    def _uids_or_none(self) -> tuple[str, ...]:
+        return self.scoped_uids
 
 
 class _ExportWorker(QObject):
@@ -149,18 +154,20 @@ class ExportManager(QObject):
         output_path: str | Path,
         data_var: str,
         source: str,
-        scoped_uids: tuple[str, ...] = (),
+        scoped_uids: tuple[str, ...] | None = None,
     ) -> ExportValidationResult:
         """同步校验导出前置条件。"""
 
         sample_set = self._require_runtime()
         export_scope = _ExportScopeRuntime(
             sample_set,
-            tuple(scoped_uids) if scoped_uids else tuple(resolve_scope_uids(self._session)),
+            _ResolvedSampleScope.resolve(self._session, scoped_uids).uids,
             self._session.capability_snapshot.data_slots,
         )
         started = perf_counter()
         missing: list[str] = []
+        if not export_scope.scoped_uids:
+            missing.append("当前范围没有可导出样本")
         pending_generation_action = ""
 
         target_text = str(output_path).strip()
@@ -213,10 +220,11 @@ class ExportManager(QObject):
         source: str,
         include_plots: bool,
         include_eval_summary: bool,
-        scoped_uids: tuple[str, ...] = (),
+        scoped_uids: tuple[str, ...] | None = None,
     ) -> ExportResult:
         """同步执行导出动作。"""
 
+        scoped_uids = _ResolvedSampleScope.resolve(self._session, scoped_uids).uids
         validation = self.validate_sync(
             export_kind=export_kind,
             output_path=output_path,
@@ -229,7 +237,7 @@ class ExportManager(QObject):
 
         export_scope = _ExportScopeRuntime(
             self._require_runtime(),
-            tuple(scoped_uids) if scoped_uids else tuple(resolve_scope_uids(self._session)),
+            scoped_uids,
             self._session.capability_snapshot.data_slots,
         )
         sample_set = export_scope.export_sample_set()
@@ -319,17 +327,12 @@ def _now_text() -> str:
 
 def _scoped_sample_set(sample_set: Any, scoped_uids: list[str]) -> Any:
     if not scoped_uids:
+        raise ValueError("当前范围没有可导出样本。")
+    keys = getattr(sample_set, "keys", None)
+    if callable(keys) and set(scoped_uids) == {str(uid) for uid in keys()}:
         return sample_set
-    try:
-        if len(scoped_uids) == len(sample_set):
-            return sample_set
-    except TypeError:
-        pass
     finder = getattr(sample_set, "find_many", None)
     if callable(finder):
         return finder(uids=tuple(scoped_uids))
     selected = {uid: sample for uid, sample in sample_set.items() if str(uid) in set(scoped_uids)}
-    try:
-        return type(sample_set)(selected)
-    except Exception:  # noqa: BLE001
-        return sample_set
+    return type(sample_set)(selected)

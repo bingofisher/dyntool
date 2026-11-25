@@ -33,11 +33,6 @@ AdvDynTool 以数值结果正确、单位一致和结果可追溯为第一优先
 - GUI 是当前唯一正式项目壳，当前主导航固定为 `总览 / 导入与筛选 / 数据处理 / 图形绘制`；导出只作为图形页、预检入口和内部导出工作区能力存在
 - GUI 当前正式基线为 `PySide6 Widgets + QMainWindow + QDockWidget + QStackedWidget`
 - GUI 长任务当前正式基线为 `QThread + worker QObject + Signal`，该约束只属于 GUI `Internal API` 实现合同
-- `src/dyntool_web` 是保留源码与可运行性的 Web 工作台实验线，属于 `Internal API`，不进入 `dyntool` 库级公开面
-- Web 工作台第一阶段采用 `FastAPI + 静态页面 + Vite React TypeScript 源码` 本地服务，不引入 Tauri，不引入 Plotly；正式图形继续由 `Matplotlib + PlotDataset + PlotTheme` 在后端生成 `SVG/PNG`
-- Web 工作台保留现有路径管理、真实 `SET_SQLITE_H5` 仓库轻量预览与绑定、任务进度、处理默认参数、只读预览、导出预检和项目级 PlotTheme 编辑能力，但本轮起不再继续扩张
-- Web 工作台保留当前真实验证流程：`轻量预览 -> 绑定主样本集 -> 子集范围 -> calc_freqspec -> Matplotlib SVG/PNG 渲染 -> 导出预检`
-- Web 工作台会话层维护内部版本号、任务记录、问题记录、预览过期标记和内存子集；这些状态只属于 `dyntool_web` 内部应用协议，不进入库级公开面或项目持久化格式
 - GUI 第八轮将真实页面行为固定为：
   - `处理` 页先执行动作，再按显式请求生成预览表
   - `绘图` 页先选来源，再按显式请求渲染图形
@@ -48,11 +43,17 @@ AdvDynTool 以数值结果正确、单位一致和结果可追溯为第一优先
 - GUI 主工作台第六轮已收敛到 `Model/View`：资源树使用 `QTreeView + ResourceTreeModel`，底部任务/日志/问题区使用 `QTableView + 表模型`
 - 页面主区摘要原位更新；`_reload_view()` 只用于首屏初始化与整项目重载后的冷启动刷新
 - GUI 项目文件已采用 JSON 持久化，机器级偏好与窗口布局通过 `QSettings` 持久化
+- `ProjectFileStore` 在目标目录暂存完整 JSON 后替换文件；窗口仅在保存成功后更新项目引用和已保存状态，预期 I/O 或序列化错误通过中文提示反馈
+- `AnalysisSaveManager` 使用正式 `dyntool.storage.save_sample_set` 在后台逐样本提交完整主集，主线程接收报告后更新分析仓库引用、摘要和保存状态；保存与线程收尾纳入全局忙态
 - GUI 默认启动进入空项目会话；演示数据只通过显式参数 `uv run python -B -m dyntool_gui.app --demo bridge|generic` 进入
 - GUI 内部使用 `ImportManager` 编排导入任务，使用 `GuiRuntimeBridge` 隔离 runtime/private 行为；二者都属于 `Internal API`
 - GUI 第七轮起新增 `ProcessingManager`、`PlotManager`、`ExportManager`，分别负责处理、绘图和内部导出能力的真实模块接入；三者同样属于 `Internal API`
 - `dyntool_gui -> dyntool` 只允许依赖正式对象 API 和正式模块 API
-- 整仓质量门禁仍应显式覆盖 `src/dyntool_gui`、`src/dyntool_web`、`tests` 和 `scripts`；但主问题清单、主收敛叙事和主迭代节奏以 GUI 为准，Web 按实验线独立验证
+- Web 路线已退出；发行包和正式依赖只保留核心库与 GUI，历史实现通过 Git 历史追溯。
+- GUI 私有范围对象区分未解析与冻结空范围；处理报告汇总逐样本核心结果，严格失败和中止后的前序成功结果继续保留并刷新状态。
+- 项目 JSON 保存工作区描述、来源及成功的分析仓库引用；数组由独立 SQLite/H5 仓库保存，恢复时优先读取该引用。项目与数据脏状态分别检查，关闭或替换项目须完成确认；具体迁移见 [GUI 单路线迁移与可靠性](docs/developer/gui_single_route_migration.md)。
+- 整仓 Ruff 门禁覆盖 `src/dyntool`、`src/dyntool_gui`、`tests`、`examples` 和 `scripts`；现有 GUI 工作流测试继续保留。
+- 建筑振动展示通过正式场景示例生成真实可计算的合成数组、预计算结果与项目。私有生成器在暂存目录完成核心计算和完整性检查后交付，原始仓库和可写分析仓库分离；展示启动适配沿用普通项目读取和 PlotManager，不扩展项目 JSON 或核心存储格式。两者属于 GUI `Internal API`，场景配置为 `Private / implementation detail`，不替换既有占位演示。GUI 多样本模型绘图支持 OTOVL，并用循环颜色与图例区分实际样本。见 [建筑振动展示](docs/usage/gui_building_showcase.md)。
 - 仓库测试入口必须使用 `$env:PYTHONDONTWRITEBYTECODE='1'; uv run python -B -m pytest ...`，不要使用普通 `uv run pytest`，避免生成物守卫被 `__pycache__` 污染
 - 测试前需要确保 `.pytest_tmp` 存在，测试后统一运行 `uv run python -B scripts/clean_generated_artifacts.py --apply`
 - GUI 当前顶层按任务型工作台组织：
@@ -98,6 +99,8 @@ AdvDynTool 以数值结果正确、单位一致和结果可追溯为第一优先
 - 会写回主样本集的 GUI 任务继续串行执行，避免并发改写同一主样本集；处理写任务必须可枚举 UID 并按 UID 分块执行以支持协作式中止，无法枚举 UID 时拒绝启动不可中止的全量写任务；纯绘图预览与保存图片不参与主集写回串行链
 
 ## 正式公开面
+
+`ForceSeries`、`MomentSeries`、`StressSeries`、`StrainSeries` 同级继承 `TimeSeries`，通过现有类别注册、`DefaultSample.sample_schema` 和计算源解析接入原有生命周期；不新增层、后端或存储布局。`Public API` 为四类模型及 `DefaultSample` 四个槽位；注册和来源解析仍为 `Private / implementation detail`。这些槽位复用通用处理、单位交换和持久化，不增加应力张量、材料本构或自动方向识别。`VibrationTestSample` 保持原 schema。
 
 ### 顶层对象层
 - 常用模型：`AccelSeries`、`FreqSpec`、`RespSpec`
@@ -215,8 +218,8 @@ AdvDynTool 以数值结果正确、单位一致和结果可追溯为第一优先
 
 - 仓库级并发规则固定为“多读单写”。
 - reader session 负责复用 SQLite 只读连接与 `payload.h5` 只读句柄。
-- writer session 负责复用 SQLite 写连接与 `payload.h5` 写句柄，并顺序提交样本。
-- `save_all()` 在 writer session 内继续保持单样本 H5 顺序写入，但会把 `sample`、`sample_slot_presence` 与 `sample_summary_projection` 收敛为 chunk 级 SQLite 批量 flush。
+- writer session 复用 SQLite 连接，每个样本独立打开并关闭 H5 写句柄，再提交 SQLite。
+- `save_all()` 对每个样本分别更新 `sample`、`sample_slot_presence` 与 `sample_summary_projection` 并提交，不保留延迟整批 flush。
 - `load_many_fields()`、`load_all()`、`prefetch()`、`compare_with()` 的补载路径优先复用 reader session。
 - 这条并发与吞吐规则当前只正式适用于 `SET_SQLITE_H5`。
 - `sqlite_h5_v2` 的内部实验已收敛进正式 `SET_SQLITE_H5 v2`；当前正式实现不再维护独立实验分派路径。
@@ -252,3 +255,31 @@ AdvDynTool 以数值结果正确、单位一致和结果可追溯为第一优先
 - `SubplotLayout` v1 支持 `rows / cols`、`share_x / share_y`、`height_ratios / width_ratios`、`hspace / wspace`
 - `PlotTheme.figure.add_axes_rect` 作为整组子图外接区域；多子图布局不新增 TOML schema，避免把布局组合语义写入单图模板契约
 - `SubplotFigurePlotter.plot_panels(...)` 返回 `PlotResult`，其中 `axes` 汇总所有子图，`ax` 仍指向第一个子图
+
+## 核心库一致性边界
+
+稳定性：`Internal API`。单位转换集中在求解边界；`_SampleWritePlan` 统一非空槽位选择与 metadata，`_FileCommit` 和 `_WriteMarker` 负责提交、回滚及中断检测，`_SqliteSessionCleanup` 保证异常退出仍尝试释放全部资源，`_ScalarComparison` 统一 SI 比较。对象入口与独立模块入口共用目标切换前的选择性补载。内部对象属于 `Private / implementation detail`，不新增公开入口。四层依赖方向保持不变。完整合同见 [核心库迁移说明](docs/developer/core_correctness_migration.md)。
+
+## 核心所有权与提交聚合
+
+稳定性：`Private / implementation detail`。查询选择与独立状态、身份原子更新、不可变数组载荷、计算依据、样本写入计划及报告提交分别由私有聚合对象管理。公开计算 namespace 保留；未增加平行 runtime。单位换算更新表示和摘要，物理输入变化使依赖结果过期。追溯写入既有属性与 JSON / 摘要扩展，SQLite 保持 v2。
+
+层外组装例外显式限定：`storage` 连接领域和基础设施，`reporting` 连接领域表、绘图及文件提交，`plotting` 依赖领域绘图类型和配置，`logging` / `config` 独立；类型叶模块禁止绕行实现层。完整合同见 [核心架构整改](docs/developer/core_architecture_remediation.md)。
+
+## 规范限值统一链路
+
+稳定性：限值对象和标准枚举属于 `Public API`，`domain.limits.registry` 与限值公共基类属于 `Internal API`。JGJ/T 170—2009 分频最大振级阈值沿“标准枚举 → CSV 资源 → LimitStandardSpec → ScalarLimitBase”解析，`FDMVLLimit` 保留类别，改为无频率轴的单个 dB 标量。绘图复用已有标量限值广播，存储复用模型 H5 路径和 UTF-8 规范元信息，不新增层外依赖、运行时或 SQLite 表。
+
+`limit_building_fdmvl` 是准确的资源键；既有 `limit_building_zvl` 仍引用同一表，保留已有引用但不将该表作为最大 Z 振级阈值。数值求解和工程测量前提与阈值对象分开。接口调整、来源及功能—示例—测试映射见 [规范驱动限值模型](docs/developer/limit_models.md)。
+
+标准按评价族划分枚举，成员名称使用 Python 标识符，值只接受正式编号；GB 10070 统一为 `GB 10070-1988`，旧下划线编号明确拒绝，不设置兼容映射。限值公共基类维护独立的 DataFrame / xarray 规范属性及可选追溯，标量恢复要求恰好一个值、一行表。资源键及现有磁盘目录不随显示编号重命名。
+
+`Private / implementation detail`：模型单位发布由 `_ModelRepresentationUpdate` 聚合，在回调异常或可捕获中断后恢复模型、组合分量绑定、槽位追溯和脏状态；结构化载荷解析将重复追溯纳入一致性检查，缺失的历史扩展仍按原兼容合同读取。
+
+交换载荷一致性检查包含可选追溯，存储精度的物理变更判断只比较数值和单位；精度处理保留 `_dyntool` / `_dyntool_state` 中实际计算参数，不把参数舍入误当成输入载荷更新。
+
+同名坐标和值字段合并前验证一致性；交换版本只接受规范的非负 ASCII 三段编号。`_ResultProvenance` 在恢复边界校验已知结果的操作、参数、输入版本、单位、算法、库版本及 UTC 时间，拒绝残缺的 `fresh` / `stale` 声明和损坏历史；缺少可选追溯仍保持 `unknown`。没有新增存储字段或格式版本。
+
+## 核心后续修复边界（2026-10-05）
+
+稳定性：上述对象入口为 `Public API`；模型 xarray 交换、依赖登记及仓库检查聚合为 `Private / implementation detail`。共享交换适配保留字段维度、物理单位和可选追溯；组合谱构造统一校验相同物理轴。样本依赖按输入版本映射登记并迭代传播过期，分支继承提交目标但隔离计算状态，提交进入受控更新聚合。仓库 deep 复用模型恢复校验，SQLite 摘要一次批量读取；quick 不读取数组。保持四层方向、既有存储布局、SQLite v2 和单写者边界，详见 [后续整改](docs/developer/core_architecture_remediation.md)。

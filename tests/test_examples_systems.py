@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import matplotlib
+import pytest
 
 from .example_runner import PROJECT_ROOT, run_example
 
@@ -27,6 +28,8 @@ def test_scenario_build_and_manage_samples() -> None:
     result = run_example("examples/10_scenarios/02_build_and_manage_samples/main.py")
     assert result["sample_count"] == 2
     assert result["evaluated_count"] == 2
+    assert result["mechanical_stress_unit"] == "megapascal"
+    assert result["mechanical_strain_si"] == pytest.approx(0.0003)
 
 
 def test_scenario_evaluate_vibration() -> None:
@@ -80,6 +83,14 @@ def test_scenario_resource_driven_eval(tmp_path: Path) -> None:
     )
     assert result["freq_start"] < result["freq_end"]
     assert result["city_limit"] == 65.0
+    assert result["city_standard"] == "GB 10070-1988"
+    assert result["fdmvl_standard"] == "JGJ/T 170-2009"
+    assert result["fdmvl_limit"] == 62.0
+    # 1e-3 m/s² 正弦的 RMS 振级约 56.99 dB，16 Hz Z 计权为 -2 dB。
+    assert abs(result["fdmvl_value"] - 54.9897) < 0.01
+    assert result["fdmvl_freq_range"] == (4.0, 200.0)
+    assert Path(result["fdmvl_limit_path"]).exists()
+    assert Path(result["fdmvl_plot_path"]).exists()
     assert Path(result["summary_path"]).exists()
 
 

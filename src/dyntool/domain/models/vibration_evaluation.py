@@ -25,6 +25,20 @@ from ..constants import (
 _CURRENT_UNITS_ATTR = "_current_units"
 
 
+class _EvaluationPayload:
+    """恢复必需评价标量，不补零、不截取首值。"""
+
+    @staticmethod
+    def scalar(data: Mapping[str, Any], name: str) -> float:
+        """接受数值标量或恰好一个数值的数组。"""
+        if name not in data or data[name] is None:
+            raise ValueError(f"评价载荷缺少必需标量：{name}")
+        values = np.asarray(data[name])
+        if values.size != 1:
+            raise ValueError(f"评价标量 {name} 必须恰好有一个数值")
+        return float(values.reshape(-1)[0])
+
+
 class ZVLEval(DataModelBase):
     """Z 振级评价结果。"""
 
@@ -240,8 +254,8 @@ class ZVLEval(DataModelBase):
         )
         default_current = cls._resolve_current_units(units=current if current else units)
         return cls.from_data(
-            zvl=float(np.asarray(data.get("zvl", [0.0])).flat[0]),
-            aw=float(np.asarray(data.get("aw", [0.0])).flat[0]),
+            zvl=_EvaluationPayload.scalar(data, "zvl"),
+            aw=_EvaluationPayload.scalar(data, "aw"),
             units=default_current,
         )
 
@@ -731,7 +745,7 @@ class FPVDVEval(DataModelBase):
         )
         default_current = cls._resolve_current_units(units=current if current else units)
         return cls.from_data(
-            fpvdv=float(np.asarray(data.get("fpvdv", [0.0])).flat[0]),
+            fpvdv=_EvaluationPayload.scalar(data, "fpvdv"),
             aw_time=np.asarray(data.get("aw_time", [])),
             aw_value=np.asarray(data.get("aw_value", [])),
             units=default_current,
@@ -982,7 +996,7 @@ class FDMVLEval(DataModelBase):
         )
         default_current = cls._resolve_current_units(units=current if current else units)
         return cls.from_data(
-            fdmvl=float(np.asarray(data.get("fdmvl", [0.0])).flat[0]),
+            fdmvl=_EvaluationPayload.scalar(data, "fdmvl"),
             freq=np.asarray(data.get("freq", [])),
             fdvls=np.asarray(data.get("fdvls", [])),
             units=default_current,

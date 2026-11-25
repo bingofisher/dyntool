@@ -18,6 +18,8 @@ def test_recipe_units_and_unit_views(tmp_path: Path) -> None:
     )
     assert Path(result["saved_path"]).exists()
     assert result["saved_units"]["time"] == "second"
+    assert result["same_velocity"] is True
+    assert result["multichannel_roundtrip"] is True
 
 
 def test_recipe_metadata_patterns() -> None:

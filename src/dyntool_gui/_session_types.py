@@ -6,10 +6,14 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from dyntool import StorageScheme
 from dyntool.storage import SampleLoadMode
+from .runtime_bridge import GuiRuntimeBridge
+
+if TYPE_CHECKING:
+    from dyntool import BatchOperationReport
 
 
 class ModuleKey(StrEnum):
@@ -68,6 +72,17 @@ class SampleSetSummary:
     storage_binding: str
     strict: bool
     storage_dirty: bool
+
+
+@dataclass(slots=True)
+class AnalysisDataState:
+    """分析数据保存状态，成功目标与重试目标分开记录。"""
+
+    path: Path | None = None
+    retry_path: Path | None = None
+    last_saved: str = ""
+    last_error: str = ""
+    last_report: BatchOperationReport[object] | None = None
 
 
 @dataclass(slots=True)
@@ -511,7 +526,7 @@ class ProcessingRequestSnapshot:
     scope_kind: str = "all_samples"
     scope_target: str = ""
     uids_text: str = ""
-    resolved_uids: tuple[str, ...] = ()
+    resolved_uids: tuple[str, ...] | None = None
     strict: bool = True
     overwrite: bool = True
     action_params: dict[str, str] = field(default_factory=dict)
@@ -565,6 +580,10 @@ class ProcessingState:
     preview_row_limit: int = 200
     auto_preview_enabled: bool = False
     last_action_count: int = 0
+    last_failed_count: int = 0
+    last_skipped_count: int = 0
+    last_not_executed_count: int = 0
+    last_report: BatchOperationReport[object] | None = None
     last_duration_ms: int = 0
     last_failure_message: str = ""
     current_request: ProcessingRequestSnapshot | None = None
@@ -893,14 +912,15 @@ def metadata_sort_value(sample: object, field_name: str) -> object:
 
 
 def _sample_slot_names(sample: object) -> tuple[str, ...]:
-    slots: list[str] = []
-    for name in ("accel", "vel", "disp", "force", "freqspec", "respspec", "otovl", "zvl", "fdmvl", "fpvdv"):
-        if getattr(sample, name, None) is not None:
-            slots.append(name)
-    return tuple(slots)
+    return GuiRuntimeBridge().sample_slot_names(
+        sample, ("accel", "vel", "disp", "force", "freqspec", "respspec", "otovl", "zvl", "fdmvl", "fpvdv")
+    )
 
 
 def _sample_has_any_data(sample: object) -> bool:
+    values = getattr(sample, "data_vars", None)
+    if isinstance(values, dict):
+        return bool(values)
     return bool(_sample_slot_names(sample))
 
 
@@ -928,6 +948,7 @@ _metadata_sort_value = metadata_sort_value
 
 # suppress unused-import F401 for re-export consumers
 __all__ = [
+    "AnalysisDataState",
     "ModuleKey",
     "MODULE_LABELS",
     "ImportKind",

@@ -12,7 +12,7 @@ import pandas as pd
 
 from ...compute.solver_support import load_resource_csv
 from ..constants import normalize_unit, parse_label_unit
-from .enums import FPVDVLimitStandard, OTOVLLimitStandard, ZVLLimitStandard
+from .enums import FDMVLLimitStandard, FPVDVLimitStandard, OTOVLLimitStandard, ZVLLimitStandard
 
 
 @dataclass(frozen=True, slots=True)
@@ -185,7 +185,20 @@ _LIMIT_STANDARD_REGISTRY: dict[str, dict[StrEnum, LimitStandardSpec]] = {
             ),
         ),
     },
-    "fdmvl": {},
+    "fdmvl": {
+        FDMVLLimitStandard.JGJ_T_170_2009: LimitStandardSpec(
+            standard=FDMVLLimitStandard.JGJ_T_170_2009,
+            clause="4.0.1",
+            resource_key="limit_building_fdmvl",
+            list_scenes=_list_scalar_scenes,
+            resolve_scene=lambda df, scene: _resolve_scalar_scene(
+                df,
+                scene,
+                value_field="fdmvl",
+                fallback_unit="decibel",
+            ),
+        ),
+    },
 }
 
 

@@ -38,8 +38,10 @@ from ._sample_set_storage import (
 )
 from ._sample_set_views import build_peaks_frame, build_scalar_frame, build_series_frame
 from .types import SampleField, SampleLoadMode, SampleSetComparisonReport
+from ._sample_set_selection import _SampleSetSelection
 
 if TYPE_CHECKING:
+    from ..compute_api import SampleSetComputeNamespace
     from .types import SampleSetViewOptions
 
 SampleType = TypeVar("SampleType", bound=SampleBase)
@@ -51,6 +53,7 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
 
     _sample_type: ClassVar[type[SampleBase]] = SampleBase
     _payload_domain: ClassVar[str] = "default"
+    _payload_category: ClassVar[str] = ""
 
     def __init__(
         self,
@@ -76,15 +79,48 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
     def __setitem__(self, key: str, item: Any) -> None:
         _ = key
         self._bind_sample_internal(item)
+        if self.storage is not None:
+            self.storage_dirty = True
 
     def __getitem__(self, key: str) -> SampleType:
-        return super().__getitem__(key.strip())
+        return self._items[key.strip()]
+
+    @property
+    def data(self) -> dict[str, SampleType]:
+        """返回成员映射快照；修改成员请使用集合的正式增删改入口。"""
+        return dict(self._items)
+
+    @data.setter
+    def data(self, value: dict[str, SampleType]) -> None:
+        if hasattr(self, "_items"):
+            raise AttributeError("禁止直接替换 data，请使用样本集增删改方法")
+        self._items = dict(value)
+
+    def __iter__(self):
+        return iter(self._items)
+
+    def __len__(self) -> int:
+        return len(self._items)
+
+    def __contains__(self, key: object) -> bool:
+        return key in self._items
+
+    def __delitem__(self, key: str) -> None:
+        sample = self._items.pop(key.strip())
+        if sample._storage_set is self:
+            sample._storage_set = None
+        if self.storage is not None:
+            self.storage_dirty = True
+
+    def copy(self) -> Self:
+        """复制独立成员状态，存储沿用默认只读查询权限。"""
+        return self.find()
 
     def __repr__(self) -> str:
         return f"<{self.__class__.__name__}[{self.sample_type.__name__}] ({len(self)} samples)>"
 
     @property
-    def compute(self) -> Any:
+    def compute(self) -> "SampleSetComputeNamespace":
         """返回样本集的统一计算入口。"""
 
         from ..compute_api import SampleSetComputeNamespace
@@ -120,7 +156,7 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
     def _clone_sample_for_view(self, sample: SampleType) -> SampleType:
         """为视图创建独立样本副本。"""
 
-        return cast(SampleType, sample.model_copy(deep=True))
+        return sample._clone_for_view()
 
     def _configure_subset_storage_view(
         self,
@@ -130,7 +166,7 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
     ) -> None:
         """为查询结果子集配置存储视图状态。"""
 
-        subset.storage = self.storage
+        subset.storage = self.storage._for_view(subset) if self.storage is not None else None
         subset.strict = self.strict
         subset.storage_dirty = False
         subset._storage_access_mode = str(view_options.access_mode)
@@ -164,8 +200,13 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
         if not isinstance(sample, expected_type):
             raise TypeError(f"类型错误: {self.__class__.__name__} 仅接受 {expected_type.__name__} 类型")
         uid = sample.uid.strip()
+        if sample._storage_set is not None and sample._storage_set is not self:
+            sample = sample._clone_for_view()
+        previous = self._items.get(uid)
+        if previous is not None and previous is not sample and previous._storage_set is self:
+            previous._storage_set = None
         sample._storage_set = self
-        super().__setitem__(uid, sample)
+        self._items[uid] = sample
         return uid
 
     def add_sample(self, sample: SampleType) -> SampleType:
@@ -180,8 +221,8 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
         """按 UID 替换样本集中的样本。"""
 
         resolved_uid = uid.strip()
-        if resolved_uid in self.data:
-            self.data.pop(resolved_uid, None)
+        if resolved_uid in self._items:
+            del self[resolved_uid]
         self._bind_sample_internal(sample)
         if self.storage is not None:
             self.storage_dirty = True
@@ -354,13 +395,21 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
         if normalized_fields and self.storage is not None:
             pending_uids: list[str] = []
             for uid, sample in selected_items:
-                pending_fields = [field for field in normalized_fields if not sample.is_loaded(field)]
+                pending_fields = [
+                    field
+                    for field in normalized_fields
+                    if not sample.is_loaded(field)
+                    and field not in sample._dirty_categories
+                    and sample._storage_presence.get(field, False)
+                ]
                 if pending_fields:
                     pending_uids.append(uid)
             if pending_uids:
                 loaded_map = self.storage.load_many_fields(pending_uids, normalized_fields)
                 for uid, sample in selected_items:
                     for field in normalized_fields:
+                        if sample.is_loaded(field) or field in sample._dirty_categories:
+                            continue
                         payload = loaded_map.get(uid, {}).get(str(field))
                         if payload is None:
                             continue
@@ -422,7 +471,7 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
         matched = self.find(uids=uids, criteria=criteria, filter=filter)
         removed = list(matched.keys())
         for uid in removed:
-            self.data.pop(uid, None)
+            del self[uid]
         if self.storage is not None and removed:
             self.storage_dirty = True
         return removed
@@ -494,7 +543,11 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
         atol: float = 1e-6,
         strict_types: bool = True,
     ) -> SampleSetComparisonReport:
-        """对比两个样本集的结构与标量摘要。"""
+        """按固定 SI 比较结构与标量摘要，绝对容差对应字段 SI 单位。
+
+        分贝和无量纲值保持原义；单方缺失报告差异。差异表数值采用规范单位，
+        不改变模型或普通 scalar_frame() 的显示单位。
+        """
 
         requested_metadata = [str(field) for field in metadata_fields] if metadata_fields is not None else None
         requested_data_vars = [str(name) for name in data_vars] if data_vars is not None else None
@@ -539,7 +592,7 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
                 raise ValueError(f"DataCategory '{category.value}' 不能作为样本加载选择器。")
             if category not in resolved:
                 resolved.append(category)
-        return resolved or None
+        return resolved
 
     def _categories_to_fields(
         self,
@@ -822,9 +875,8 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
         self,
         filter: Callable[[SampleType], bool] | None = None,
     ) -> Self:
-        """返回符合条件的新样本集。"""
-
-        return self.__class__(dict(self._filtered_items(filter=filter)))
+        """返回符合筛选条件的独立查询视图。"""
+        return self.find(filter=filter)
 
     def get_sample(
         self, filter: Callable[[SampleType], bool] | None = None, *, strict: bool = True
@@ -852,26 +904,11 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
     ) -> Self:
         """按 UID、metadata 条件和过滤函数查询样本。"""
 
-        selected_uids = {str(uid).strip() for uid in uids} if uids is not None else None
-        criteria_map = dict(criteria or {})
-        items = list(self.items())
-        if selected_uids is not None:
-            items = [(uid, sample) for uid, sample in items if uid in selected_uids]
-        if criteria_map:
-            items = [
-                (uid, sample)
-                for uid, sample in items
-                if all(getattr(sample.metadata, field, None) == expected for field, expected in criteria_map.items())
-            ]
-        if filter is not None:
-            items = [(uid, sample) for uid, sample in items if filter(sample)]
-        if sort_by is not None:
-            items.sort(key=lambda item: getattr(item[1].metadata, sort_by, None))
-        if offset > 0:
-            items = items[offset:]
-        if limit is not None:
-            items = items[:limit]
-        return self.__class__(dict(items))
+        selection = _SampleSetSelection(self)
+        items = selection.items(
+            uids=uids, criteria=criteria, filter=filter, sort_by=sort_by, limit=limit, offset=offset
+        )
+        return cast(Self, selection.view(items, options=self._resolve_view_options()))
 
     def find_many(
         self,
@@ -887,19 +924,12 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
     ) -> Self:
         """按 UID、metadata 条件和过滤函数查询样本。"""
 
-        matched = self.find(
-            uids=uids,
-            criteria=criteria,
-            filter=filter,
-            sort_by=sort_by,
-            limit=limit,
-            offset=offset,
+        selection = _SampleSetSelection(self)
+        items = selection.items(
+            uids=uids, criteria=criteria, filter=filter, sort_by=sort_by, limit=limit, offset=offset
         )
-        subset = self.__class__({uid: self._clone_sample_for_view(sample) for uid, sample in matched.items()})
-        return self._postprocess_subset_view(
-            subset,
-            view_options=self._resolve_view_options(view_options),
-            categories=categories,
+        return cast(
+            Self, selection.view(items, options=self._resolve_view_options(view_options), categories=categories)
         )
 
     def find_one(
@@ -934,7 +964,7 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
     ) -> int:
         """返回按条件命中的样本数量。"""
 
-        return len(self.find(uids=uids, criteria=criteria, filter=filter))
+        return len(_SampleSetSelection(self).items(uids=uids, criteria=criteria, filter=filter))
 
     def exists(
         self,
@@ -958,7 +988,7 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
         """返回指定 metadata 字段的去重值。"""
 
         values: list[Any] = []
-        for sample in self.find(uids=uids, criteria=criteria, filter=filter).values():
+        for _, sample in _SampleSetSelection(self).items(uids=uids, criteria=criteria, filter=filter):
             value = getattr(sample.metadata, field, None)
             if value not in values:
                 values.append(value)
@@ -988,7 +1018,7 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
 
         selected_fields = [str(field) for field in fields] if fields is not None else None
         projected: list[dict[str, Any]] = []
-        for sample in self.find(uids=uids, criteria=criteria, filter=filter).values():
+        for _, sample in _SampleSetSelection(self).items(uids=uids, criteria=criteria, filter=filter):
             metadata_dict = sample.metadata.to_dict()
             if selected_fields is None:
                 projected.append(metadata_dict)
@@ -1002,9 +1032,10 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
     ) -> Self:
         """按谓词原位过滤样本集。"""
 
-        filtered = self.get_samples(filter=filter)
-        self.clear()
-        self.update(filtered)
+        selected = {uid for uid, _ in _SampleSetSelection(self).items(filter=filter)}
+        for uid in list(self):
+            if uid not in selected:
+                del self[uid]
         return self
 
     def _filtered_items(
@@ -1024,9 +1055,9 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
         new_uid = sample.uid
         if new_uid != old_uid and new_uid in self and self[new_uid] is not sample:
             raise ValueError(f"样本集内已存在 UID 冲突: {new_uid}")
-        if old_uid in self.data and self.data[old_uid] is sample:
-            del self.data[old_uid]
-        self.data[new_uid] = sample
+        if old_uid in self._items and self._items[old_uid] is sample:
+            del self._items[old_uid]
+        self._items[new_uid] = sample
         sample._storage_set = self
         if self.storage is not None:
             self.storage_dirty = True
@@ -1282,7 +1313,7 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
         workers: int = 1,
         chunk_size: int = 256,
     ) -> BatchOperationReport[Self]:
-        """批量保存当前样本集中的样本。
+        """以单样本为原子单位批量保存；已提交样本不因后续失败回滚。
 
         Args:
             progress_callback: 可选进度回调，参数为 `(completed, total)`。
@@ -1314,7 +1345,7 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
             chunk_size=chunk_size,
         )
         report = self._build_storage_report(action="save_all", strict=effective_strict, items=items, errors=errors)
-        if report.stats.failed == 0:
+        if report.stats.failed == 0 and categories is None and filter is None:
             self.storage_dirty = False
         return report
 
@@ -1589,7 +1620,7 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
         """统一筛选待处理样本。"""
 
         return select_sample_items(
-            self.data,
+            self._items,
             uid=uid,
             uids=uids,
             filter_func=filter,
@@ -1642,7 +1673,8 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
         """按统一规则批量调用样本实例方法。"""
 
         sample_method = getattr(self.sample_type, method_name, None)
-        if not callable(sample_method):
+        namespace_method = method_name.removeprefix("compute.") if method_name.startswith("compute.") else None
+        if not callable(sample_method) and namespace_method not in {"freqspec", "respspec"}:
             raise TypeError(f"{self.sample_type.__name__} 不支持 {method_name}()")
 
         items = self._select_samples(uid=uid, uids=uids, filter=filter)
@@ -1652,8 +1684,8 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
         recoverable_io_error = self._recoverable_io_error()
         for item_uid, sample in items:
             bound_method = getattr(sample, method_name, None)
-            if not callable(bound_method):
-                raise TypeError(f"{type(sample).__name__} 不支持 {method_name}()")
+            if namespace_method is not None:
+                bound_method = getattr(sample.compute, namespace_method)
 
             result = bound_method(overwrite=overwrite, **kwargs)
             if not isinstance(result, OperationResult):
@@ -1759,14 +1791,14 @@ class SampleSetBase(Generic[SampleType], UserDict[str, SampleType]):  # type: ig
         return StructuredPayload(
             entity_type="sample_set",
             domain=self._payload_domain,
-            category=self.__class__.__name__,
+            category=self._payload_category or self.__class__.__name__,
             data_vars={uid: sample.to_structured_payload().to_dict() for uid, sample in self.items()},
             attrs={
                 "schema_name": self.sample_schema.name,
                 "schema_version": self.sample_schema.version,
             },
             meta={
-                "sample_type": self.sample_type.__name__,
+                "sample_type": self.sample_type._payload_category or self.sample_type.__name__,
                 "count": len(self),
             },
         )

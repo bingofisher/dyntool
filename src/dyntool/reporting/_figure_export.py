@@ -10,8 +10,10 @@ import numpy as np
 import pandas as pd
 
 from ..domain.models import OTOVLEval
+from ..infrastructure._storage_commit import _FileCommit
 from ..plotting import FramePlotter, OneThirdOctavePlotter, PlotCategory, PlotDataset, PlotTheme
 from ._writers import flatten_label, slugify
+from ._frame_builders import _ReportFrames
 
 if TYPE_CHECKING:
     from ..domain.samples import SampleSetBase
@@ -50,7 +52,8 @@ def export_scalar_summary_figures(
             value=values,
             name=column,
             category=PlotCategory.STAT,
-            label=column,
+            label=f"{column} [{frame.attrs.get('column_units', {}).get(column, 'dimensionless')}]",
+            value_unit=frame.attrs.get("column_units", {}).get(column),
             source_type="report.scalar_frame",
         )
         manifest.append(
@@ -88,7 +91,9 @@ def export_series_figures(
             value=values.to_numpy(dtype=float),
             name=flattened,
             category=PlotCategory.SAMPLE,
-            label=flattened,
+            label=f"{flattened} [{frame.attrs.get('column_units', {}).get(column, 'dimensionless')}]",
+            axis_unit=frame.attrs.get("index_unit"),
+            value_unit=frame.attrs.get("column_units", {}).get(column),
             source_type=f"report.series.{data_var}",
         )
     if dataset.to_dataframe().empty:
@@ -128,7 +133,9 @@ def export_peaks_figures(
             value=values.to_numpy(dtype=float),
             name=flattened,
             category=PlotCategory.STAT,
-            label=flattened,
+            label=f"{flattened} [{frame.attrs.get('column_units', {}).get(column, 'dimensionless')}]",
+            axis_unit=frame.attrs.get("index_unit"),
+            value_unit=frame.attrs.get("column_units", {}).get(column),
             source_type=f"report.peaks.{source}",
         )
     if dataset.to_dataframe().empty:
@@ -152,12 +159,17 @@ def export_otovl_figures(
 ) -> list[dict[str, Any]]:
     """导出 OTOVL 总览图。"""
 
+    if not sample_set.sample_schema.has_slot("otovl"):
+        return []
     dataset = PlotDataset()
     found = False
     for sample in sample_set.values():
         model = sample.get_data_var("otovl")
         if not isinstance(model, OTOVLEval):
             continue
+        model = model.convert_units(
+            {key: _ReportFrames.unit(unit) for key, unit in model.current_units().items()}, replace=False
+        )
         dataset.add_axis_value(
             axis=model.get_axis(),
             value=model.get_value(),
@@ -194,16 +206,21 @@ def render_plot_figure(
     """执行 plotter 并输出 PNG 文件。"""
 
     result = plotter.plot_dataset(dataset, legend_options={})
-    if result.ax is not None:
-        result.ax.set_title(title)
-        if xtick_labels is not None:
-            result.ax.set_xticks(np.arange(1, len(xtick_labels) + 1, dtype=float))
-            result.ax.set_xticklabels(xtick_labels, rotation=30, ha="right")
-    if result.figure is None:
-        raise RuntimeError("plot_dataset() 未返回 figure，无法导出图像")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    result.figure.savefig(path, bbox_inches="tight")
-    plt.close(result.figure)
+    try:
+        if result.ax is not None:
+            result.ax.set_title(title)
+            if xtick_labels is not None:
+                result.ax.set_xticks(np.arange(1, len(xtick_labels) + 1, dtype=float))
+                result.ax.set_xticklabels(xtick_labels, rotation=30, ha="right")
+        if result.figure is None:
+            raise RuntimeError("plot_dataset() 未返回 figure，无法导出图像")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with _FileCommit(path.parent, "导出图片") as commit:
+            result.figure.savefig(commit.stage(path), bbox_inches="tight")
+            commit.commit()
+    finally:
+        if result.figure is not None:
+            plt.close(result.figure)
     return {
         "name": path.stem,
         "path": str(path.relative_to(path.parents[1])).replace("\\", "/"),

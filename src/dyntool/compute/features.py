@@ -132,7 +132,7 @@ def band_rms_feature(
                 center_freq=float(center_freq),
                 window_n=window_n,
                 window_nfft=window_nfft,
-                fs=int(round(fs)),
+                fs=float(fs),
                 octave=float(octave),
             )
         ),

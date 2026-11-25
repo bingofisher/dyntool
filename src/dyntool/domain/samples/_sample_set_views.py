@@ -8,8 +8,10 @@ import numpy as np
 import pandas as pd
 
 from ..constants import DataCategory
+from ..compute_api import _SOURCE_RESOLVER
 from ..models import DataModelBase
 from .types import SampleLoadMode
+from ._sample_set_selection import _SampleSetSelection
 
 
 def metadata_value(sample: Any, field: str) -> str:
@@ -88,7 +90,7 @@ def build_scalar_frame(
     validate_scalar_data_vars(sample_set, requested_data_vars)
 
     if sample_set.storage is not None and sample_set.storage_dirty is False and filter is None and sort_by is None:
-        selected_uids = list(sample_set.find(uids=uids, criteria=criteria).keys())
+        selected_uids = [uid for uid, _ in _SampleSetSelection(sample_set).items(uids=uids, criteria=criteria)]
         try:
             frame = sample_set.storage.summary_frame(
                 uids=selected_uids,
@@ -129,6 +131,7 @@ def build_scalar_frame(
             pass
 
     rows: list[dict[str, Any]] = []
+    scalar_units: dict[tuple[str, str], str | None] = {}
     selected = sample_set.find_many(
         uids=uids,
         criteria=criteria,
@@ -150,9 +153,19 @@ def build_scalar_frame(
                 continue
             for key, value in model.to_scalar_record().items():
                 row[f"{data_var}.{key}"] = value
+                scalar_units[(sample.uid, f"{data_var}.{key}")] = model.current_units().get(key)
         for feature in requested_features:
             try:
                 row[feature] = scalar_feature_value(sample, feature)
+                source_name = {"pga": "accel", "pgv": "vel", "pgd": "disp"}.get(feature.lower())
+                _, source_model = _SOURCE_RESOLVER.resolve_sample_timeseries(sample, source_name)
+                scalar_units[(sample.uid, feature)] = (
+                    "dimensionless"
+                    if feature.lower() == "crest_factor"
+                    else source_model.current_units().get("value")
+                    if source_model is not None
+                    else None
+                )
             except Exception:
                 if strict:
                     raise
@@ -160,6 +173,7 @@ def build_scalar_frame(
         rows.append(row)
 
     frame = pd.DataFrame(rows)
+    frame.attrs["scalar_units"] = scalar_units
     if dropna and not frame.empty:
         reserved_columns = {"uid", "alias", *requested_metadata}
         value_columns = [column for column in frame.columns if column not in reserved_columns]
@@ -220,15 +234,18 @@ def build_series_frame(
     output = pd.DataFrame(index=union_index)
     output.index.name = index_name
     requested_metadata = [str(field_name) for field_name in metadata_fields or ()]
+    normalized_frames = {sample.uid: frame for sample, frame in exported}
+    frames = []
     for sample in selected.values():
-        model = sample.get_data_var(field)
-        if model is None:
+        sample_frame = normalized_frames.get(sample.uid)
+        if sample_frame is None:
             sample_frame = pd.DataFrame(index=union_index, columns=template_columns, dtype=float)
         else:
-            sample_frame = normalize_series_frame(model).reindex(union_index)
+            sample_frame = sample_frame.reindex(union_index)
         prefix = ensure_multiindex_metadata(sample, metadata_fields=requested_metadata)
         sample_frame = sample_frame.rename(columns={column: (*prefix, str(column)) for column in sample_frame.columns})
-        output = output.join(sample_frame, how="outer")
+        frames.append(sample_frame)
+    output = pd.concat(frames, axis=1)
 
     if output.columns.empty:
         output.columns = pd.MultiIndex.from_arrays([[]])

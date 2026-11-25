@@ -39,7 +39,6 @@ from dyntool.domain.samples.factories import build_metadata
 from dyntool.infrastructure.persistence import RecoverableIOError
 from dyntool.infrastructure import sample_set_storage as sample_set_storage_module
 from dyntool.infrastructure import sample_storage_sqlite_h5 as sqlite_strategy_module
-from dyntool.infrastructure import sample_storage_sqlite_h5_types as sqlite_strategy_types_module
 from dyntool.infrastructure import sample_storage_strategy_impl as strategy_impl_module
 from dyntool.storage.types import AttrDataFormat, StorageMode, StorageScheme
 
@@ -977,7 +976,8 @@ class TestDefaultSampleSet:
         errors = loaded.load_all()
 
         assert sample.uid in errors
-        assert loaded[sample.uid] is sample
+        assert loaded[sample.uid] is not sample
+        assert loaded[sample.uid].metadata.to_dict() == sample.metadata.to_dict()
 
     def test_get_data_and_get_data_dict_accept_data_category(self) -> None:
         sample_set = SampleSet()
@@ -1523,7 +1523,7 @@ class TestSetSqliteH5Storage:
         assert user_version == 2
         assert "sample_metadata_flat" not in table_names_after
 
-    def test_set_sqlite_h5_keeps_payload_id_stable_after_uid_change(self, tmp_path: Path) -> None:
+    def test_set_sqlite_h5_preserves_identity_with_new_payload_after_uid_change(self, tmp_path: Path) -> None:
         sample = Sample(
             metadata=Metadata(
                 attributes={"line": "L1"},
@@ -1566,8 +1566,10 @@ class TestSetSqliteH5Storage:
             payload_keys = list(h5_file["samples"].keys())
 
         assert before_uid != after_uid
-        assert rows == [(after_uid, before_payload_id)]
-        assert payload_keys == [before_payload_id]
+        assert len(rows) == 1
+        assert rows[0][0] == after_uid
+        assert rows[0][1] != before_payload_id
+        assert set(payload_keys) == {before_payload_id, rows[0][1]}
 
     def test_from_storage_infers_set_sqlite_h5_scheme(self, tmp_path: Path) -> None:
         sample = Sample(
@@ -1664,7 +1666,7 @@ class TestSetSqliteH5Storage:
         assert len(loaded) == 2
         assert opened_modes.count("r") == 1
 
-    def test_set_sqlite_h5_writer_blocks_reader_until_write_session_finishes(
+    def test_set_sqlite_h5_idle_write_session_does_not_block_reader(
         self,
         tmp_path: Path,
     ) -> None:
@@ -1697,7 +1699,7 @@ class TestSetSqliteH5Storage:
             elapsed = time.perf_counter() - started
 
             assert len(loaded) == 1
-            assert elapsed >= 1.0
+            assert elapsed < 1.0
         finally:
             writer.wait(timeout=10)
             if writer.returncode not in {0, None}:
@@ -1742,7 +1744,7 @@ class TestSetSqliteH5Storage:
             if reader.returncode not in {0, None}:
                 raise AssertionError(f"reader holder 子进程失败，退出码={reader.returncode}")
 
-    def test_set_sqlite_h5_save_all_flushes_sqlite_rows_in_batches(
+    def test_set_sqlite_h5_save_all_commits_one_sample_at_a_time(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -1772,11 +1774,6 @@ class TestSetSqliteH5Storage:
             return original(self, conn, artifacts)
 
         monkeypatch.setattr(
-            sqlite_strategy_types_module,
-            "_SQLITE_H5_WRITE_FLUSH_BATCH_SIZE",
-            2,
-        )
-        monkeypatch.setattr(
             sqlite_strategy_module._SetSqliteH5Strategy,
             "_flush_transfer_artifacts",
             _tracked,
@@ -1787,7 +1784,7 @@ class TestSetSqliteH5Storage:
             storage_scheme=StorageScheme.SET_SQLITE_H5,
         )
 
-        assert flush_sizes == [2, 1]
+        assert flush_sizes == [1, 1, 1]
 
     def test_set_sqlite_h5_experimental_v2_round_trip_metadata_and_summary(self, tmp_path: Path) -> None:
         sample_a = Sample(
@@ -2057,7 +2054,7 @@ class TestSampleSetCompare:
         right_sample.update_data(zvl=None)
         report_missing = left.compare_with(right, data_vars=["zvl"])
         assert not report_missing.presence_diff.empty
-        assert report_missing.scalar_diff.empty
+        assert set(report_missing.scalar_diff["field"]) == {"zvl.zvl", "zvl.aw"}
 
     def test_compare_with_delegates_to_internal_compare_helper(self, monkeypatch: pytest.MonkeyPatch) -> None:
         left_sample = self._make_sample("L", scale=1.0)

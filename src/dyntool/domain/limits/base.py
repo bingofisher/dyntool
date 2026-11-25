@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from enum import StrEnum
+from copy import deepcopy
 from typing import Any, ClassVar, Mapping, Self
 
 import numpy as np
 import pandas as pd
 import xarray as xr
 
+from .._provenance import _ResultProvenance
 from ..constants import (
     DataCategory,
     UnitSystem,
@@ -20,6 +22,7 @@ from ..constants import (
     resolve_file_units,
 )
 from ..models.base import DataModelBase
+from ..models._model_xarray import _ModelXarrayExchange
 
 _STANDARD_ATTR = "_limit_standard"
 _SCENE_ATTR = "_limit_scene"
@@ -83,7 +86,12 @@ class LimitModelBase(DataModelBase):
         raw_standard = data.get("standard")
         if raw_standard is None:
             raise ValueError("缺少 standard 元信息。")
-        standard = cls.standard_enum(str(raw_standard))
+        try:
+            standard = cls.standard_enum(str(raw_standard))
+        except ValueError as error:
+            raise ValueError(
+                f"标准编号 {raw_standard!r} 不受支持，请使用 {cls.standard_enum.__name__} 的正式编号。"
+            ) from error
         scene = str(data.get("scene") or "")
         clause = str(data.get("clause") or "")
         resource_key = str(data.get("resource_key") or "")
@@ -118,6 +126,56 @@ class LimitModelBase(DataModelBase):
         """返回当前对象对应的资源键。"""
 
         return str(self._ds.attrs[_RESOURCE_KEY_ATTR])
+
+    def _frame_attrs(self) -> dict[str, Any]:
+        """生成与模型隔离的规范及追溯属性，不向数值列混入元信息。"""
+        return {
+            "standard": self.standard.value,
+            "scene": self.scene,
+            "clause": self.clause,
+            "resource_key": self.resource_key,
+            "_dyntool": deepcopy(self._provenance),
+        }
+
+    def _restore_frame_provenance(self, frame: pd.DataFrame) -> Self:
+        """恢复可选追溯；旧表缺少依据时继续保持来源未知。"""
+        if frame.attrs.get("_dyntool") is not None:
+            self.__dict__["_provenance"] = _ResultProvenance.validate(frame.attrs["_dyntool"])
+        return self
+
+    def to_xarray(self) -> xr.Dataset:
+        """导出独立 xarray 快照，保留数值形状、字段单位、规范来源和追溯。"""
+        snapshot = self._ds.copy(deep=True)
+        snapshot.attrs = self._frame_attrs()
+        snapshot.attrs["_units"] = self.current_units()
+        snapshot.attrs["_category"] = self._normalize_category(self.category)
+        snapshot.attrs["_model_type"] = type(self).__name__
+        return snapshot
+
+    @classmethod
+    def from_xarray(
+        cls,
+        xr_obj: xr.Dataset | xr.DataArray,
+        *,
+        units: Mapping[str, str | None] | None = None,
+    ) -> Self:
+        """从带规范 attrs 的 xarray 快照恢复，字段单位与可选单位映射须一致。"""
+        if not isinstance(xr_obj, (xr.Dataset, xr.DataArray)):
+            raise TypeError(f"不支持的 xarray 对象类型：{type(xr_obj).__name__}")
+        assert cls.value_field is not None
+        source = xr_obj.to_dataset(name=cls.value_field) if isinstance(xr_obj, xr.DataArray) else xr_obj
+        expected = {cls.value_field}
+        if cls.axis_field is not None:
+            expected.add(cls.axis_field)
+        missing = expected - set(source.variables)
+        if missing:
+            raise ValueError(f"限值 xarray 缺少字段：{', '.join(sorted(missing))}")
+        parsed_units = normalize_unit_map({name: source[name].attrs.get("units") for name in expected})
+        current = _ModelXarrayExchange.units(xr_obj, parsed_units, units)
+        payload = dict(xr_obj.attrs)
+        payload.update({name: source[name].to_numpy() for name in expected})
+        payload["_units"] = current
+        return cls.from_dict(payload, units=units)
 
 
 class ScalarLimitBase(LimitModelBase):
@@ -235,10 +293,10 @@ class ScalarLimitBase(LimitModelBase):
         }
 
     def to_pandas(self) -> pd.DataFrame:
-        """导出单行 DataFrame。"""
+        """导出单行数值表，attrs 携带独立的规范来源和可选追溯。"""
 
         assert self.value_field is not None
-        return pd.DataFrame(
+        frame = pd.DataFrame(
             [
                 {
                     format_label_with_unit(self.value_field, self.current_units()[self.value_field]): float(
@@ -247,6 +305,8 @@ class ScalarLimitBase(LimitModelBase):
                 }
             ]
         ).rename_axis(index=None)
+        frame.attrs = self._frame_attrs()
+        return frame
 
     @classmethod
     def from_pandas(
@@ -256,10 +316,10 @@ class ScalarLimitBase(LimitModelBase):
         units: Mapping[str, str | None] | None = None,
         unit_system: UnitSystem | None = None,
     ) -> Self:
-        """从 DataFrame 构建标量限值对象。"""
+        """从恰好一行的数值表及 attrs 中恢复标量限值和可选追溯。"""
 
-        if df.empty:
-            raise ValueError(f"{cls.__name__}.from_pandas 至少需要一行数据。")
+        if len(df) != 1:
+            raise ValueError(f"{cls.__name__}.from_pandas 必须恰好有一行标量数据。")
         assert cls.value_field is not None
         columns_by_name: dict[str, str] = {}
         parsed_units: dict[str, str | None] = {}
@@ -282,7 +342,7 @@ class ScalarLimitBase(LimitModelBase):
             resource_key=resource_key,
             units=current if current else units,
             unit_system=unit_system,
-        )
+        )._restore_frame_provenance(df)
 
     @classmethod
     def from_dict(
@@ -292,10 +352,12 @@ class ScalarLimitBase(LimitModelBase):
         *,
         units: Mapping[str, str | None] | None = None,
     ) -> Self:
-        """从字典恢复标量限值对象。"""
+        """从字典恢复恰好一个标量；缺值、空数组和多个值均明确拒绝。"""
 
         del category
         assert cls.value_field is not None
+        if cls.value_field not in data or np.asarray(data[cls.value_field]).size != 1:
+            raise ValueError(f"{cls.__name__} 需要单个 {cls.value_field} 标量。")
         current = resolve_file_units(
             {cls.value_field},
             parsed_units=data.get("_units", {}),
@@ -304,7 +366,7 @@ class ScalarLimitBase(LimitModelBase):
         )
         standard, scene, clause, resource_key = cls._metadata_from_mapping(data)
         return cls._from_base_data(
-            value=float(np.asarray(data.get(cls.value_field, [0.0])).flat[0]),
+            value=float(np.asarray(data[cls.value_field]).flat[0]),
             standard=standard,
             scene=scene,
             clause=clause,
@@ -458,11 +520,11 @@ class CurveLimitBase(LimitModelBase):
         }
 
     def to_pandas(self) -> pd.DataFrame:
-        """导出曲线限值为 DataFrame。"""
+        """导出曲线数值表，attrs 携带独立的规范来源和可选追溯。"""
 
         assert self.axis_field is not None
         assert self.value_field is not None
-        return pd.DataFrame(
+        frame = pd.DataFrame(
             {
                 format_label_with_unit(self.value_field, self.current_units()[self.value_field]): self.get_field(
                     self.value_field
@@ -473,6 +535,8 @@ class CurveLimitBase(LimitModelBase):
                 name=format_label_with_unit(self.axis_field, self.current_units()[self.axis_field]),
             ),
         )
+        frame.attrs = self._frame_attrs()
+        return frame
 
     @classmethod
     def from_pandas(
@@ -482,7 +546,7 @@ class CurveLimitBase(LimitModelBase):
         units: Mapping[str, str | None] | None = None,
         unit_system: UnitSystem | None = None,
     ) -> Self:
-        """从 DataFrame 构建曲线限值对象。"""
+        """从数值表及 attrs 中的规范来源、可选追溯恢复曲线限值。"""
 
         assert cls.axis_field is not None
         assert cls.value_field is not None
@@ -509,7 +573,7 @@ class CurveLimitBase(LimitModelBase):
             resource_key=resource_key,
             units=current if current else units,
             unit_system=unit_system,
-        )
+        )._restore_frame_provenance(df)
 
     @classmethod
     def from_dict(

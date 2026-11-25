@@ -46,8 +46,15 @@ class _FeatureFileRouterHandler(logging.Handler):
 
     def emit(self, record: logging.LogRecord) -> None:
         feature = _feature_name(record.name)
-        handler = self._handlers.setdefault(feature, self._build_handler(feature))
-        handler.emit(record)
+        self.acquire()
+        try:
+            handler = self._handlers.get(feature)
+            if handler is None:
+                handler = self._build_handler(feature)
+                self._handlers[feature] = handler
+            handler.handle(record)
+        finally:
+            self.release()
 
     def _build_handler(self, feature: str) -> logging.Handler:
         path = self._root / f"{feature}.log"
@@ -76,10 +83,20 @@ class _FeatureFileRouterHandler(logging.Handler):
             handler.setLevel(level)
 
     def close(self) -> None:
-        for handler in self._handlers.values():
-            handler.close()
-        self._handlers.clear()
-        super().close()
+        failures = []
+        self.acquire()
+        try:
+            for handler in self._handlers.values():
+                try:
+                    handler.close()
+                except Exception as error:
+                    failures.append(error)
+            self._handlers.clear()
+            super().close()
+        finally:
+            self.release()
+        if failures:
+            raise ExceptionGroup("日志处理器关闭失败", failures)
 
 
 class _StdlibLoggerFactory:
@@ -105,10 +122,16 @@ class _StdlibLoggerFactory:
 
     @classmethod
     def _clear_managed_handlers(cls, root: logging.Logger) -> None:
+        failures: list[Exception] = []
         for handler in list(root.handlers):
             if getattr(handler, cls._MARKER, False):
                 root.removeHandler(handler)
-                handler.close()
+                try:
+                    handler.close()
+                except Exception as error:
+                    failures.append(error)
+        if failures:
+            raise ExceptionGroup("日志 handler 关闭失败", failures)
 
     @classmethod
     def _build_handlers(cls, config: LoggingConfig) -> list[logging.Handler]:
@@ -273,10 +296,7 @@ class LoguruLogProvider(LogProvider):
         self._clear_managed_handlers(root)
 
     def _clear_managed_handlers(self, root: logging.Logger) -> None:
-        for handler in list(root.handlers):
-            if getattr(handler, self._MARKER, False):
-                root.removeHandler(handler)
-                handler.close()
+        _StdlibLoggerFactory._clear_managed_handlers(root)
 
     def _remove_managed_sinks(self) -> None:
         for sink_id in self._managed_sink_ids:

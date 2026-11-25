@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Iterable
 
+import numpy as np
 import pandas as pd
+
+from ..compute.units import get_unit_registry, convert_array
 
 from ..domain.samples._sample_set_views import supports_scalar_data_var
 
@@ -14,6 +17,87 @@ if TYPE_CHECKING:
 
 DEFAULT_SCALAR_FEATURES = ("pga", "rms", "crest_factor")
 DEFAULT_EVAL_DATA_VARS = ("zvl", "otovl", "fdmvl", "fpvdv")
+
+
+class _ReportFrames:
+    """报告专用 SI 表格，保持普通显示表的单位合同。"""
+
+    @staticmethod
+    def unit(unit: str | None) -> str | None:
+        """保留 dB，角度转弧度，其余物理量转相干 SI。"""
+        if unit is None or unit in {"dB", "decibel", "dimensionless"}:
+            return unit
+        return str(get_unit_registry().Quantity(1, unit).to_base_units().units)
+
+    @classmethod
+    def scalar(cls, sample_set: Any, **options: Any) -> pd.DataFrame:
+        """规范化各个单元格，摘要读取仍不访问数组。"""
+        frame = sample_set.scalar_frame(**options).copy()
+        units = frame.attrs.get("scalar_units", {})
+        columns: dict[Any, str] = {}
+        uids = frame.get("uid", pd.Series(dtype=str)).to_numpy()
+        for column in frame.columns:
+            values = frame[column].to_numpy(dtype=object, copy=True)
+            changed = False
+            for index, uid in enumerate(uids):
+                unit = units.get((uid, column))
+                target = cls.unit(unit)
+                value = values[index]
+                if target is not None:
+                    columns[column] = target
+                    if isinstance(value, (int, float, np.number)) and not pd.isna(value):
+                        values[index] = float(convert_array(value, from_unit=unit, to_unit=target))
+                        changed = True
+            if changed:
+                frame[column] = pd.to_numeric(pd.Series(values, index=frame.index))
+        frame.attrs["column_units"] = columns
+        return frame
+
+    @classmethod
+    def series(cls, sample_set: Any, data_var: str, **options: Any) -> pd.DataFrame:
+        """仅复制所需模型状态，统一轴和值后一次组合序列表。"""
+        samples = []
+        member_units: dict[str, dict[str, str | None]] = {}
+        for sample in sample_set.values():
+            model = sample.get_data_var(data_var)
+            clone = sample._clone_for_view()
+            if model is not None:
+                units = {key: cls.unit(unit) for key, unit in model.current_units().items()}
+                member_units[sample.uid] = units
+                clone._replace_data_var_internal(
+                    clone._resolve_field(data_var), model.convert_units(units, replace=False)
+                )
+            samples.append(clone)
+        frame = type(sample_set)(samples).series_frame(data_var, **options)
+        columns: dict[Any, str | None] = {}
+        for column in frame.columns:
+            units = member_units.get(str(column[0]), {})
+            columns[column] = units.get(
+                str(column[-1]),
+                units.get("value", "dimensionless") if str(column[-1]).startswith("value") else "dimensionless",
+            )
+        frame.attrs["column_units"] = columns
+        for sample in samples:
+            if (model := sample.get_data_var(data_var)) is not None:
+                frame.attrs["index_unit"] = model.axis_unit
+                break
+        return frame
+
+    @classmethod
+    def peaks(cls, sample_set: Any, *, source: str = "accel", **options: Any) -> pd.DataFrame:
+        """峰选择参数按原单位解释，仅转换输出峰值。"""
+        frame = sample_set.peaks_frame(source=source, **options)
+        units: dict[Any, str] = {}
+        for column in frame.columns:
+            if column[-1] != "peak_value":
+                continue
+            model = sample_set[str(column[0])].get_data_var(source)
+            unit = model.value_unit
+            target = cls.unit(unit)
+            frame[column] = convert_array(frame[column].to_numpy(), from_unit=unit, to_unit=target)
+            units[column] = target
+        frame.attrs["column_units"] = units
+        return frame
 
 
 def build_metadata_summary(sample_set: "SampleSetBase[Any]", metadata_frame: pd.DataFrame) -> dict[str, Any]:
@@ -54,6 +138,8 @@ def detect_available_eval_data_vars(sample_set: "SampleSetBase[Any]") -> tuple[s
 
     available: list[str] = []
     for data_var in DEFAULT_EVAL_DATA_VARS:
+        if not sample_set.sample_schema.has_slot(data_var):
+            continue
         if any(sample.get_data_var(data_var) is not None for sample in sample_set.values()):
             available.append(data_var)
     return tuple(available)

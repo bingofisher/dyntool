@@ -7,15 +7,70 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from ._sample_set_views import validate_scalar_data_vars
+from ...compute.units import get_unit_registry
+from ..compute_api import _SOURCE_RESOLVER
+from ._sample_set_views import scalar_feature_value, validate_scalar_data_vars
 from .types import SampleSetComparisonReport
+
+
+class _ScalarComparison:
+    """将摘要数值规范到 SI，同时保留分贝与无量纲语义。"""
+
+    def __init__(self, frame: pd.DataFrame) -> None:
+        self.columns = {column: index for index, column in enumerate(frame.columns)}
+        self.rows = dict(zip(frame["uid"].to_numpy(), frame.to_numpy(), strict=True))
+        self.units = frame.attrs.get("scalar_units", {})
+        self.scales: dict[str, float] = {}
+
+    @staticmethod
+    def frame(
+        sample_set: Any, uids: list[str], data_vars: list[str] | None, features: list[str] | None
+    ) -> pd.DataFrame:
+        frame = sample_set.scalar_frame(
+            metadata_fields=[], data_vars=data_vars, features=features, uids=uids, strict=False
+        )
+        # 历史仓库可能缺少整列或部分样本的派生特征，只补算缺失单元格。
+        for feature in features or []:
+            if feature not in frame.columns:
+                frame[feature] = np.nan
+            units = frame.attrs.setdefault("scalar_units", {})
+            values = frame[feature].to_numpy(copy=True)
+            for index, uid in enumerate(frame["uid"].to_numpy()):
+                if not pd.isna(values[index]):
+                    continue
+                sample = sample_set[uid]
+                source = {"pga": "accel", "pgv": "vel", "pgd": "disp"}.get(feature.lower())
+                try:
+                    value = scalar_feature_value(sample, feature)
+                    _, model = _SOURCE_RESOLVER.resolve_sample_timeseries(sample, source)
+                    units[(uid, feature)] = (
+                        "dimensionless" if feature.lower() == "crest_factor" else model.current_units().get("value")
+                    )
+                    values[index] = value
+                except (ValueError, AttributeError):
+                    continue
+            frame[feature] = values
+        return frame.set_index("uid", drop=False)
+
+    def value(self, uid: str, column: str) -> Any:
+        """复用列位置与单位比例，避免逐单元格复制整份 pandas attrs。"""
+        if column not in self.columns:
+            return np.nan
+        value = self.rows[uid][self.columns[column]]
+        unit = self.units.get((uid, column))
+        if unit is None or pd.isna(value) or not isinstance(value, (int, float, np.number)):
+            return value
+        if unit not in self.scales:
+            quantity = get_unit_registry().Quantity(1, unit)
+            self.scales[unit] = 1.0 if unit in {"decibel", "dB"} else float(quantity.to_base_units().magnitude)
+        return float(value) * self.scales[unit]
 
 
 def sample_field_present(sample: Any, field: Any) -> bool:
     """判断样本在指定槽位上是否存在数据。"""
 
-    if sample.get_data_var(field) is not None:
-        return True
+    if sample.is_loaded(field):
+        return sample.get_data_var(field) is not None
     storage_set = getattr(sample, "_storage_set", None)
     if storage_set is None or getattr(storage_set, "storage", None) is None:
         return False
@@ -96,33 +151,22 @@ def compare_scalar_rows(
     if not common_uids or (not data_vars and not features):
         return pd.DataFrame()
 
-    left_frame = sample_set.scalar_frame(
-        metadata_fields=metadata_fields,
-        data_vars=data_vars,
-        features=features,
-        uids=common_uids,
-        strict=False,
-    ).set_index("uid", drop=False)
-    right_frame = other.scalar_frame(
-        metadata_fields=metadata_fields,
-        data_vars=data_vars,
-        features=features,
-        uids=common_uids,
-        strict=False,
-    ).set_index("uid", drop=False)
+    left_frame = _ScalarComparison.frame(sample_set, common_uids, data_vars, features)
+    right_frame = _ScalarComparison.frame(other, common_uids, data_vars, features)
+    left_values, right_values = _ScalarComparison(left_frame), _ScalarComparison(right_frame)
 
     reserved_columns = {"uid", "alias", *(metadata_fields or [])}
-    scalar_columns = sorted((set(left_frame.columns) & set(right_frame.columns)) - reserved_columns)
+    scalar_columns = sorted(
+        (set(left_frame.columns) | set(right_frame.columns)) - reserved_columns - set(data_vars or [])
+    )
     rows: list[dict[str, Any]] = []
     for uid in common_uids:
         if uid not in left_frame.index or uid not in right_frame.index:
             continue
         for column in scalar_columns:
-            left_value = left_frame.at[uid, column]
-            right_value = right_frame.at[uid, column]
+            left_value = left_values.value(uid, column)
+            right_value = right_values.value(uid, column)
             if pd.isna(left_value) and pd.isna(right_value):
-                continue
-            if pd.isna(left_value) or pd.isna(right_value):
                 continue
             if isinstance(left_value, (int, float, np.integer, np.floating)) and isinstance(
                 right_value, (int, float, np.integer, np.floating)

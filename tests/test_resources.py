@@ -67,3 +67,23 @@ def test_center_freqs_returns_filtered_band_data() -> None:
 def test_unknown_resource_key_raises_key_error() -> None:
     with pytest.raises(KeyError, match="未知资源 key"):
         dt_resource.path("unknown_key")
+
+
+def test_building_fdmvl_resource_matches_jgj_170_table() -> None:
+    """分频最大振级资源应对应表 4.0.1 的十个区域昼夜场景。"""
+
+    frame = dt_resource.csv("limit_building_fdmvl")
+    assert frame["区域类别"].tolist() == [
+        "特殊住宅区昼间",
+        "特殊住宅区夜间",
+        "居民文教区昼间",
+        "居民文教区夜间",
+        "混合区商业中心区昼间",
+        "混合区商业中心区夜间",
+        "工业集中区昼间",
+        "工业集中区夜间",
+        "交通干线道路两侧昼间",
+        "交通干线道路两侧夜间",
+    ]
+    assert frame["限值 (dB)"].tolist() == [65, 62, 65, 62, 70, 67, 75, 72, 75, 72]
+    assert dt_resource.path("limit_building_fdmvl") == dt_resource.path("limit_building_zvl")

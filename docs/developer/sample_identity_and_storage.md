@@ -22,6 +22,8 @@ flowchart TD
 
 ## 各层职责
 
+通用样本新增力、力矩、应力和应变可选槽位：`ForceSeries`、`MomentSeries`、`StressSeries`、`StrainSeries` 仍属于 `Public API`；schema、类别及计算源分派属于 `Private / implementation detail`。它们复用原有模型注册和通用样本的状态、查询、序列交换与六种存储策略，SQLite 保持 v2，不修改数组布局。`VibrationTestSample` 的 schema 保持不变，旧的仅含运动时程样本仍可读取。通用 RMS 等标量特征的比较单位取实际计算来源，`microstrain` 和 `percent` 等有比例的无量纲单位换算到基准值后比较，dB 维持原语义。
+
 ### `MetadataBase`
 
 - 负责 `uid` 与 `alias` 的生成规则
@@ -162,3 +164,7 @@ flowchart TD
 - 旧版 `v1` 仓库在连接时会自动迁移到 `v2`；新版代码继续读取升级后的仓库，旧代码不保证兼容。
 - `SampleSetBase.metadata_frame()` 的公开逻辑没有变化，仍优先走 storage 快路径；只是 `SET_SQLITE_H5 v2` 的 storage 快路径改为读取 `metadata_json` 后在 Python 侧展开。
 - 后续若要继续优化 metadata 读取，应优先在 `metadata_json` 展开 helper 上增加会话内缓存或批量反序列化优化，而不是恢复 `sample_metadata_flat`。
+
+## 单样本提交生命周期
+
+`Private / implementation detail`：schema 准备先于数据事务；新 payload 写完并关闭 H5 后提交 SQLite，最后发布缓存和 payload 标识。旧版本交由整理回收。文件策略暂存更新并保留可回滚版本；失败回滚后释放连接和句柄。完整合同、故障注入与迁移见 [核心库修正说明](core_correctness_migration.md)。

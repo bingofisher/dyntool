@@ -5,8 +5,11 @@
 
 ## 当前标准
 
+正式建筑振动展示见 [建筑展示项目](../usage/gui_building_showcase.md)。生成器聚合固定种子数据、预计算、子集和暂存交付，使用核心 Public API；启动适配读取普通项目、刷新真实能力并配置现有 PlotManager 请求。原始仓库与可写分析仓库分离，不增加项目 JSON 字段或存储格式。生成器属于 Private / implementation detail，启动适配属于 GUI Internal API。多样本来源列表增加已有绘图器支持的 OTOVL，多样本模型图使用循环颜色与图例以区分曲线。
+
 - GUI 继续采用 `PySide6 Widgets + QMainWindow + QDockWidget + QStackedWidget`
 - 不修改 `dyntool` Public API
+- 绘图请求先读取控件快照，再写回范围；范围信号引起的同步刷新不得改变本次请求的绘图模式和来源。
 - 当前主导航固定为 `总览 / 导入与筛选 / 数据处理 / 图形绘制`
 - `SUBSET / EXPORT` 不再作为主导航页面，只允许作为内部兼容别名或迁移中的状态对象存在
 - 视觉 token 与 Qt/Matplotlib 主题 hook 统一由 `ThemeManager + ThemeTokens` 管理
@@ -141,12 +144,20 @@ GUI v2 主线固定为 `点选状态 -> 命令快照 -> 管线节点 -> 统一�
 
 ## 全局忙态与关闭保护
 
-- `MainWindow` 的全局忙态以 `ImportManager / ProcessingManager / PlotManager / ExportManager` 的活动线程和会话忙态共同判定。
+范围、逐样本报告、中止后的结果保留、Web 退出以及分析数据保存迁移说明见 [GUI 单路线迁移与可靠性](gui_single_route_migration.md)。项目 JSON 的新增分析仓库引用为可选字段，旧文件继续可读。
+
+项目文件保存由 `ProjectFileStore` 在目标目录暂存完整 JSON 后替换；`MainWindow` 仅在文件保存成功后更新引用、清除项目脏状态。预期 I/O 或序列化失败保留原状态并提示原因。此路径只持久化工作区描述，不保存模型数组。
+
+`AnalysisSaveManager` 为 `Internal API`，私有 `_AnalysisSaveJob` 只执行正式核心 I/O；主线程消费 `AnalysisSaveResult` 与核心报告，更新成功引用、能力摘要和保存状态。`AnalysisDataState` 区分成功引用与失败重试目标，项目 JSON 只保存前者。新目标先读取源懒槽位再另存，不写回原始来源。项目目录、来源、筛选条件、子集定义、当前范围和成功仓库引用变化标记项目脏状态；页面导航作为界面偏好，不单独触发未保存提醒。
+
+摘要经 `GuiRuntimeBridge` 查询内存字段和存储存在索引，不触发懒槽位读取；加载数量只统计实际驻留内存的样本，`METADATA_ONLY` 与 `LAZY` 会话都可显示能力摘要。该索引适配属于 `Private / implementation detail`。手动保存将接入页当前严格设置同步到会话，并在后台任务启动前冻结。
+
+- `MainWindow` 的全局忙态以 `ImportManager / ProcessingManager / PlotManager / ExportManager / AnalysisSaveManager` 的活动线程和会话忙态共同判定。
 - manager busy 是 GUI 内部全局互斥事实源：导入、处理、绘图、导出任一 manager 处于运行或线程收尾时，处理和导出这类会写回主样本集的任务入口必须拒绝启动，并使用“当前已有后台任务正在运行或收尾，请等待完成。”作为统一失败口径。
 - `ImportManager.start_operation()` 必须自行拒绝重复启动；按钮禁用只作为交互层提示，不能作为后台任务互斥的唯一防线。
 - 状态栏“当前任务”和全局进度条必须在 manager `state_changed` 后刷新；任务结果已经写回但线程尚未 `_cleanup()` 时，仍视为后台收尾中。
 - `中止当前任务` 只暴露给可安全中止的导入和处理任务；处理任务采用协作式中止，请求后页面按钮改为“正在中止...”并等待下一个安全检查点；处理写任务必须能枚举 UID 并按 UID 分块执行，无法枚举 UID 的运行态必须给出中文失败反馈，不得回退为不可中止的全量写调用；绘图、导出任务不提供强制中止入口，等待线程自然完成。
-- 关闭主窗口时，导入任务继续沿用原有清理保护；其他后台任务运行中必须阻止直接关闭，并提示用户等待完成或先中止可中止任务。
+- 关闭主窗口时，导入任务继续沿用原有清理保护；其他后台任务运行中必须阻止直接关闭，并提示用户等待完成或先中止可中止任务。分析保存不可强制中止，须等待逐样本提交和线程收尾。空闲后关闭、新建、打开或替换主集分别检查项目和数据未保存状态，数据保存异步结束后重试原动作，失败或取消留在当前工作区。
 
 ## 审计报告结构
 

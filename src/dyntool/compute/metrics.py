@@ -19,6 +19,86 @@ from .solvers import (
 from .units import UnitSystem, convert_array, get_default_unit_system
 
 
+_SOLVER_UNITS = UnitSystem.si()
+
+
+class _ResponseSpectrumRequest:
+    """响应谱请求的私有求解与单位转换边界。"""
+
+    def __init__(self, damping_ratio: float = 0.05) -> None:
+        self.damping_ratio = damping_ratio
+
+    def solve(
+        self,
+        accel_mag: np.ndarray,
+        dt: float,
+        *,
+        periods: np.ndarray | None = None,
+        method: SDOFSolveMethod = SDOFSolveMethod.NIGAM_JENNINGS,
+        accel_unit: str | None = None,
+        calc_unit_system: UnitSystem | None = None,
+        output_unit_system: UnitSystem | None = None,
+    ) -> dict[str, Any]:
+        """在 SI 中求解，再转换字段输出单位。"""
+        calc_units = calc_unit_system or get_default_unit_system()
+        out_units = output_unit_system or get_default_unit_system()
+        if periods is None:
+            periods = np.arange(0.01, 6.01, 0.01)
+        accel_si = convert_array(
+            accel_mag,
+            from_unit=accel_unit or calc_units.acceleration,
+            to_unit=_SOLVER_UNITS.acceleration,
+        )
+        frame = SDOFSolver.solve_from_accel(
+            periods=periods,
+            accel=accel_si,
+            accel_dt=dt,
+            method=method,
+            xi=self.damping_ratio,
+        )
+        return {
+            "period": convert_array(
+                frame["periods (s)"].to_numpy(),
+                from_unit="second",
+                to_unit=out_units.period,
+            ),
+            "sa": convert_array(
+                frame["sa (m/s^2)"].to_numpy(),
+                from_unit=_SOLVER_UNITS.acceleration,
+                to_unit=out_units.acceleration,
+            ),
+            "sv": convert_array(
+                frame["sv (m/s)"].to_numpy(),
+                from_unit=_SOLVER_UNITS.velocity,
+                to_unit=out_units.velocity,
+            ),
+            "sd": convert_array(
+                frame["sd (m)"].to_numpy(),
+                from_unit=_SOLVER_UNITS.displacement,
+                to_unit=out_units.displacement,
+            ),
+            "psa": convert_array(
+                frame["psa (m/s^2)"].to_numpy(),
+                from_unit=_SOLVER_UNITS.acceleration,
+                to_unit=out_units.acceleration,
+            ),
+            "psv": convert_array(
+                frame["psv (m/s)"].to_numpy(),
+                from_unit=_SOLVER_UNITS.velocity,
+                to_unit=out_units.velocity,
+            ),
+            "units": {
+                "period": out_units.period,
+                "sa": out_units.acceleration,
+                "sv": out_units.velocity,
+                "sd": out_units.displacement,
+                "psa": out_units.acceleration,
+                "psv": out_units.velocity,
+            },
+            "unit_system": out_units,
+        }
+
+
 def zvl_from_accel(
     accel_mag: np.ndarray,
     dt: float,
@@ -37,11 +117,11 @@ def zvl_from_accel(
     accel = convert_array(
         accel_mag,
         from_unit=accel_unit or calc_units.acceleration,
-        to_unit=calc_units.acceleration,
+        to_unit=_SOLVER_UNITS.acceleration,
     )
     solver = ZVibLevelSolver(
         accel=accel,
-        fs=int(round(1.0 / dt)),
+        fs=1.0 / dt,
         freq_range=freq_range,
         weight_type=weight_type,
         time_windows=time_windows,
@@ -51,14 +131,14 @@ def zvl_from_accel(
         "zvl": float(
             convert_array(
                 np.asarray([zvl]),
-                from_unit=calc_units.level,
+                from_unit=_SOLVER_UNITS.level,
                 to_unit=out_units.level,
             ).flat[0]
         ),
         "aw": float(
             convert_array(
                 np.asarray([aw]),
-                from_unit=calc_units.weighted_acceleration,
+                from_unit=_SOLVER_UNITS.weighted_acceleration,
                 to_unit=out_units.weighted_acceleration,
             ).flat[0]
         ),
@@ -84,11 +164,11 @@ def otovl_from_accel(
     accel = convert_array(
         accel_mag,
         from_unit=accel_unit or calc_units.acceleration,
-        to_unit=calc_units.acceleration,
+        to_unit=_SOLVER_UNITS.acceleration,
     )
     solver = OneThirdOctaveVibLevelSolver(
         accel=accel,
-        fs=int(round(1.0 / dt)),
+        fs=1.0 / dt,
         freq_range=freq_range,
         time_windows=time_windows,
     )
@@ -96,17 +176,17 @@ def otovl_from_accel(
     return {
         "freq": convert_array(
             solver.center_freqs,
-            from_unit=calc_units.frequency,
+            from_unit=_SOLVER_UNITS.frequency,
             to_unit=out_units.frequency,
         ),
         "comps": convert_array(
             otovl_data,
-            from_unit=calc_units.level,
+            from_unit=_SOLVER_UNITS.level,
             to_unit=out_units.level,
         ),
         "env": convert_array(
             otovl_env,
-            from_unit=calc_units.level,
+            from_unit=_SOLVER_UNITS.level,
             to_unit=out_units.level,
         ),
         "units": {
@@ -134,11 +214,11 @@ def fdmvl_from_accel(
     accel = convert_array(
         accel_mag,
         from_unit=accel_unit or calc_units.acceleration,
-        to_unit=calc_units.acceleration,
+        to_unit=_SOLVER_UNITS.acceleration,
     )
     solver = FreqDivMaxVibLevelSolver(
         accel=accel,
-        fs=int(round(1.0 / dt)),
+        fs=1.0 / dt,
         freq_range=freq_range,
     )
     fdmvl, fdvls = solver.solve()
@@ -146,18 +226,18 @@ def fdmvl_from_accel(
         "fdmvl": float(
             convert_array(
                 np.asarray([fdmvl]),
-                from_unit=calc_units.level,
+                from_unit=_SOLVER_UNITS.level,
                 to_unit=out_units.level,
             ).flat[0]
         ),
         "freq": convert_array(
             solver.center_freqs,
-            from_unit=calc_units.frequency,
+            from_unit=_SOLVER_UNITS.frequency,
             to_unit=out_units.frequency,
         ),
         "fdvls": convert_array(
             fdvls,
-            from_unit=calc_units.level,
+            from_unit=_SOLVER_UNITS.level,
             to_unit=out_units.level,
         ),
         "units": {
@@ -186,11 +266,11 @@ def fpvdv_from_accel(
     accel = convert_array(
         accel_mag,
         from_unit=accel_unit or calc_units.acceleration,
-        to_unit=calc_units.acceleration,
+        to_unit=_SOLVER_UNITS.acceleration,
     )
     solver = FourPowVibDoseValueSolver(
         accel=accel,
-        fs=int(round(1.0 / dt)),
+        fs=1.0 / dt,
         freq_range=freq_range,
         nsup=nsup,
     )
@@ -200,7 +280,7 @@ def fpvdv_from_accel(
         "fpvdv": float(
             convert_array(
                 np.asarray([fpvdv]),
-                from_unit=calc_units.vibration_dose_value,
+                from_unit=_SOLVER_UNITS.vibration_dose_value,
                 to_unit=out_units.vibration_dose_value,
             ).flat[0]
         ),
@@ -211,7 +291,7 @@ def fpvdv_from_accel(
         ),
         "aw_value": convert_array(
             aw,
-            from_unit=calc_units.weighted_acceleration,
+            from_unit=_SOLVER_UNITS.weighted_acceleration,
             to_unit=out_units.weighted_acceleration,
         ),
         "units": {
@@ -235,62 +315,15 @@ def respspec_from_accel(
 ) -> dict[str, Any]:
     """根据加速度时程计算响应谱。"""
 
-    calc_units = calc_unit_system or get_default_unit_system()
-    out_units = output_unit_system or get_default_unit_system()
-    if periods is None:
-        periods = np.arange(0.01, 6.01, 0.01)
-    accel_si = convert_array(
+    return _ResponseSpectrumRequest().solve(
         accel_mag,
-        from_unit=accel_unit or calc_units.acceleration,
-        to_unit=calc_units.acceleration,
-    )
-    frame = SDOFSolver.solve_from_accel(
+        dt,
         periods=periods,
-        accel=accel_si,
-        accel_dt=dt,
         method=method,
+        accel_unit=accel_unit,
+        calc_unit_system=calc_unit_system,
+        output_unit_system=output_unit_system,
     )
-    return {
-        "period": convert_array(
-            frame["periods (s)"].to_numpy(),
-            from_unit="second",
-            to_unit=out_units.period,
-        ),
-        "sa": convert_array(
-            frame["sa (m/s^2)"].to_numpy(),
-            from_unit=calc_units.acceleration,
-            to_unit=out_units.acceleration,
-        ),
-        "sv": convert_array(
-            frame["sv (m/s)"].to_numpy(),
-            from_unit=calc_units.velocity,
-            to_unit=out_units.velocity,
-        ),
-        "sd": convert_array(
-            frame["sd (m)"].to_numpy(),
-            from_unit=calc_units.displacement,
-            to_unit=out_units.displacement,
-        ),
-        "psa": convert_array(
-            frame["psa (m/s^2)"].to_numpy(),
-            from_unit=calc_units.acceleration,
-            to_unit=out_units.acceleration,
-        ),
-        "psv": convert_array(
-            frame["psv (m/s)"].to_numpy(),
-            from_unit=calc_units.velocity,
-            to_unit=out_units.velocity,
-        ),
-        "units": {
-            "period": out_units.period,
-            "sa": out_units.acceleration,
-            "sv": out_units.velocity,
-            "sd": out_units.displacement,
-            "psa": out_units.acceleration,
-            "psv": out_units.velocity,
-        },
-        "unit_system": out_units,
-    }
 
 
 __all__ = [

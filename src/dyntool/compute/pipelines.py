@@ -8,7 +8,8 @@ import numpy as np
 
 from .context import ComputeContext
 from .flow import ComputeFlow
-from .metrics import respspec_from_accel
+from .units import convert_array, UnitSystem
+from .metrics import _ResponseSpectrumRequest
 from .signals import (
     BaselineMethod,
     FilterKind,
@@ -35,19 +36,40 @@ def _is_accel_like(accel: Any) -> bool:
     return all(hasattr(accel, name) for name in ("get_axis", "get_value", "dt", "current_units"))
 
 
-def _coerce_accel(
-    accel: Any | np.ndarray | list[float], dt: float | None
-) -> tuple[np.ndarray, np.ndarray, float, dict[str, str]]:
-    if _is_accel_like(accel):
-        current_units = accel.current_units()
-        axis = np.asarray(accel.get_axis())
-        value = np.asarray(accel.get_value())
-        return axis, value, accel.dt, current_units
-    if dt is None:
-        raise TypeError("当输入为数组时必须提供 dt")
-    value = np.asarray(accel, dtype=float)
-    axis = np.arange(value.size, dtype=float) * float(dt)
-    return axis, value, float(dt), {"time": "second", "value": "meter/second**2"}
+class _AccelerationInput:
+    """规范化数组与带单位输入；dt 和处理参数始终使用秒与 Hz。"""
+
+    @staticmethod
+    def read(
+        accel: Any, dt: float | None, context: ComputeContext
+    ) -> tuple[np.ndarray, np.ndarray, float, dict[str, str]]:
+        """返回原输入值单位及 SI 时间轴，不借用可写输入数组。"""
+        if _is_accel_like(accel):
+            units = accel.current_units()
+            axis = convert_array(accel.get_axis(), from_unit=units["time"], to_unit="second")
+            value, interval = np.asarray(accel.get_value()), float(accel.dt)
+        else:
+            if dt is None:
+                raise TypeError("当输入为数组时必须提供 dt（秒）")
+            value, interval = np.asarray(accel, dtype=float), float(dt)
+            units = {"time": "second", "value": context.input_unit_system.acceleration}
+            if value.ndim not in (1, 2):
+                raise ValueError("输入必须为时间序列或时间 × 通道数组")
+            axis = np.arange(value.shape[0], dtype=float) * interval
+        if not np.isfinite(interval) or interval <= 0:
+            raise ValueError("采样间隔 dt 必须是有限正数，单位为秒")
+        if value.ndim not in (1, 2):
+            raise ValueError("输入必须为时间序列或时间 × 通道数组")
+        return axis, value, interval, units
+
+    @staticmethod
+    def single_channel(value: np.ndarray) -> np.ndarray:
+        """频谱和响应谱模板明确要求单通道。"""
+        if value.ndim == 2 and value.shape[1] == 1:
+            return value[:, 0]
+        if value.ndim != 1:
+            raise ValueError("频谱和响应谱模板只支持单通道，请先选择通道")
+        return value
 
 
 def accel_preprocess_template(
@@ -65,7 +87,8 @@ def accel_preprocess_template(
     """加速度预处理模板。"""
 
     ctx = context or ComputeContext()
-    axis, value, dt_val, _ = _coerce_accel(accel, dt)
+    axis, value, dt_val, units = _AccelerationInput.read(accel, dt, ctx)
+    value = convert_array(value, from_unit=units["value"], to_unit=UnitSystem.si().acceleration)
     flow = ComputeFlow(_result={"axis": axis, "value": value, "dt": dt_val}, context=ctx)
     flow.add_artifact("input", {"axis": axis, "value": value})
 
@@ -110,7 +133,16 @@ def accel_preprocess_template(
             {"value": value, "f_low": bandpass[0], "f_high": bandpass[1]},
         )
 
-    flow.set_result({"axis": axis, "value": value, "dt": dt_val}, action="preprocess_done")
+    value = convert_array(value, from_unit=UnitSystem.si().acceleration, to_unit=ctx.output_unit_system.acceleration)
+    flow.set_result(
+        {
+            "axis": axis,
+            "value": value,
+            "dt": dt_val,
+            "units": {"time": "second", "value": ctx.output_unit_system.acceleration},
+        },
+        action="preprocess_done",
+    )
     flow.add_metric("sample_count", float(value.size))
     return flow
 
@@ -124,15 +156,15 @@ def freq_eval_template(
     """频谱分析模板。"""
 
     ctx = context or ComputeContext()
-    axis, value, dt_val, units = _coerce_accel(accel, dt)
+    axis, value, dt_val, units = _AccelerationInput.read(accel, dt, ctx)
     if _is_accel_like(accel) and hasattr(accel, "calc_freqspec"):
-        freqspec = accel.calc_freqspec(output_unit_system=ctx.output_unit_system)
+        freqspec = accel.calc_freqspec(output_unit_system=ctx.output_unit_system if context is not None else None)
     else:
         freq, amp, phase = fft_with_phase(
-            value,
+            _AccelerationInput.single_channel(value),
             dt=dt_val,
             value_unit=units["value"],
-            output_value_unit=units["value"],
+            output_value_unit=ctx.output_unit_system.acceleration if context is not None else units["value"],
             output_frequency_unit=ctx.output_unit_system.frequency,
             output_phase_unit=ctx.output_unit_system.phase,
         )
@@ -142,12 +174,12 @@ def freq_eval_template(
             "phase": phase,
             "units": {
                 "freq": ctx.output_unit_system.frequency,
-                "amp": units["value"],
+                "amp": ctx.output_unit_system.acceleration if context is not None else units["value"],
                 "phase": ctx.output_unit_system.phase,
             },
         }
     flow = ComputeFlow(_result=freqspec, context=ctx)
-    flow.add_artifact("accel", {"axis": axis, "value": value})
+    flow.add_artifact("accel", {"axis": axis, "value": value, "units": units})
     flow.add_artifact("freqspec", freqspec)
     flow.add_metric("fft_points", float(value.size))
     return flow
@@ -162,16 +194,23 @@ def resp_eval_template(
     """反应谱分析模板。"""
 
     ctx = context or ComputeContext()
-    axis, value, dt_val, units = _coerce_accel(accel, dt)
-    if _is_accel_like(accel) and hasattr(accel, "calc_respspec_bundle"):
-        respspec = accel.calc_respspec_bundle(output_unit_system=ctx.output_unit_system)
-    else:
-        respspec = respspec_from_accel(
-            value,
-            dt_val,
-            accel_unit=units["value"],
-            calc_unit_system=ctx.calc_unit_system,
-            output_unit_system=ctx.output_unit_system,
+    axis, value, dt_val, units = _AccelerationInput.read(accel, dt, ctx)
+    respspec = _ResponseSpectrumRequest(ctx.damping_ratio).solve(
+        _AccelerationInput.single_channel(value),
+        dt_val,
+        accel_unit=units["value"],
+        calc_unit_system=ctx.calc_unit_system,
+        output_unit_system=ctx.output_unit_system,
+    )
+    if _is_accel_like(accel):
+        respspec = accel._respspec_from_compute_result(
+            respspec,
+            {
+                "dt": dt_val,
+                "damping_ratio": ctx.damping_ratio,
+                "calc_unit_system": ctx.calc_unit_system,
+                "output_unit_system": ctx.output_unit_system,
+            },
         )
     flow = ComputeFlow(_result=respspec, context=ctx)
     flow.add_artifact("respspec", respspec)

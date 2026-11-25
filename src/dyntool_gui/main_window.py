@@ -22,12 +22,16 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from dyntool import StorageScheme
+
 from .facades import GuiImportFacade, ImportKind, ImportPreview, SampleBatchImportRequest, SampleSetImportRequest
 from .import_runtime import ImportProgressUpdate
 from .layout import WorkbenchLayoutProfile, resolve_workbench_layout_profile
-from .managers import ExportManager, ImportManager, PlotManager, ProcessingManager
+from .managers import AnalysisSaveManager, ExportManager, ImportManager, PlotManager, ProcessingManager
+from .managers.analysis_save_manager import AnalysisSaveResult
 from .persistence import AppSettingsStore, ProjectFileStore
 from .session import (
+    AnalysisDataState,
     ExportRecord,
     FilterSpec,
     ModuleKey,
@@ -89,6 +93,9 @@ class MainWindow(QMainWindow):
         self.processing_manager = ProcessingManager(self.session, self)
         self.plot_manager = PlotManager(self.session, self)
         self.export_manager = ExportManager(self.session, self)
+        self.analysis_save_manager = AnalysisSaveManager(self.session, self)
+        self._pending_analysis_save = False
+        self._after_analysis_save: Callable[[], None] | None = None
         self.actions_map: dict[str, QAction] = {}
         self._close_after_cleanup = False
         self._allow_close = False
@@ -188,6 +195,7 @@ class MainWindow(QMainWindow):
             ("新建项目", self._new_project, "Ctrl+N"),
             ("打开项目", self._open_project_dialog, "Ctrl+O"),
             ("保存项目", self._save_project, "Ctrl+S"),
+            ("保存分析数据", self._save_analysis_data, "Ctrl+Shift+S"),
             ("导入与筛选", lambda: self._open_import_workflow(ImportKind.SAMPLE_SET), "Ctrl+I"),
             ("校验", self._validate_current_module, "F5"),
             ("执行", self._execute_current_module, "F6"),
@@ -219,6 +227,7 @@ class MainWindow(QMainWindow):
             "新建项目": style.standardIcon(QStyle.StandardPixmap.SP_FileIcon),
             "打开项目": style.standardIcon(QStyle.StandardPixmap.SP_DialogOpenButton),
             "保存项目": style.standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton),
+            "保存分析数据": style.standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton),
             "导入与筛选": style.standardIcon(QStyle.StandardPixmap.SP_ArrowDown),
             "校验": style.standardIcon(QStyle.StandardPixmap.SP_DialogApplyButton),
             "执行": style.standardIcon(QStyle.StandardPixmap.SP_MediaPlay),
@@ -237,7 +246,7 @@ class MainWindow(QMainWindow):
 
     def _build_menus(self) -> None:
         file_menu = self.menuBar().addMenu("文件")
-        for name in ("新建项目", "打开项目", "保存项目"):
+        for name in ("新建项目", "打开项目", "保存项目", "保存分析数据"):
             file_menu.addAction(self.actions_map[name])
         file_menu.addSeparator()
         exit_action = QAction("退出", self)
@@ -289,7 +298,7 @@ class MainWindow(QMainWindow):
         toolbar.setIconSize(QSize(20, 20))
         toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
 
-        for action_name in ("新建项目", "打开项目", "保存项目"):
+        for action_name in ("新建项目", "打开项目", "保存项目", "保存分析数据"):
             act = self.actions_map.get(action_name)
             if act is not None:
                 toolbar.addAction(act)
@@ -351,6 +360,11 @@ class MainWindow(QMainWindow):
         self.export_manager.failed.connect(self._handle_export_failure)
         self.export_manager.state_changed.connect(self._update_action_states)
         self.export_manager.state_changed.connect(self._refresh_global_task_feedback)
+        self.analysis_save_manager.completed.connect(self._handle_analysis_save_result)
+        self.analysis_save_manager.state_changed.connect(self._update_action_states)
+        self.analysis_save_manager.state_changed.connect(self._refresh_global_task_feedback)
+        self.analysis_save_manager.state_changed.connect(self._resume_persistence_actions)
+        self.import_manager.state_changed.connect(self._resume_persistence_actions)
 
     def _load_settings_into_session(self) -> None:
         preferences = self.settings_store.load_preferences()
@@ -391,12 +405,17 @@ class MainWindow(QMainWindow):
         self._sync_import_focus()
         self._status_project.setText(f"项目：{self.session.project_name}")
         self._status_sampleset.setText(f"主样本集：{self.session.primary_sampleset.name}")
-        self._status_dirty.setText("未保存修改" if self.session.dirty else "已保存")
+        states = []
+        if self.session.dirty:
+            states.append("项目未保存")
+        if self.session.analysis_dirty:
+            states.append("分析数据未保存")
+        self._status_dirty.setText(" / ".join(states) if states else "已保存")
         self._refresh_global_task_feedback()
         self.workspace.update_context(
             self.session.project_name,
             self.session.primary_sampleset.name,
-            self.session.dirty,
+            self.session.dirty or self.session.analysis_dirty,
         )
 
     @Slot()
@@ -414,6 +433,17 @@ class MainWindow(QMainWindow):
         """汇总 GUI 内部所有后台任务的唯一反馈事实源。"""
 
         write_block_reason = "当前已有后台任务正在运行或收尾，请等待完成。"
+        if self.analysis_save_manager.busy:
+            current, total = self._task_progress_numbers(("保存分析数据",))
+            return _ActiveTaskFeedback(
+                busy=True,
+                status_text="分析数据保存中…",
+                progress_current=current,
+                progress_total=total,
+                indeterminate=current is None or total in {None, 0},
+                cancel_reason="保存任务正在逐样本提交，请等待完成。",
+                write_block_reason=write_block_reason,
+            )
         if self.session.import_state.busy:
             state = self.session.import_state
             return _ActiveTaskFeedback(
@@ -585,6 +615,8 @@ class MainWindow(QMainWindow):
         if self._is_busy():
             QMessageBox.warning(self, "无法新建项目", "当前有任务正在运行，请等待完成或先中止任务。")
             return
+        if not self._confirm_unsaved_changes(self._new_project):
+            return
         self.session.switch_demo("generic")
         self._current_project_file = None
         self.session.mark_saved()
@@ -606,31 +638,149 @@ class MainWindow(QMainWindow):
         if self._is_busy():
             QMessageBox.warning(self, "无法加载项目", "当前有任务正在运行，请等待完成或先中止任务。")
             return
-        self.session = self.project_store.load(path)
+        try:
+            loaded = self.project_store.load(path)
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            QMessageBox.warning(self, "项目加载失败", f"无法加载项目文件：{error}")
+            return
+        if not self._confirm_unsaved_changes(lambda: self._load_project_from_file(path)):
+            return
+        self.session = loaded
         self._current_project_file = Path(path).resolve()
         self.import_manager.deleteLater()
         self.processing_manager.deleteLater()
         self.plot_manager.deleteLater()
         self.export_manager.deleteLater()
+        self.analysis_save_manager.deleteLater()
         self.import_manager = ImportManager(self.session, self)
         self.processing_manager = ProcessingManager(self.session, self)
         self.plot_manager = PlotManager(self.session, self)
         self.export_manager = ExportManager(self.session, self)
+        self.analysis_save_manager = AnalysisSaveManager(self.session, self)
         self._connect_signals()
         self._reload_view()
 
-    def _save_project(self) -> None:
+    def _save_project(self) -> bool:
         if self._is_busy():
             QMessageBox.warning(self, "无法保存项目", "当前有任务正在运行，请等待完成或先中止任务。")
-            return
-        if self._current_project_file is None:
-            default_path = self.session.workdir / f"{self.session.workdir.name}.dyntool.json"
-            self._current_project_file = self.project_store.save(self.session, default_path)
-        else:
-            self.project_store.save(self.session, self._current_project_file)
+            return False
+        self._sync_session_from_import_widget()
+        target = self._current_project_file or self.session.workdir / f"{self.session.workdir.name}.dyntool.json"
+        try:
+            saved_path = self.project_store.save(self.session, target)
+        except (OSError, ValueError, TypeError) as error:
+            self.statusBar().showMessage("项目文件保存失败。", 3000)
+            QMessageBox.warning(self, "项目保存失败", f"项目文件未保存：{error}")
+            return False
+        self._current_project_file = saved_path
         self.session.mark_saved()
         self._save_settings_from_session()
-        self.statusBar().showMessage("项目文件已保存。", 3000)
+        message = "项目文件已保存；分析数据仍未保存。" if self.session.analysis_dirty else "项目文件已保存。"
+        self.statusBar().showMessage(message, 3000)
+        return True
+
+    def _save_analysis_data(self) -> bool:
+        """另存全部主集数据，首次选择目标，后续沿用成功或重试目标。"""
+
+        try:
+            self._ensure_write_task_available()
+            self._sync_session_from_import_widget()
+            if self.session.primary_runtime is None:
+                request = self._runtime_restore_request()
+                self._pending_analysis_save = True
+                self.import_manager.start_operation(
+                    task_title="恢复主样本集运行态",
+                    detail="恢复已保存数据，完成后继续保存分析数据。",
+                    mode="restore_runtime",
+                    operation=lambda controller: self.import_facade.execute_sample_set_repository(
+                        request, controller=controller
+                    ),
+                )
+                return True
+            state = self.session.analysis_data
+            target = state.path or state.retry_path
+            if target is None:
+                directory = QFileDialog.getExistingDirectory(
+                    self,
+                    "选择分析数据保存位置（将在其下创建 analysis_data 仓库）",
+                    str(self.session.workdir),
+                )
+                if not directory:
+                    return False
+                target = Path(directory) / "analysis_data"
+            self.analysis_save_manager.start(target)
+            return True
+        except (OSError, ValueError) as error:
+            self._pending_analysis_save = False
+            QMessageBox.warning(self, "无法保存分析数据", str(error))
+            return False
+
+    @Slot(object)
+    def _handle_analysis_save_result(self, result: AnalysisSaveResult) -> None:
+        """反馈真实保存结果，失败后不继续关闭或替换项目。"""
+
+        if result.complete:
+            self.statusBar().showMessage("分析数据已保存；请保存项目以记录数据仓库引用。", 5000)
+        else:
+            self._after_analysis_save = None
+            QMessageBox.warning(self, "分析数据保存未完成", result.detail)
+
+    @Slot()
+    def _resume_persistence_actions(self) -> None:
+        """等待线程完全收尾，再执行恢复后的保存或离开工作区。"""
+
+        if self._is_busy():
+            return
+        if self._pending_analysis_save:
+            self._pending_analysis_save = False
+            if not self._save_analysis_data():
+                self._after_analysis_save = None
+            return
+        if self._after_analysis_save is not None:
+            continuation = self._after_analysis_save
+            self._after_analysis_save = None
+            continuation()
+            return
+        if self._close_after_cleanup:
+            self._close_after_cleanup = False
+            self.session.clear_close_guard()
+            self.close()
+
+    def _confirm_unsaved_changes(self, continuation: Callable[[], None]) -> bool:
+        """分别确认分析数据和项目状态；异步保存结束后重试原动作。"""
+
+        self._sync_session_from_import_widget()
+        buttons = (
+            QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel
+        )
+        if self.session.analysis_dirty:
+            answer = QMessageBox.question(
+                self,
+                "分析数据尚未保存",
+                "存在未保存的分析数据，是否先保存？",
+                buttons,
+                QMessageBox.StandardButton.Cancel,
+            )
+            if answer == QMessageBox.StandardButton.Cancel:
+                return False
+            if answer == QMessageBox.StandardButton.Save:
+                self._after_analysis_save = continuation
+                if not self._save_analysis_data():
+                    self._after_analysis_save = None
+                return False
+        if self.session.dirty:
+            answer = QMessageBox.question(
+                self,
+                "项目状态尚未保存",
+                "工作区描述或数据仓库引用尚未保存，是否先保存项目？",
+                buttons,
+                QMessageBox.StandardButton.Cancel,
+            )
+            if answer == QMessageBox.StandardButton.Cancel:
+                return False
+            if answer == QMessageBox.StandardButton.Save and not self._save_project():
+                return False
+        return True
 
     def _on_module_changed(self, _: int) -> None:
         self.session.set_current_module(self.workspace.current_module())
@@ -805,6 +955,8 @@ class MainWindow(QMainWindow):
     def _execute_import(self) -> None:
         try:
             self._ensure_import_ready(require_preview=True)
+            if self.session.primary_runtime is not None and not self._confirm_unsaved_changes(self._execute_import):
+                return
             title = "导入样本" if self.workspace.import_workflow.import_kind is ImportKind.SAMPLE else "导入样本集"
             detail = (
                 "正在读取 CSV 并组装新的主样本集。"
@@ -915,13 +1067,17 @@ class MainWindow(QMainWindow):
             self.session.begin_import_finalization(str(task_title))
             self._update_action_states()
             self.statusBar().showMessage("正在刷新主集摘要，界面会在完成后自动恢复。", 1500)
-            QTimer.singleShot(0, lambda payload=payload: self._finalize_import_success(payload))
+            restoring = self.import_manager.mode == "restore_runtime"
+            QTimer.singleShot(0, lambda payload=payload: self._finalize_import_success(payload, restoring=restoring))
 
-    def _finalize_import_success(self, payload: object) -> None:
+    def _finalize_import_success(self, payload: object, *, restoring: bool = False) -> None:
         """在事件循环下一轮写回导入结果，让收尾进度先刷新到界面。"""
 
         try:
             self.session.apply_import_result(payload)
+            if not restoring:
+                self.session.analysis_data = AnalysisDataState()
+                self.session.mark_dirty()
             self._resume_processing_after_runtime_restore()
             self._resume_plot_after_runtime_restore()
         except Exception as exc:  # noqa: BLE001
@@ -933,15 +1089,14 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "执行导入失败", str(exc))
         finally:
             self._update_action_states()
-        if self._close_after_cleanup and not self.session.import_state.busy:
-            self._allow_close = True
-            self.session.clear_close_guard()
-            self.close()
+        self._resume_persistence_actions()
 
     @Slot(str, bool)
     def _handle_import_failure(self, message: str, cancelled: bool) -> None:
         task_title = self.import_manager.task_title or self._current_import_task_title()
         if self.import_manager.mode == "restore_runtime":
+            self._pending_analysis_save = False
+            self._after_analysis_save = None
             self._pending_processing_request = None
             self._pending_plot_kwargs = None
             self._pending_plot_scope = None
@@ -951,10 +1106,7 @@ class MainWindow(QMainWindow):
             self.session.apply_import_error(task_title, message)
             dialog_title = "导入预览失败" if self.import_manager.mode in {"preview", "deep_check"} else "执行导入失败"
             QMessageBox.warning(self, dialog_title, message)
-        if self._close_after_cleanup and not self.session.import_state.busy:
-            self._allow_close = True
-            self.session.clear_close_guard()
-            self.close()
+        self._resume_persistence_actions()
 
     def _cancel_import_operation(self) -> None:
         self._cancel_current_task()
@@ -973,6 +1125,15 @@ class MainWindow(QMainWindow):
 
     def _sync_session_from_import_widget(self) -> None:
         workflow = self.workspace.import_workflow
+        state = self.session.import_state
+        before = (
+            state.csv_read_options,
+            state.advanced_expanded,
+            state.requested_scheme,
+            state.load_mode,
+            state.workers,
+            state.strict,
+        )
         self.session.import_state.csv_sep = str(workflow.csv_read_options["sep"])
         self.session.import_state.csv_header = str(workflow.csv_read_options["header"])
         self.session.import_state.csv_index_col = str(workflow.csv_read_options["index_col"])
@@ -984,6 +1145,16 @@ class MainWindow(QMainWindow):
         self.session.import_state.load_mode = workflow.load_mode
         self.session.import_state.workers = workflow.workers
         self.session.import_state.strict = workflow.strict
+        after = (
+            state.csv_read_options,
+            state.advanced_expanded,
+            state.requested_scheme,
+            state.load_mode,
+            state.workers,
+            state.strict,
+        )
+        if before != after:
+            self.session.mark_dirty()
         if workflow.import_kind is ImportKind.SAMPLE and workflow.sample_batch_paths:
             if self.session.import_state.sample_batch_paths != workflow.sample_batch_paths:
                 self.session.set_import_sources(workflow.sample_batch_paths)
@@ -1076,10 +1247,10 @@ class MainWindow(QMainWindow):
             if not isinstance(request, ProcessingRequestSnapshot):
                 raise ValueError("处理请求无效。")
             self._apply_processing_scope(request)
-            request = replace(request, resolved_uids=tuple(resolve_scope_uids(self.session, request.uids_text)))
             if self.session.primary_runtime is None:
                 self._start_processing_runtime_restore(request)
                 return
+            request = replace(request, resolved_uids=tuple(resolve_scope_uids(self.session, request.uids_text)))
             self.processing_manager.start_action(request=request)
         except Exception as exc:  # noqa: BLE001
             self._report_processing_precheck_failure(str(exc))
@@ -1144,16 +1315,18 @@ class MainWindow(QMainWindow):
     def _render_plot(self) -> None:
         try:
             scope_kind, target_text = self.workspace.plotting_workspace.scope_selection()
-            self._set_session_scope(scope_kind, target_text)
+            # 范围写回会同步刷新控件，先冻结本次用户选择的绘图参数。
             plot_kwargs = self.workspace.plotting_workspace.plot_request_values()
-            plot_kwargs["scoped_uids"] = tuple(resolve_scope_uids(self.session))
+            self._set_session_scope(scope_kind, target_text)
             if self.session.primary_runtime is None:
+                plot_kwargs["scoped_uids"] = None
                 self._start_plot_runtime_restore(
                     plot_kwargs=plot_kwargs,
                     scope_kind=scope_kind,
                     target_text=target_text,
                 )
                 return
+            plot_kwargs["scoped_uids"] = tuple(resolve_scope_uids(self.session))
             self.plot_manager.start(**plot_kwargs)
         except Exception as exc:  # noqa: BLE001
             self.session.plot_state.last_failure_message = str(exc)
@@ -1279,19 +1452,8 @@ class MainWindow(QMainWindow):
             raise ValueError("当前主样本集还没有真实运行态对象，请先完成数据接入。")
 
     def _start_processing_runtime_restore(self, request: ProcessingRequestSnapshot) -> None:
-        source_path = self.session.import_state.source_path
-        if source_path is None:
-            raise ValueError("当前主样本集还没有真实运行态对象，请先完成数据接入。")
-        if self.session.import_state.import_kind is not ImportKind.SAMPLE_SET:
-            raise ValueError("当前仅支持从样本集导入来源恢复主样本集运行态。")
+        restore_request = self._runtime_restore_request()
         self._pending_processing_request = request
-        restore_request = SampleSetImportRequest(
-            source_path=source_path,
-            requested_scheme=self.session.import_state.requested_scheme,
-            load_mode=self.session.import_state.load_mode,
-            workers=self.session.import_state.workers,
-            strict=self.session.import_state.strict,
-        )
         self.import_manager.start_operation(
             task_title="恢复主样本集运行态",
             detail="正在从当前导入来源恢复主样本集运行态，完成后会自动继续执行处理。",
@@ -1308,23 +1470,14 @@ class MainWindow(QMainWindow):
             return
         self._pending_processing_request = None
         self._apply_processing_scope(request)
+        if request.resolved_uids is None:
+            request = replace(request, resolved_uids=tuple(resolve_scope_uids(self.session, request.uids_text)))
         self.processing_manager.start_action(request=request)
 
     def _start_plot_runtime_restore(self, *, plot_kwargs: dict[str, object], scope_kind: str, target_text: str) -> None:
-        source_path = self.session.import_state.source_path
-        if source_path is None:
-            raise ValueError("当前主样本集还没有真实运行态对象，请先完成数据接入。")
-        if self.session.import_state.import_kind is not ImportKind.SAMPLE_SET:
-            raise ValueError("当前仅支持从样本集导入来源恢复主样本集运行态。")
+        restore_request = self._runtime_restore_request()
         self._pending_plot_kwargs = plot_kwargs
         self._pending_plot_scope = (scope_kind, target_text)
-        restore_request = SampleSetImportRequest(
-            source_path=source_path,
-            requested_scheme=self.session.import_state.requested_scheme,
-            load_mode=self.session.import_state.load_mode,
-            workers=self.session.import_state.workers,
-            strict=self.session.import_state.strict,
-        )
         self.import_manager.start_operation(
             task_title="恢复主样本集运行态",
             detail="正在从当前导入来源恢复主样本集运行态，完成后会自动继续渲染图形。",
@@ -1344,11 +1497,34 @@ class MainWindow(QMainWindow):
         self._pending_plot_scope = None
         if scope is not None:
             self._set_session_scope(*scope)
+        if kwargs.get("scoped_uids") is None:
+            kwargs["scoped_uids"] = tuple(resolve_scope_uids(self.session))
         self.plot_manager.start(**kwargs)
 
     def _ensure_write_task_available(self) -> None:
         if self._is_busy():
             raise ValueError("当前已有后台任务正在运行或收尾，请等待完成。")
+
+    def _runtime_restore_request(self) -> SampleSetImportRequest:
+        """优先恢复已保存分析仓库，缺失时明确报错，不回退丢失的结果。"""
+
+        source = self.session.analysis_data.path
+        if source is not None:
+            scheme = StorageScheme.SET_SQLITE_H5
+        else:
+            source = self.session.import_state.source_path
+            scheme = self.session.import_state.requested_scheme
+            if source is None:
+                raise ValueError("当前主样本集还没有真实运行态对象，请先完成数据接入。")
+            if self.session.import_state.import_kind is not ImportKind.SAMPLE_SET:
+                raise ValueError("当前仅支持从样本集导入来源恢复主样本集运行态；请先保存分析数据。")
+        return SampleSetImportRequest(
+            source_path=source,
+            requested_scheme=scheme,
+            load_mode=self.session.import_state.load_mode,
+            workers=self.session.import_state.workers,
+            strict=self.session.import_state.strict,
+        )
 
     def _restore_default_layout(self) -> None:
         self.left_dock.show()
@@ -1434,6 +1610,8 @@ class MainWindow(QMainWindow):
         if self._is_busy():
             QMessageBox.warning(self, "无法切换演示数据", "当前有任务正在运行，请等待完成或先中止任务。")
             return
+        if not self._confirm_unsaved_changes(lambda: self._switch_demo(demo_key)):
+            return
         self.session.switch_demo(demo_key)
 
     def _is_busy(self) -> bool:
@@ -1447,7 +1625,7 @@ class MainWindow(QMainWindow):
         self.actions_map["中止当前任务"].setEnabled(feedback.cancellable)
         self.actions_map["中止当前任务"].setToolTip("" if feedback.cancellable else feedback.cancel_reason)
         self.actions_map["中止当前任务"].setStatusTip("" if feedback.cancellable else feedback.cancel_reason)
-        for action_name in ("新建项目", "打开项目", "保存项目", "切换桥梁演示数据", "切换通用演示数据"):
+        for action_name in ("新建项目", "打开项目", "保存项目", "保存分析数据", "切换桥梁演示数据", "切换通用演示数据"):
             self.actions_map[action_name].setEnabled(not busy)
             self.actions_map[action_name].setToolTip("" if not busy else feedback.write_block_reason)
             self.actions_map[action_name].setStatusTip("" if not busy else feedback.write_block_reason)
@@ -1531,10 +1709,6 @@ class MainWindow(QMainWindow):
         if self._allow_close:
             self._allow_close = False
             self._close_after_cleanup = False
-            self._save_settings_from_session()
-            self.settings_store.save_main_window(self)
-            event.accept()
-            return
         if self.session.import_state.busy:
             result = QMessageBox.question(
                 self,
@@ -1551,6 +1725,9 @@ class MainWindow(QMainWindow):
             return
         if self._is_busy():
             QMessageBox.warning(self, "无法关闭", "当前有后台任务正在运行，请等待完成或先中止任务。")
+            event.ignore()
+            return
+        if not self._confirm_unsaved_changes(self.close):
             event.ignore()
             return
         self.session.clear_close_guard()

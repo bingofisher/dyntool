@@ -277,7 +277,7 @@ class ProcessingWorkspace(QWidget):
         metrics_frame.setMaximumHeight(34)
         metrics_layout = QHBoxLayout(metrics_frame)
         metrics_layout.setContentsMargins(10, 4, 10, 4)
-        self._metrics_summary = QLabel("完成结果：0 / 缺口：0 / 最近执行：--:--", metrics_frame)
+        self._metrics_summary = QLabel("成功：0 / 跳过：0 / 失败：0 / 未执行：0 / 最近执行：--:--", metrics_frame)
         self._metrics_summary.setObjectName("ProcessingMetricsSummaryLabel")
         self._metrics_summary.setProperty("cardRole", "summaryText")
         metrics_layout.addWidget(self._metrics_summary)
@@ -499,7 +499,6 @@ class ProcessingWorkspace(QWidget):
         _load_table(self._series_table, state.series_rows)
         _load_table(self._peaks_table, state.peaks_rows)
 
-        gap_text = state.last_failure_message[:8] if state.last_failure_message else "0"
         if state.last_duration_ms > 0:
             secs = state.last_duration_ms // 1000
             mins, sec_part = divmod(secs, 60)
@@ -507,7 +506,8 @@ class ProcessingWorkspace(QWidget):
         else:
             duration_text = "--:--"
         self._metrics_summary.setText(
-            f"完成结果：{state.last_action_count} / 缺口：{gap_text} / 最近执行：{duration_text}"
+            f"成功：{state.last_action_count} / 跳过：{state.last_skipped_count} / "
+            f"失败：{state.last_failed_count} / 未执行：{state.last_not_executed_count} / 最近执行：{duration_text}"
         )
 
         can_restore_runtime = session.primary_runtime is None and session.import_state.source_path is not None

@@ -540,7 +540,7 @@ class AccelSeries(TimeSeries):
 
         Args:
             method: 积分方法。
-            calc_unit_system: 计算阶段采用的单位制；为空时使用当前默认单位制。
+            calc_unit_system: 保留计算上下文；模型按自身单位转换至相干 SI 求解，不改变物理结果。
             output_unit: 显式指定输出速度单位；为空时使用 `output_unit_system` 的速度单位。
             output_unit_system: 输出对象采用的单位制。
             **options: 传给积分器的具名参数。当前仅在 `method` 对应的积分实现需要时生效，
@@ -901,6 +901,51 @@ class ForceSeries(TimeSeries):
     def _default_current_units(cls, unit_system: UnitSystem | None = None) -> dict[str, str]:
         units = unit_system or get_default_unit_system()
         return {"time": units.time, "value": units.force}
+
+
+class MomentSeries(TimeSeries):
+    """力矩时程，复用时程序列的通道结构和处理能力。"""
+
+    category: ClassVar[DataCategory] = DataCategory.TS_MOMENT
+
+    @classmethod
+    def _base_value_unit(cls) -> str:
+        return "newton * meter"
+
+    @classmethod
+    def _default_current_units(cls, unit_system: UnitSystem | None = None) -> dict[str, str]:
+        units = unit_system or get_default_unit_system()
+        return {"time": units.time, "value": units.moment}
+
+
+class StressSeries(TimeSeries):
+    """应力分量时程，不自动解释应力张量或计算等效应力。"""
+
+    category: ClassVar[DataCategory] = DataCategory.TS_STRESS
+
+    @classmethod
+    def _base_value_unit(cls) -> str:
+        return "pascal"
+
+    @classmethod
+    def _default_current_units(cls, unit_system: UnitSystem | None = None) -> dict[str, str]:
+        units = unit_system or get_default_unit_system()
+        return {"time": units.time, "value": units.stress}
+
+
+class StrainSeries(TimeSeries):
+    """无量纲应变分量时程，复用现有单位换算，不自动进行材料本构计算。"""
+
+    category: ClassVar[DataCategory] = DataCategory.TS_STRAIN
+
+    @classmethod
+    def _base_value_unit(cls) -> str:
+        return "dimensionless"
+
+    @classmethod
+    def _default_current_units(cls, unit_system: UnitSystem | None = None) -> dict[str, str]:
+        units = unit_system or get_default_unit_system()
+        return {"time": units.time, "value": units.strain}
 
 
 class DispSeries(TimeSeries):

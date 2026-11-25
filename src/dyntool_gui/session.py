@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from dyntool_gui._session_types import (
+    AnalysisDataState,
     CapabilitySnapshot,
     ExportState,
     FilterGroup,
@@ -94,6 +95,7 @@ class ProjectSession:
         export_state: ExportState | None = None,
         capability_snapshot: CapabilitySnapshot | None = None,
         primary_runtime: "DefaultSampleSet | None" = None,
+        analysis_data: AnalysisDataState | None = None,
     ) -> None:
         self.bus = bus or SessionBus()
         self.project_changed = self.bus.project_changed
@@ -142,6 +144,7 @@ class ProjectSession:
             else build_capability_snapshot_from_summary(primary_sampleset)
         )
         self.primary_runtime = primary_runtime
+        self.analysis_data = analysis_data or AnalysisDataState()
         self.real_data_diagnostics: tuple[str, ...] = ()
         self._repair_loaded_import_context()
         self._refresh_subset_hook_specs()
@@ -235,6 +238,7 @@ class ProjectSession:
             "export_state",
             "capability_snapshot",
             "primary_runtime",
+            "analysis_data",
         ):
             setattr(self, attr, getattr(replacement, attr))
         self._refresh_subset_hook_specs()
@@ -267,12 +271,15 @@ class ProjectSession:
     ) -> None:
         """更新当前工作范围。"""
 
-        self.current_scope = ScopeSelection(
+        selection = ScopeSelection(
             scope_kind=scope_kind,
             subset_ids=tuple(item for item in subset_ids if item),
             sample_uids=tuple(item for item in sample_uids if item),
             note=note,
         )
+        if selection != self.current_scope:
+            self.mark_dirty()
+        self.current_scope = selection
         self._upsert_task("切换当前范围", "已完成", "1 / 1", note or scope_kind)
         self._prepend_log("INFO", "gui.subset", f"当前范围已切换为：{note or scope_kind}")
         self.bus.selection_changed.emit()
@@ -288,6 +295,8 @@ class ProjectSession:
         self._refresh_subset_hook_specs()
         rows = self._build_subset_preview_rows(filter_spec)
         resolved_uids = self._resolve_subset_uids(filter_spec)
+        if filter_spec != self.subset_state.filter_spec:
+            self.mark_dirty()
         self.subset_state.filter_spec = filter_spec
         self.subset_state.preview_rows = rows
         self.subset_state.preview_columns = build_metadata_preview_columns(self.primary_sampleset)
@@ -330,6 +339,7 @@ class ProjectSession:
         subsets = [item for item in self.subset_state.subsets if item.id != target_id]
         subsets.insert(0, definition)
         self.subset_state.subsets = tuple(subsets)
+        self.mark_dirty()
         self.subset_state.selected_subset_id = definition.id
         self.subset_state.last_message = f"已保存子样本集：{definition.name}"
         self._upsert_task("保存子样本集", "已完成", "1 / 1", self.subset_state.last_message)
@@ -344,6 +354,8 @@ class ProjectSession:
         """删除子样本集定义。"""
 
         removed = next((item for item in self.subset_state.subsets if item.id == subset_id), None)
+        if removed is not None:
+            self.mark_dirty()
         self.subset_state.subsets = tuple(item for item in self.subset_state.subsets if item.id != subset_id)
         if self.subset_state.selected_subset_id == subset_id:
             self.subset_state.selected_subset_id = ""
@@ -385,6 +397,7 @@ class ProjectSession:
         )
         subsets = [updated if item.id == subset_id else item for item in self.subset_state.subsets]
         self.subset_state.subsets = tuple(subsets)
+        self.mark_dirty()
         self.subset_state.selected_subset_id = subset_id
         self.subset_state.preview_rows = rows
         self.subset_state.preview_count = len(resolved_uids)
@@ -422,6 +435,8 @@ class ProjectSession:
         """绑定真实主样本集并同步刷新摘要与能力快照。"""
 
         self.primary_runtime = sample_set
+        self.analysis_data = AnalysisDataState()
+        self.dirty = True
         self.primary_sampleset = summarize_runtime_sample_set(
             sample_set,
             name=name or self.primary_sampleset.name,
@@ -581,6 +596,18 @@ class ProjectSession:
         self.dirty = False
         self.bus.project_changed.emit()
 
+    def mark_dirty(self) -> None:
+        """标记工作区描述尚未保存。"""
+
+        self.dirty = True
+        self.bus.project_changed.emit()
+
+    @property
+    def analysis_dirty(self) -> bool:
+        """返回真实运行态中是否存在尚未提交的分析数据。"""
+
+        return self.primary_runtime is not None and bool(self.primary_runtime.storage_dirty)
+
     def set_project_directory(self, path: str | Path) -> None:
         """选择项目目录并初始化导入上下文。"""
 
@@ -592,6 +619,7 @@ class ProjectSession:
         self.current_selection = "项目目录"
         self.note = "当前项目已切换到真实项目目录，可以执行导入。"
         self.import_state.project_directory_selected = True
+        self.dirty = True
         self._refresh_import_step()
         self._prepend_log("INFO", "gui.project", f"已选择项目目录：{project_dir}")
         self.bus.emit_project_related()
@@ -632,6 +660,8 @@ class ProjectSession:
         """设置当前导入源。"""
 
         resolved = Path(path).resolve() if path else None
+        if resolved != self.import_state.source_path or self.import_state.sample_batch_paths:
+            self.mark_dirty()
         self.import_state.source_path = resolved
         self.import_state.sample_batch_paths = ()
         self._remember_import_source_dir(resolved)
@@ -644,6 +674,8 @@ class ProjectSession:
         """设置当前批量导入源。"""
 
         resolved_paths = tuple(Path(path).resolve() for path in paths)
+        if resolved_paths != self.import_state.sample_batch_paths or self.import_state.source_path is not None:
+            self.mark_dirty()
         self.import_state.sample_batch_paths = resolved_paths
         self.import_state.source_path = None
         if resolved_paths:
@@ -1131,6 +1163,7 @@ def describe_scope(session: ProjectSession) -> str:
 
 
 __all__ = [
+    "AnalysisDataState",
     "ModuleKey",
     "MODULE_LABELS",
     "ImportKind",

@@ -6,6 +6,8 @@
 
 ## 正式入口
 
+力学时程 `ForceSeries`、`MomentSeries`、`StressSeries`、`StrainSeries` 均从 `dyntool` 顶层公开导入，继承 `TimeSeries` 的 `from_data()`、CSV/H5、单位转换、处理和模型频谱入口。`DefaultSample` 通过 `force/moment/stress/strain` 槽位持有它们，并通过 `update_data()` 更新。`UnitSystem` 对应字段为 `force/moment/stress/strain`；详细用法见[样本与样本集中的力学时程槽位](../usage/02_samples_and_sets.md)。
+
 - 顶层对象 API：`AccelSeries`、`Metadata`、`VibrationTestMetadata`、`DefaultSample`、`DefaultSampleSet`
 - 结果对象：`OperationResult`、`BatchOperationReport`
 - 模块 API：`dyntool.storage`、`dyntool.plotting`、`dyntool.logging`、`dyntool.reporting`
@@ -41,12 +43,24 @@ sample = DefaultSample.from_accel_data(
     record="R1",
     timestamp="2026-03-08 12:00:00",
 )
-sample.eval_zvl(overwrite=True, freq_range=(2.0, 60.0))
+sample.eval_zvl(overwrite=True, freq_range=(2.0, 60.0), time_windows=-1)
 sample_set = DefaultSampleSet.from_samples([sample], sample_domain=SampleDomain.VIBRATION_TEST)
 sample_set.save("output/sample_set.h5", storage_scheme=StorageScheme.SET_H5)
 freqs, _ = dt_resources.center_freqs((2.0, 80.0))
 print(freqs[:3])
 ```
+
+## 规范限值对象
+
+`FDMVLLimit` 是分频最大振级标量阈值，沿用 `ZVLLimit`、`FPVDVLimit` 的标量合同。正式标准枚举成员为 `FDMVLLimitStandard.JGJ_T_170_2009`。通过 `supported_standards()` 和 `supported_scenes(standard)` 查询，通过 `from_standard(standard, scene=...)` 取得单个阈值，`float(limit.fdmvl)` 读取当前单位下的数值。
+
+原 FDMVL 曲线占位的 `from_data(freq=..., fdmvl=...)` 已调整为 `from_data(fdmvl=..., standard=..., scene=..., clause=..., resource_key=...)`，不含频率轴。绘图使用现有 `PlotDataset.add_limit(limit, axis=...)`。规范来源、适用条件与迁移见 [限值模型说明](../developer/limit_models.md)。
+
+四种限值的标准枚举按评价类型独立校验；成员名使用下划线，`.value` 只接受规范编号。`ZVLLimitStandard.GB_10070_1988.value` 为 `GB 10070-1988`，历史 `GB_10070-1988` 明确拒绝。限值 `to_pandas()` / `to_xarray()` 在独立 `attrs` 中记录规范来源和可选追溯，沿原恢复接口往返；标量限值须恰好一个值、表须恰好一行。
+
+::: dyntool.FDMVLLimit
+
+::: dyntool.FDMVLLimitStandard
 
 ## 模块 API
 
@@ -273,3 +287,11 @@ result = dt_plotting.FramePlotter(axis_config=axis_config).plot_dataset(dataset)
 `OneThirdOctavePlotter` 当前正式支持 `x = OctaveAxisSpec` 与 `y = ContinuousAxisSpec` 的组合，因此倍频程图也可以通过 `axis_config.y` 使用 `major_step`、`minor_step` 与 `scientific_*`。
 
 `AxisConfig` 继续只表达单张图的 `x / y` 轴语义，不直接承载 `C1 / C2 / C3 / C4` 这类业务分支。若项目内存在轻微变体，推荐在项目层读取基础 TOML 后用 `dyntool.config.deep_update(...)` 合并 variant patch，再把合并后的结果交给 `PlotTheme` / `axis_config` 主链。
+
+## 核心数值与保存合同
+
+核心计算参数和返回对象类型保持。FFT 长度、窗口前提、SI 比较容差和单样本提交语义见 [核心库迁移说明](../developer/core_correctness_migration.md)。FDMVL 限值占位接口的标量化调整见上文规范限值对象。
+
+核心对象读取、查询视图权限、报告 SI 单位与追溯扩展合同见 [核心架构整改](../developer/core_architecture_remediation.md)。这些行为继续沿当前 Public API，迁移工具属于 Private / implementation detail。
+
+后续计算合同：传递函数 `fs` 接受浮点 Hz，二维输入拒绝；组合谱分量要求同一物理轴。xarray 返回原有 Dataset/DataArray 类型并保留可选追溯，单位声明冲突报错；样本流分支显式提交遵循原样本槽位合同，见 [处理与结果](../usage/03_processing_and_results.md)。

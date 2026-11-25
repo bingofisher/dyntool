@@ -9,6 +9,8 @@ from typing import Any, Literal, Mapping
 
 import pandas as pd
 
+from ..infrastructure._storage_commit import _FileCommit
+
 ExportFormat = Literal["csv", "xlsx"]
 
 
@@ -21,6 +23,8 @@ def frame_manifest_entry(name: str, path: Path, frame: pd.DataFrame) -> dict[str
         "path": str(path.relative_to(path.parents[1])).replace("\\", "/"),
         "rows": int(flattened.shape[0]),
         "columns": [str(column) for column in flattened.columns],
+        "units": {flatten_label(column): unit for column, unit in frame.attrs.get("column_units", {}).items()},
+        "index_unit": frame.attrs.get("index_unit"),
     }
 
 
@@ -64,7 +68,9 @@ def write_frame_csv(frame: pd.DataFrame, path: Path, *, encoding: str = "utf-8-s
 
     export_frame = flatten_frame_for_export(frame)
     path.parent.mkdir(parents=True, exist_ok=True)
-    export_frame.to_csv(path, index=False, encoding=encoding)
+    with _FileCommit(path.parent, "导出 CSV") as commit:
+        export_frame.to_csv(commit.stage(path), index=False, encoding=encoding)
+        commit.commit()
 
 
 def write_frames_workbook(frames: Mapping[str, pd.DataFrame], path: Path) -> None:
@@ -72,11 +78,26 @@ def write_frames_workbook(frames: Mapping[str, pd.DataFrame], path: Path) -> Non
 
     require_openpyxl()
     path.parent.mkdir(parents=True, exist_ok=True)
-    with pd.ExcelWriter(path, engine="openpyxl") as writer:
-        for sheet_name, frame in frames.items():
-            export_frame = flatten_frame_for_export(frame)
-            export_frame.to_excel(writer, sheet_name=safe_sheet_name(sheet_name), index=False)
-    style_workbook(path)
+    with _FileCommit(path.parent, "导出 Excel") as commit:
+        staged = commit.stage(path)
+        with pd.ExcelWriter(staged, engine="openpyxl") as writer:
+            descriptions = []
+            for sheet_name, frame in frames.items():
+                export_frame = flatten_frame_for_export(frame)
+                export_frame.to_excel(writer, sheet_name=safe_sheet_name(sheet_name), index=False)
+                descriptions.extend(
+                    {"表": sheet_name, "字段": flatten_label(column), "单位": unit}
+                    for column, unit in frame.attrs.get("column_units", {}).items()
+                )
+                if frame.attrs.get("index_unit"):
+                    descriptions.append(
+                        {"表": sheet_name, "字段": str(frame.index.name), "单位": frame.attrs["index_unit"]}
+                    )
+            pd.DataFrame(descriptions, columns=["表", "字段", "单位"]).to_excel(
+                writer, sheet_name="单位说明", index=False
+            )
+        style_workbook(staged)
+        commit.commit()
 
 
 def flatten_frame_for_export(frame: pd.DataFrame) -> pd.DataFrame:
@@ -87,7 +108,14 @@ def flatten_frame_for_export(frame: pd.DataFrame) -> pd.DataFrame:
         export_frame = export_frame.reset_index()
     elif not isinstance(export_frame.index, pd.RangeIndex):
         export_frame = export_frame.reset_index()
-    export_frame.columns = [flatten_label(column) for column in export_frame.columns]
+    units = frame.attrs.get("column_units", {})
+    index_unit = frame.attrs.get("index_unit")
+    export_frame.columns = [
+        f"{flatten_label(column)} [{unit}]"
+        if (unit := units.get(column) or (index_unit if column == frame.index.name else None))
+        else flatten_label(column)
+        for column in export_frame.columns
+    ]
     return export_frame
 
 
@@ -131,21 +159,26 @@ def style_workbook(path: Path) -> None:
     from openpyxl.styles import Font
 
     workbook = load_workbook(path)
-    for worksheet in workbook.worksheets:
-        worksheet.freeze_panes = "A2"
-        for cell in worksheet[1]:
-            cell.font = Font(bold=True)
-        for column_cells in worksheet.columns:
-            values = ["" if cell.value is None else str(cell.value) for cell in column_cells]
-            width = min(max(len(item) for item in values) + 2, 60)
-            worksheet.column_dimensions[column_cells[0].column_letter].width = max(width, 10)
-    workbook.save(path)
+    try:
+        for worksheet in workbook.worksheets:
+            worksheet.freeze_panes = "A2"
+            for cell in worksheet[1]:
+                cell.font = Font(bold=True)
+            for column_cells in worksheet.columns:
+                values = ["" if cell.value is None else str(cell.value) for cell in column_cells]
+                width = min(max(len(item) for item in values) + 2, 60)
+                worksheet.column_dimensions[column_cells[0].column_letter].width = max(width, 10)
+        workbook.save(path)
+    finally:
+        workbook.close()
 
 
 def write_json(path: Path, payload: Mapping[str, Any]) -> None:
     """导出 UTF-8 JSON 文件。"""
 
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    with _FileCommit(path.parent, "导出 JSON") as commit:
+        commit.stage(path).write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        commit.commit()
 
 
 __all__ = [

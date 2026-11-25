@@ -45,14 +45,23 @@ class _SampleStorageRuntimeMixin:
     ) -> SampleT:
         """保存单个样本。"""
 
+        categories = kwargs.pop("categories", None)
+        if categories == []:
+            return sample
         if path is not None:
+            source_set = sample._storage_set
+            source_storage = getattr(source_set, "storage", None)
+            if source_storage is not None and Path(path).resolve() != Path(source_storage.base_dir).resolve():
+                # 换目标之前按选择补载，不能把未加载槽位当作空值带到新仓库。
+                fields = sample.storable_fields() if categories is None else categories
+                for field in fields:
+                    sample.get_data_var(field)
             mode = kwargs.pop("mode", StorageMode.CREATE)
             self.connect_sample_runtime(sample, path, mode=mode, **kwargs)
         if sample._storage_set is None or sample._storage_set.storage is None:
             raise RuntimeError("样本尚未连接存储，请先调用 connect_storage()")
         logger.info("save_sample request")
         try:
-            categories = kwargs.pop("categories", None)
             sample._storage_set[sample.uid] = sample
             sample._storage_set.storage.save_sample(sample, categories)
         except Exception:
@@ -89,6 +98,10 @@ class _SampleStorageRuntimeMixin:
             loaded = sample._storage_set.storage.load_sample(sample.uid, categories)
             sample._replace_metadata(loaded.metadata)
             sample._restore_alias_internal(loaded.alias)
+            from copy import deepcopy
+
+            sample._slot_state = deepcopy(loaded._slot_state)
+            sample._committed_slot_state = deepcopy(loaded._committed_slot_state)
             sample._replace_data_vars_internal(loaded.data_vars.copy())
             sample._storage_set[sample.uid] = sample
         except Exception:

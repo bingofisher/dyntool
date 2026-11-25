@@ -47,6 +47,26 @@ def _read_weight_z_from_df(center_freqs: np.ndarray, df: pd.DataFrame) -> np.nda
     return _read_weight_z_from_df_impl(center_freqs, df)
 
 
+class _EvaluationWindow:
+    """在分窗前统一验证记录长度、窗口点数和步长。"""
+
+    def __init__(self, length: int, fs: float, seconds: float, overlap: float) -> None:
+        if not np.isfinite(fs) or fs <= 0:
+            raise ValueError("评价采样频率必须为有限正数")
+        if seconds == -1:
+            seconds = length / fs
+        if not np.isfinite(seconds) or seconds <= 0:
+            raise ValueError("评价窗口时长必须为有限正数，或使用 -1 表示全记录")
+        self.points = int(round(seconds * fs))
+        self.step = int(round(self.points * (1 - overlap)))
+        if self.points < 2 or self.step < 1:
+            raise ValueError(f"评价窗口无效：窗口 {self.points} 点，步长 {self.step} 点")
+        if length < self.points:
+            raise ValueError(
+                f"记录长度 {length} 点（{length / fs:g} 秒），不足评价窗口 {self.points} 点（{seconds:g} 秒）"
+            )
+
+
 class SolverBase(ABC):
     """求解器抽象基类。"""
 
@@ -369,8 +389,11 @@ class SDOFSolver(SolverBase):
                 "sa (m/s^2)",
             ),
         )
+        damping_ratio = float(options.pop("xi", 0.05))
+        if not np.isfinite(damping_ratio) or not 0 <= damping_ratio < 1:
+            raise ValueError("当前响应谱算法要求阻尼比满足 0 ≤ xi < 1")
         for i, Ti in enumerate(periods):
-            sdof = cls(T=Ti, dt=accel_dt, ag=accel)
+            sdof = cls(T=Ti, dt=accel_dt, ag=accel, xi=damping_ratio)
             data = sdof.solve(method=method, **options)
             a, v, d = data["accel"], data["vel"], data["disp"]
             sa = np.max(np.abs(a))
@@ -390,7 +413,7 @@ class TransferSolver(SolverBase):
         input_accel: ArrayLike,
         output_accel: ArrayLike,
         *,
-        fs: int = 500,
+        fs: float = 500,
         nperseg: int = 256,
         noverlap: int = 128,
         nfft: int = 512,
@@ -417,8 +440,8 @@ class TransferSolver(SolverBase):
     def solve(self) -> tuple[np.ndarray, np.ndarray]:
         """计算输入与输出加速度之间的传递函数。"""
         f, Pxy = csd(
-            self.output_accel,
             self.input_accel,
+            self.output_accel,
             fs=self.fs,
             window=self.window,
             nperseg=self.nperseg,
@@ -450,7 +473,7 @@ class ZVibLevelSolver(SolverBase):
         self,
         accel: ArrayLike,
         *,
-        fs: int = 500,
+        fs: float = 500,
         freq_range: tuple[float, float] = (1.0, 80.0),
         weight_type: WeightType = WeightType.WK,
         time_windows: float = 1.0,
@@ -462,7 +485,7 @@ class ZVibLevelSolver(SolverBase):
         self.fs = fs
         self.freq_range = freq_range
         self.weight_type = weight_type
-        self.time_windows = time_windows if time_windows != -1 else len(accel_arr) / fs
+        self.time_windows = time_windows
 
         self.a0 = 1e-6
         self.octave = 1 / 3
@@ -498,10 +521,11 @@ class ZVibLevelSolver(SolverBase):
         overlap = self.overlap
         window_t = self.time_windows
 
-        window_n = int(np.around(window_t * fs))
+        window_plan = _EvaluationWindow(len(accel), fs, window_t, overlap)
+        window_n = window_plan.points
         window_nfft = self.__get_min_nfft(window_n)
         data_len = len(accel)
-        step = int(round(window_n * (1 - overlap)))
+        step = window_plan.step
         aw = 0.0
         vls = np.zeros_like(center_freqs)
 
@@ -541,7 +565,7 @@ class OneThirdOctaveVibLevelSolver(SolverBase):
         self,
         accel: ArrayLike,
         *,
-        fs: int = 500,
+        fs: float = 500,
         freq_range: tuple[float, float] = (1.0, 80.0),
         time_windows: float = 1.0,
     ) -> None:
@@ -551,7 +575,7 @@ class OneThirdOctaveVibLevelSolver(SolverBase):
         self.accel = accel_arr
         self.fs = fs
         self.freq_range = freq_range
-        self.time_windows = time_windows if time_windows != -1 else accel_arr.shape[0] / fs
+        self.time_windows = time_windows
 
         self.a0 = 1e-6
         self.octave = 1 / 3
@@ -585,10 +609,11 @@ class OneThirdOctaveVibLevelSolver(SolverBase):
         overlap = self.overlap
         window_t = self.time_windows
 
-        window_n = int(np.around(window_t * fs))
+        window_plan = _EvaluationWindow(len(accel), fs, window_t, overlap)
+        window_n = window_plan.points
         window_nfft = self.__get_min_nfft(window_n)
         data_len = len(accel)
-        step = int(round(window_n * (1 - overlap)))
+        step = window_plan.step
         otovl_data = []
 
         for idx in range(0, int(data_len - window_n + 1), step):
@@ -626,7 +651,7 @@ class FreqDivMaxVibLevelSolver(SolverBase):
         self,
         accel: ArrayLike,
         *,
-        fs: int = 500,
+        fs: float = 500,
         freq_range: tuple[float, float] = (1.0, 200.0),
     ) -> None:
         accel_arr = np.asarray(accel)
@@ -671,10 +696,11 @@ class FreqDivMaxVibLevelSolver(SolverBase):
         center_freqs = self.center_freqs
         window_t = self.time_windows
 
-        window_n = int(np.around(window_t * fs))
+        window_plan = _EvaluationWindow(len(accel), fs, window_t, overlap)
+        window_n = window_plan.points
         window_nfft = self.__get_min_nfft(window_n)
         data_len = len(accel)
-        step = int(round(window_n * (1 - overlap)))
+        step = window_plan.step
         fdvls = []
 
         for idx in range(0, int(data_len - window_n + 1), step):
@@ -712,7 +738,7 @@ class FourPowVibDoseValueSolver(SolverBase):
         self,
         accel: ArrayLike,
         *,
-        fs: int = 500,
+        fs: float = 500,
         freq_range: tuple[float, float] = (1.0, 80.0),
         nsup: int = 1,
     ) -> None:

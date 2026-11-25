@@ -28,6 +28,9 @@ class UnitSystem:
     level: str = "decibel"
     weighted_acceleration: str = "meter/second**2"
     vibration_dose_value: str = "m_per_s_1p75"
+    moment: str = "newton * meter"
+    stress: str = "pascal"
+    strain: str = "dimensionless"
 
     @classmethod
     def si(cls) -> UnitSystem:

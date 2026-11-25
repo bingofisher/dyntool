@@ -5,9 +5,12 @@ from __future__ import annotations
 from typing import Any, Mapping
 
 import pandas as pd
+import numpy as np
+from pint.errors import DimensionalityError, UndefinedUnitError
 
 from ..constants import (
     format_label_with_unit,
+    convert_array,
     parse_label_unit,
     resolve_file_units,
 )
@@ -38,11 +41,31 @@ def time_series_from_pandas(
 ) -> Any:
     """根据 DataFrame 构造时程序列。"""
 
+    if not len(df.columns):
+        raise ValueError("时程表缺少数据列，不能仅含时间轴")
     _, parsed_axis_unit = parse_label_unit(df.index.name or "time")
     parsed_units: dict[str, str | None] = {"time": parsed_axis_unit}
     inferred_value_unit = None
-    if len(df.columns) == 1:
-        _, inferred_value_unit = parse_label_unit(df.columns[0])
+    explicit_units = cls._merge_input_units(axis_unit=axis_unit, data_unit=data_unit, units=units)
+    defaults = cls._resolve_current_units(units=explicit_units, unit_system=unit_system)
+    for column in df.columns:
+        _, column_unit = parse_label_unit(column)
+        if column_unit is None:
+            column_unit = defaults["value"]
+        if inferred_value_unit is None:
+            inferred_value_unit = column_unit
+        else:
+            try:
+                equivalent = np.allclose(
+                    convert_array(np.asarray([0.0, 1.0]), from_unit=column_unit, to_unit=inferred_value_unit),
+                    [0.0, 1.0],
+                    rtol=1e-12,
+                    atol=0,
+                )
+            except (DimensionalityError, UndefinedUnitError) as exc:
+                raise ValueError("CSV 数据列单位不相容，请先统一各列单位") from exc
+            if not equivalent:
+                raise ValueError("CSV 数据列单位尺度不同，请先统一各列单位")
     parsed_units["value"] = inferred_value_unit
     current = resolve_file_units(
         {"time", "value"},

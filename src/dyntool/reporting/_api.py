@@ -16,12 +16,14 @@ from ._figure_export import (
 )
 from ._frame_builders import (
     DEFAULT_SCALAR_FEATURES,
+    _ReportFrames,
     build_compare_data_vars,
     build_metadata_summary,
     comparison_frames,
     detect_available_eval_data_vars,
     filter_scalar_data_vars,
 )
+from ._report_commit import _ReportCommit
 from ._writers import (
     ExportFormat,
     frame_manifest_entry,
@@ -50,7 +52,8 @@ def export_scalar_frame(
 ) -> Path:
     """导出样本集标量统计表。"""
 
-    frame = sample_set.scalar_frame(
+    frame = _ReportFrames.scalar(
+        sample_set,
         metadata_fields=metadata_fields,
         data_vars=data_vars,
         features=features,
@@ -72,7 +75,8 @@ def export_series_frame(
 ) -> Path:
     """导出样本集序列表。"""
 
-    frame = sample_set.series_frame(
+    frame = _ReportFrames.series(
+        sample_set,
         data_var,
         metadata_fields=metadata_fields,
         strict=strict,
@@ -94,7 +98,8 @@ def export_peaks_frame(
 ) -> Path:
     """导出峰值统计表。"""
 
-    frame = sample_set.peaks_frame(
+    frame = _ReportFrames.peaks(
+        sample_set,
         source=source,
         metadata_fields=metadata_fields,
         strict=strict,
@@ -156,150 +161,154 @@ def export_report_package(
 ) -> Path:
     """导出完整项目报告数据包。"""
 
-    output_root = Path(output_dir).resolve()
-    output_root.mkdir(parents=True, exist_ok=True)
-    tables_dir = output_root / "tables"
-    tables_dir.mkdir(exist_ok=True)
-    figures_dir = output_root / "figures"
-    figures_dir.mkdir(exist_ok=True)
+    with _ReportCommit(Path(output_dir).resolve()) as commit:
+        output_root = commit.stage
+        assert output_root is not None
+        output_root.mkdir(parents=True, exist_ok=True)
+        tables_dir = output_root / "tables"
+        tables_dir.mkdir(exist_ok=True)
+        figures_dir = output_root / "figures"
+        figures_dir.mkdir(exist_ok=True)
 
-    metadata_frame = sample_set.metadata_frame()
-    metadata_summary = build_metadata_summary(sample_set, metadata_frame)
-    write_json(output_root / "metadata_summary.json", metadata_summary)
+        metadata_frame = sample_set.metadata_frame()
+        metadata_summary = build_metadata_summary(sample_set, metadata_frame)
+        write_json(output_root / "metadata_summary.json", metadata_summary)
 
-    requested_features = tuple(str(item) for item in (features or DEFAULT_SCALAR_FEATURES))
-    requested_series_vars = tuple(str(item) for item in (series_vars or ()))
-    requested_peak_sources = tuple(str(item) for item in (peak_sources or ()))
-    eval_data_vars = detect_available_eval_data_vars(sample_set) if include_eval_summary else tuple()
-    scalar_eval_data_vars = filter_scalar_data_vars(sample_set, eval_data_vars)
+        requested_features = tuple(str(item) for item in (features or DEFAULT_SCALAR_FEATURES))
+        requested_series_vars = tuple(str(item) for item in (series_vars or ()))
+        requested_peak_sources = tuple(str(item) for item in (peak_sources or ()))
+        eval_data_vars = detect_available_eval_data_vars(sample_set) if include_eval_summary else tuple()
+        scalar_eval_data_vars = filter_scalar_data_vars(sample_set, eval_data_vars)
 
-    workbook_frames: dict[str, pd.DataFrame] = {}
-    manifest_tables: list[dict[str, Any]] = []
+        workbook_frames: dict[str, pd.DataFrame] = {}
+        manifest_tables: list[dict[str, Any]] = []
 
-    workbook_frames["metadata_summary"] = metadata_frame
-    write_frame_csv(metadata_frame, tables_dir / "metadata_summary.csv", encoding=csv_encoding)
-    manifest_tables.append(
-        frame_manifest_entry("metadata_summary", tables_dir / "metadata_summary.csv", metadata_frame)
-    )
-
-    scalar_frame = sample_set.scalar_frame(features=requested_features, strict=False)
-    workbook_frames["scalar_frame"] = scalar_frame
-    write_frame_csv(scalar_frame, tables_dir / "scalar_frame.csv", encoding=csv_encoding)
-    manifest_tables.append(frame_manifest_entry("scalar_frame", tables_dir / "scalar_frame.csv", scalar_frame))
-
-    series_frames: dict[str, pd.DataFrame] = {}
-    for data_var in requested_series_vars:
-        frame = sample_set.series_frame(data_var, strict=False)
-        if frame.empty:
-            continue
-        sheet_name = f"series_{data_var}"
-        workbook_frames[sheet_name] = frame
-        csv_path = tables_dir / f"{sheet_name}.csv"
-        write_frame_csv(frame, csv_path, encoding=csv_encoding)
-        series_frames[data_var] = frame
-        manifest_tables.append(frame_manifest_entry(sheet_name, csv_path, frame))
-
-    peaks_frames: dict[str, pd.DataFrame] = {}
-    for source in requested_peak_sources:
-        try:
-            frame = sample_set.peaks_frame(source=source, strict=False)
-        except ValueError:
-            continue
-        if frame.empty:
-            continue
-        sheet_name = f"peaks_{source}"
-        workbook_frames[sheet_name] = frame
-        csv_path = tables_dir / f"{sheet_name}.csv"
-        write_frame_csv(frame, csv_path, encoding=csv_encoding)
-        peaks_frames[source] = frame
-        manifest_tables.append(frame_manifest_entry(sheet_name, csv_path, frame))
-
-    if compare_to is not None:
-        compare_report = sample_set.compare_with(
-            compare_to,
-            data_vars=build_compare_data_vars(scalar_eval_data_vars),
-            features=requested_features,
+        workbook_frames["metadata_summary"] = metadata_frame
+        write_frame_csv(metadata_frame, tables_dir / "metadata_summary.csv", encoding=csv_encoding)
+        manifest_tables.append(
+            frame_manifest_entry("metadata_summary", tables_dir / "metadata_summary.csv", metadata_frame)
         )
-        for frame_name, frame in comparison_frames(compare_report).items():
-            sheet_name = f"compare_{frame_name}"
+
+        scalar_frame = _ReportFrames.scalar(sample_set, features=requested_features, strict=False)
+        workbook_frames["scalar_frame"] = scalar_frame
+        write_frame_csv(scalar_frame, tables_dir / "scalar_frame.csv", encoding=csv_encoding)
+        manifest_tables.append(frame_manifest_entry("scalar_frame", tables_dir / "scalar_frame.csv", scalar_frame))
+
+        series_frames: dict[str, pd.DataFrame] = {}
+        for data_var in requested_series_vars:
+            frame = _ReportFrames.series(sample_set, data_var, strict=False)
+            if frame.empty:
+                continue
+            sheet_name = f"series_{data_var}"
             workbook_frames[sheet_name] = frame
             csv_path = tables_dir / f"{sheet_name}.csv"
             write_frame_csv(frame, csv_path, encoding=csv_encoding)
+            series_frames[data_var] = frame
             manifest_tables.append(frame_manifest_entry(sheet_name, csv_path, frame))
 
-    if scalar_eval_data_vars:
-        eval_summary = sample_set.scalar_frame(data_vars=scalar_eval_data_vars, strict=False)
-        workbook_frames["eval_summary"] = eval_summary
-        csv_path = tables_dir / "eval_summary.csv"
-        write_frame_csv(eval_summary, csv_path, encoding=csv_encoding)
-        manifest_tables.append(frame_manifest_entry("eval_summary", csv_path, eval_summary))
+        peaks_frames: dict[str, pd.DataFrame] = {}
+        for source in requested_peak_sources:
+            try:
+                frame = _ReportFrames.peaks(sample_set, source=source, strict=False)
+            except ValueError:
+                continue
+            if frame.empty:
+                continue
+            sheet_name = f"peaks_{source}"
+            workbook_frames[sheet_name] = frame
+            csv_path = tables_dir / f"{sheet_name}.csv"
+            write_frame_csv(frame, csv_path, encoding=csv_encoding)
+            peaks_frames[source] = frame
+            manifest_tables.append(frame_manifest_entry(sheet_name, csv_path, frame))
 
-    figures_manifest: list[dict[str, Any]] = []
-    if include_plots:
-        figures_manifest.extend(
-            export_scalar_summary_figures(
-                scalar_frame,
-                figures_dir=figures_dir,
-                theme_override=plot_theme,
+        if compare_to is not None:
+            compare_report = sample_set.compare_with(
+                compare_to,
+                data_vars=build_compare_data_vars(scalar_eval_data_vars),
+                features=requested_features,
             )
-        )
-        for data_var, frame in series_frames.items():
+            for frame_name, frame in comparison_frames(compare_report).items():
+                sheet_name = f"compare_{frame_name}"
+                workbook_frames[sheet_name] = frame
+                csv_path = tables_dir / f"{sheet_name}.csv"
+                write_frame_csv(frame, csv_path, encoding=csv_encoding)
+                manifest_tables.append(frame_manifest_entry(sheet_name, csv_path, frame))
+
+        if scalar_eval_data_vars:
+            eval_summary = _ReportFrames.scalar(sample_set, data_vars=scalar_eval_data_vars, strict=False)
+            workbook_frames["eval_summary"] = eval_summary
+            csv_path = tables_dir / "eval_summary.csv"
+            write_frame_csv(eval_summary, csv_path, encoding=csv_encoding)
+            manifest_tables.append(frame_manifest_entry("eval_summary", csv_path, eval_summary))
+
+        figures_manifest: list[dict[str, Any]] = []
+        if include_plots:
             figures_manifest.extend(
-                export_series_figures(
-                    frame,
-                    data_var=data_var,
+                export_scalar_summary_figures(
+                    scalar_frame,
                     figures_dir=figures_dir,
                     theme_override=plot_theme,
                 )
             )
-        for source, frame in peaks_frames.items():
+            for data_var, frame in series_frames.items():
+                figures_manifest.extend(
+                    export_series_figures(
+                        frame,
+                        data_var=data_var,
+                        figures_dir=figures_dir,
+                        theme_override=plot_theme,
+                    )
+                )
+            for source, frame in peaks_frames.items():
+                figures_manifest.extend(
+                    export_peaks_figures(
+                        frame,
+                        source=source,
+                        figures_dir=figures_dir,
+                        theme_override=plot_theme,
+                    )
+                )
             figures_manifest.extend(
-                export_peaks_figures(
-                    frame,
-                    source=source,
+                export_otovl_figures(
+                    sample_set,
                     figures_dir=figures_dir,
                     theme_override=plot_theme,
                 )
             )
-        figures_manifest.extend(
-            export_otovl_figures(
-                sample_set,
-                figures_dir=figures_dir,
-                theme_override=plot_theme,
-            )
-        )
 
-    figures_index_frame = pd.DataFrame(figures_manifest)
-    if not figures_index_frame.empty:
-        workbook_frames["figures_index"] = figures_index_frame
-        figures_index_path = figures_dir / "figures_index.csv"
-        write_frame_csv(figures_index_frame, figures_index_path, encoding=csv_encoding)
-        manifest_tables.append(frame_manifest_entry("figures_index", figures_index_path, figures_index_frame))
-    else:
-        workbook_frames["figures_index"] = pd.DataFrame(columns=["name", "path", "plotter", "theme", "title"])
+        figures_index_frame = pd.DataFrame(figures_manifest)
+        if not figures_index_frame.empty:
+            workbook_frames["figures_index"] = figures_index_frame
+            figures_index_path = figures_dir / "figures_index.csv"
+            write_frame_csv(figures_index_frame, figures_index_path, encoding=csv_encoding)
+            manifest_tables.append(frame_manifest_entry("figures_index", figures_index_path, figures_index_frame))
+        else:
+            workbook_frames["figures_index"] = pd.DataFrame(columns=["name", "path", "plotter", "theme", "title"])
 
-    workbook_path = output_root / "report.xlsx"
-    write_frames_workbook(workbook_frames, workbook_path)
+        workbook_path = output_root / "report.xlsx"
+        write_frames_workbook(workbook_frames, workbook_path)
 
-    manifest = {
-        "report_workbook": workbook_path.name,
-        "sample_set_type": type(sample_set).__name__,
-        "sample_type": sample_set.sample_type.__name__,
-        "sample_count": len(sample_set),
-        "parameters": {
-            "features": list(requested_features),
-            "series_vars": list(requested_series_vars),
-            "peak_sources": list(requested_peak_sources),
-            "include_plots": include_plots,
-            "include_eval_summary": include_eval_summary,
-            "plot_theme": theme_manifest_value(plot_theme),
-            "compare_to": type(compare_to).__name__ if compare_to is not None else None,
-        },
-        "tables": manifest_tables,
-        "figures": figures_manifest,
-    }
-    write_json(output_root / "manifest.json", manifest)
-    return output_root
+        manifest = {
+            "report_workbook": workbook_path.name,
+            "sample_set_type": type(sample_set).__name__,
+            "sample_type": sample_set.sample_type.__name__,
+            "sample_count": len(sample_set),
+            "result_states": {sample.uid: sample._slot_state for sample in sample_set.values()},
+            "parameters": {
+                "features": list(requested_features),
+                "series_vars": list(requested_series_vars),
+                "peak_sources": list(requested_peak_sources),
+                "include_plots": include_plots,
+                "include_eval_summary": include_eval_summary,
+                "plot_theme": theme_manifest_value(plot_theme),
+                "compare_to": type(compare_to).__name__ if compare_to is not None else None,
+            },
+            "tables": manifest_tables,
+            "figures": figures_manifest,
+        }
+        write_json(output_root / "manifest.json", manifest)
+        commit.publish()
+        return commit.target
 
 
 __all__ = [

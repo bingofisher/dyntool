@@ -52,6 +52,15 @@ class _StorageReadSession:
     def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
         del exc_type, exc, tb
 
+    def uid_name_index(self) -> dict[str, str]:
+        """读取与当前会话一致的索引。"""
+        return self._strategy.uid_name_index()
+
+    def select_uids(self, uids: list[str]) -> dict[str, str]:
+        """读取批次所需的成员索引，默认策略复用完整索引。"""
+        index = self.uid_name_index()
+        return {uid: index[uid] for uid in uids if uid in index}
+
     def load_sample(
         self,
         uid: str,

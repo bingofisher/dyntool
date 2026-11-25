@@ -11,5 +11,6 @@
 - `05_plot_and_export`
 - `06_logged_run`
 - `07_resource_driven_eval`
+- `09_gui_building_showcase`：正式维护的 GUI 建筑振动展示，核心使用 Public API，桌面启动属于 Internal API。
 
 `08_custom_extension` 属于内部扩展示例，不计入正式场景口径。

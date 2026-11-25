@@ -50,6 +50,18 @@ def test_fix_text_hygiene_reports_unknown_mojibake_for_manual_review(tmp_path: P
     assert UNKNOWN_MOJIBAKE in target.read_text(encoding="utf-8")
 
 
+def test_question_mark_docstring_requires_manual_review(tmp_path: Path, capsys) -> None:
+    """连续问号说明被识别，但不能通过猜测原文自动修复。"""
+    script = _load_script_module("fix_text_hygiene_questions_script", PROJECT_ROOT / "scripts" / "fix_text_hygiene.py")
+    target = tmp_path / "scripts" / "demo.py"
+    target.parent.mkdir(parents=True)
+    content = 'def demo():\n    """' + "?" * 4 + '"""\n    pass\n'
+    target.write_text(content, encoding="utf-8")
+    assert script.main(["--apply"], project_root=tmp_path) == 1
+    assert "manual_review" in capsys.readouterr().out
+    assert target.read_text(encoding="utf-8") == content
+
+
 def test_check_text_quality_detects_current_mojibake_fragments(tmp_path: Path, capsys) -> None:
     script = _load_script_module(
         "check_text_quality_current_mojibake_script", PROJECT_ROOT / "scripts" / "check_text_quality.py"

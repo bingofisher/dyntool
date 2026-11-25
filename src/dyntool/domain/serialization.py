@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+import re
 from typing import Any, Mapping
 
 
@@ -25,9 +26,21 @@ class StructuredPayload:
     meta: dict[str, Any] = field(default_factory=dict)
     lineage: list[dict[str, Any]] = field(default_factory=list)
 
+    def __post_init__(self) -> None:
+        self._validate_version()
+
+    def _validate_version(self) -> None:
+        """校验非负 ASCII 三段版本，拒绝未知版本及静默降写。"""
+        if re.fullmatch(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", self.schema_version) is None:
+            raise ValueError(f"交换载荷版本格式无效：{self.schema_version}")
+        version = tuple(int(part) for part in self.schema_version.split("."))
+        if len(version) != 3 or version > (1, 0, 0) or version[0] != 1:
+            raise ValueError(f"交换载荷版本 {self.schema_version} 不受支持，当前支持 {SCHEMA_VERSION}")
+
     def to_dict(self) -> dict[str, Any]:
         """转为普通字典。"""
 
+        self._validate_version()
         return {
             "schema_version": self.schema_version,
             "entity_type": self.entity_type,
@@ -65,6 +78,7 @@ def normalize_payload(
     """规范化输入载荷。"""
 
     if isinstance(payload, StructuredPayload):
+        payload._validate_version()
         return payload
     return StructuredPayload.from_dict(payload)
 

@@ -251,8 +251,8 @@ print(report.is_valid, report.sample_count)
 当前实现同时做了两类内部优化：
 
 - 读路径为 `SET_SQLITE_H5` 增加 reader session，复用单个 SQLite 连接和单个 `payload.h5` 只读句柄。
-- 写路径为 `SET_SQLITE_H5` 继续使用单 writer session，复用单个 SQLite 连接和单个 `payload.h5` 句柄顺序提交写入。
-- `save_all()` 的内部实现已进一步收敛为“单 writer session + artifact 缓冲 + chunk 级 SQLite 批量 flush”；这属于 `Private / implementation detail`，不改变公开 API 和存储格式。
+- 写路径为 `SET_SQLITE_H5` 继续使用单 writer session，复用单个 SQLite 连接，每个样本完成 H5 关闭后再提交索引。
+- `save_all()` 的内部实现已进一步收敛为“单 writer session + 单样本暂存 + 单样本 SQLite 提交”；这属于 `Private / implementation detail`，不改变公开 API 和存储格式。
 
 因此，在以下主链中，重复打开 H5 文件的开销已被显著收敛：
 
@@ -278,25 +278,11 @@ print(report.is_valid, report.sample_count)
 uv run python -B scripts/benchmark_set_sqlite_h5_io.py
 ```
 
-当前脚本覆盖三条典型主链：
+固定种子为 `20260922`，默认 20 个样本、每个 2000 点，重复 3 次。
+脚本记录保存、索引读取、摘要查询、部分更新、比较耗时及仓库体积，默认输出 `.pytest_tmp/core-benchmark.json`。
+使用 `--samples`、`--points`、`--repeat` 和 `--output` 固定对照条件，保留修复前后原始结果并比较中位数。
+不再提供旧版批量 flush 开关。性能差异以测量为准，不预设提速倍数。
 
-- `load_many_fields()`
-- `load_all(..., load_mode=EAGER, categories=["accel"])`
-- `save_all()`
-
-这组基线用于证明两个结论：
-
-- `connect -> save_all -> load_all -> summary_frame` 的阶段链仍然存在
-- `scalar_frame()` / `compare_with()` 依赖的摘要路径不会回退到 payload 直读
-
-当前 proof 层只要求阶段命中和功能一致，不要求固定毫秒阈值；性能优劣应由基准脚本输出和真实仓库 A/B 结果判断。
-
-脚本会输出：
-
-- 基准样本规模
-- 优化前耗时
-- 优化后耗时
-- 加速倍率
 ## `SET_SQLITE_H5` v2 格式升级说明
 
 - 当前正式 `SET_SQLITE_H5` 默认格式已经升级为 `v2`。
@@ -309,3 +295,9 @@ uv run python -B scripts/benchmark_set_sqlite_h5_io.py
   - metadata 写入速度、SQLite 体积和总仓库体积显著改善
   - `metadata_frame()` 与 `summary_frame(metadata_fields=...)` 会比旧版更慢，但结果保持准确
 - 旧代码不保证继续读取已迁移到 `v2` 的仓库。
+
+## 单样本提交与部分更新
+
+保存的原子单位是单个样本，前序成功不会因后续失败回滚。`categories=[]` 不修改数据；`None` 更新全部非空槽位；非空选择与明确空槽位都保留磁盘其他值。非严格模式只继续可恢复的样本错误。遗留中断标记必须先通过只读完整性检查定位，不自动恢复。详见 [核心库迁移说明](../developer/core_correctness_migration.md)。
+
+`deep` 进一步验证槽位可通过正式模型恢复，并核对同版本重复追溯的实际依据；合法部分保存导致的 fresh→stale 覆盖仍支持。未知扩展会报告检查受限，检查不自动修复或迁移。`quick` 不读取数组。

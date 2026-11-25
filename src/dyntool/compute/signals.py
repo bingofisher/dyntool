@@ -124,14 +124,14 @@ def filter_signal(
 
 
 class IntegMethod(StrEnum):
-    """一维积分方法枚举。"""
+    """沿时间轴积分方法枚举。"""
 
     SCIPY_CUMTRAPZ = "scipy-cumtrapz"
     SELF_CUMTRAPZ = "self-cumtrapz"
 
 
 class Integration:
-    """一维积分封装。"""
+    """沿时间轴积分封装。"""
 
     def __init__(
         self,
@@ -150,6 +150,8 @@ class Integration:
         dx: float | None = None,
     ) -> None:
         self.y = np.asarray(y)
+        if self.y.ndim not in (1, 2) or self.y.shape[0] == 0:
+            raise ValueError("输入必须是非空时间序列或时间 × 通道数组")
         self.x = np.asarray(x) if x is not None else None
         self.dx = float(dx) if dx is not None else None
         if x is None and dx is None:
@@ -159,12 +161,14 @@ class Integration:
 
         if x is not None:
             assert self.x is not None
-            if self.x.shape != self.y.shape:
+            if self.x.ndim != 1 or self.x.shape[0] != self.y.shape[0]:
                 raise ValueError(f"x 和 y 长度不一致: len(x)={len(self.x)}, len(y)={len(self.y)}")
+            if not np.all(np.isfinite(self.x)) or np.any(np.diff(self.x) <= 0):
+                raise ValueError("时间轴必须有限且严格递增")
             self.dx = None
         else:
             assert self.dx is not None
-            if self.dx <= 0:
+            if not np.isfinite(self.dx) or self.dx <= 0:
                 raise ValueError("`dx` 必须为正数")
             n = len(self.y)
             self.x = np.arange(0, n * self.dx, self.dx)
@@ -172,21 +176,20 @@ class Integration:
                 self.x = np.linspace(0, (n - 1) * self.dx, n)
 
     def _scipy_cumtrapz(self, y: np.ndarray, x: np.ndarray, initial: float = 0.0) -> np.ndarray:
-        integdata = integrate.cumulative_trapezoid(y, x, initial=initial)
+        integdata = integrate.cumulative_trapezoid(y, x, initial=initial, axis=0)
         return np.asarray(integdata)
 
     def _self_cumtrapz(self, y: np.ndarray, x: np.ndarray) -> np.ndarray:
-        y = np.insert(np.array(y), 0, 0)
-        x = np.insert(np.array(x), 0, 0)
-        data = 0.5 * (np.diff(y) + y[:-1] * 2) * np.diff(x)
-        return data.cumsum()
+        steps = np.diff(x).reshape((-1,) + (1,) * (y.ndim - 1))
+        increments = 0.5 * (y[:-1] + y[1:]) * steps
+        return np.concatenate((np.zeros_like(y[:1], dtype=float), increments.cumsum(axis=0)), axis=0)
 
     def integ1d(
         self,
         method: IntegMethod | str = IntegMethod.SELF_CUMTRAPZ,
         **options: Any,
     ) -> np.ndarray:
-        """执行一维积分。
+        """执行沿时间轴积分。
 
         Args:
             method: 积分方法枚举或其字符串值。
@@ -214,7 +217,7 @@ class DiffMethod(StrEnum):
 
 
 class Differentiation:
-    """一维微分封装。"""
+    """沿时间轴微分封装。"""
 
     def __init__(
         self,
@@ -233,60 +236,46 @@ class Differentiation:
         dx: float | None = None,
     ) -> None:
         self.y = np.asarray(y)
+        if self.y.ndim not in (1, 2) or self.y.shape[0] == 0:
+            raise ValueError("输入必须是非空时间序列或时间 × 通道数组")
         self.x = np.asarray(x) if x is not None else None
         self.dx = float(dx) if dx is not None else None
         if x is None and dx is None:
-            raise ValueError("积分需要设置 `x` 或 `dx`")
+            raise ValueError("微分需要设置 `x` 或 `dx`")
         if x is not None and dx is not None:
             raise ValueError(f"`x` 和 `dx` 不能同时设置，当前 x={x}, dx={dx}")
 
         if x is not None:
             assert self.x is not None
-            if self.x.shape != self.y.shape:
+            if self.x.ndim != 1 or self.x.shape[0] != self.y.shape[0]:
                 raise ValueError(f"x 和 y 长度不一致: len(x)={len(self.x)}, len(y)={len(self.y)}")
+            if not np.all(np.isfinite(self.x)) or np.any(np.diff(self.x) <= 0):
+                raise ValueError("时间轴必须有限且严格递增")
             self.dx = None
         else:
             assert self.dx is not None
-            if self.dx <= 0:
+            if not np.isfinite(self.dx) or self.dx <= 0:
                 raise ValueError("`dx` 必须为正数")
             n = len(self.y)
             self.x = np.arange(0, n * self.dx, self.dx)
             if len(self.x) != n:
                 self.x = np.linspace(0, (n - 1) * self.dx, n)
 
-    def __self_central_forward(self, y: float, y_next: float, dx: float) -> float:
-        return (y_next - y) / dx
-
-    def __self_central_backward(self, y_last: float, y: float, dx: float) -> float:
-        return (y - y_last) / dx
-
-    def __self_central_central(
-        self,
-        y_last: float,
-        y_next: float,
-        step1: float,
-        step2: float,
-    ) -> float:
-        return (y_next - y_last) / (step1 + step2)
-
     def _self_central(self, y: np.ndarray, x: np.ndarray) -> np.ndarray:
-        data = []
-        y0, y1 = y[0], y[1]
-        dx0 = float(np.diff(x[:2])[0])
-        data.append(self.__self_central_forward(float(y0), float(y1), dx0))
-        for y1, y3, dx21, dx23 in zip(y[:-2], y[2:], np.diff(x)[:-1], np.diff(x)[1:]):
-            data.append(self.__self_central_central(float(y1), float(y3), float(dx21), float(dx23)))
-        y_n1, y_n = y[-2], y[-1]
-        dx_n = float(np.diff(x[-2:])[0])
-        data.append(self.__self_central_backward(float(y_n1), float(y_n), dx_n))
-        return np.asarray(data)
+        if len(y) < 2:
+            raise ValueError("微分至少需要两个时间点")
+        scale = (-1,) + (1,) * (y.ndim - 1)
+        first = (y[1:2] - y[:1]) / (x[1] - x[0])
+        middle = (y[2:] - y[:-2]) / (x[2:] - x[:-2]).reshape(scale)
+        last = (y[-1:] - y[-2:-1]) / (x[-1] - x[-2])
+        return np.concatenate((first, middle, last), axis=0)
 
     def diff1d(
         self,
         method: DiffMethod | str = DiffMethod.SELF_CENTRAL,
         **options: Any,
     ) -> np.ndarray:
-        """执行一维微分。"""
+        """执行沿时间轴微分。"""
         del options
         assert self.x is not None
         match DiffMethod(method):
@@ -311,6 +300,8 @@ class Interpolation:
 
     def _init_data(self, *, y: ArrayLike, num: int) -> None:
         self.y = np.asarray(y)
+        if self.y.ndim not in (1, 2) or self.y.shape[0] == 0:
+            raise ValueError("输入必须是非空时间序列或时间 × 通道数组")
         self.num = int(num)
 
     def _scipy_interp1d(self, y: np.ndarray, *, num: int, **options: Any) -> np.ndarray:
@@ -375,38 +366,35 @@ def fft_with_phase(
     output_frequency_unit: str = "hertz",
     output_phase_unit: str = "radian",
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """计算一维时程的 FFT 频率、幅值和相位。"""
+    """计算去趋势、Hann 加窗后的完整单边幅值谱，共 ``N//2+1`` 点。"""
     arr = np.asarray(value, dtype=float)
     if arr.ndim != 1:
         raise ValueError("FFT 输入必须为一维序列")
-    if arr.size < 2:
-        raise ValueError("FFT 至少需要两个采样点")
-    if dt <= 0:
+    if arr.size < 3:
+        raise ValueError("FFT Hann 窗至少需要三个采样点")
+    if not np.isfinite(dt) or dt <= 0:
         raise ValueError("dt 必须为正数")
 
-    fs = 1.0 / dt
     n = arr.size
     data = detrend(arr, type="linear")
     window = np.hanning(n)
-    fft_results = np.fft.fft(data * window)
-    freqs = np.fft.fftfreq(n, d=1.0 / fs)
-    half_n = n // 2
+    fft_results = np.fft.rfft(data * window)
+    freqs = np.fft.rfftfreq(n, d=dt)
 
     freqs_pos = convert_array(
-        freqs[:half_n].copy(),
+        freqs,
         from_unit="hertz",
         to_unit=output_frequency_unit,
     )
-    mag_base = np.abs(fft_results[:half_n]) * (2.0 / n)
-    if mag_base.size > 0:
-        mag_base[0] = mag_base[0] / 2.0
+    mag_base = np.abs(fft_results) / window.sum()
+    mag_base[1 : -1 if n % 2 == 0 else None] *= 2
     mag = convert_array(
         mag_base,
         from_unit=value_unit,
         to_unit=output_value_unit or value_unit,
     )
     phase = convert_array(
-        np.angle(fft_results[:half_n]),
+        np.angle(fft_results),
         from_unit="radian",
         to_unit=output_phase_unit,
     )
